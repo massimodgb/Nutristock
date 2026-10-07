@@ -1,0 +1,5 @@
+# Datos personales: nunca se suben a internet
+privado/
+_test/
+*.json.bak
+nutristock-*.json
