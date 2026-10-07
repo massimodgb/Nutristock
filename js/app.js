@@ -7,13 +7,16 @@ import { Despensa } from './views/despensa.js';
 import { Biblioteca } from './views/biblioteca.js';
 import { Plan } from './views/plan.js';
 import { Mas } from './views/mas.js';
+import { Progreso } from './views/progreso.js';
 
+// "oculta": se abre desde otra pantalla (el plan, desde Más)
 const TABS = [
   { id: 'hoy', label: 'Hoy', icon: 'hoy', View: Hoy },
   { id: 'despensa', label: 'Despensa', icon: 'despensa', View: Despensa },
   { id: 'biblioteca', label: 'Biblioteca', icon: 'biblio', View: Biblioteca },
-  { id: 'plan', label: 'Plan', icon: 'plan', View: Plan },
+  { id: 'progreso', label: 'Progreso', icon: 'chart', View: Progreso },
   { id: 'mas', label: 'Más', icon: 'mas', View: Mas },
+  { id: 'plan', label: 'Plan', icon: 'plan', View: Plan, oculta: true, padre: 'mas' },
 ];
 
 function App() {
@@ -24,13 +27,14 @@ function App() {
     return () => removeEventListener('hashchange', onHash);
   }, []);
   const go = id => { location.hash = id; window.scrollTo(0, 0); };
-  const { View } = TABS.find(t => t.id === tab) || TABS[0];
+  const actual = TABS.find(t => t.id === tab) || TABS[0];
+  const { View } = actual;
 
   return html`
     <main><${View} go=${go} /></main>
     <nav class="tabbar">
-      ${TABS.map(t => html`
-        <button class=${t.id === tab ? 'on' : ''} onClick=${() => go(t.id)}>
+      ${TABS.filter(t => !t.oculta).map(t => html`
+        <button class=${t.id === (actual.padre || actual.id) ? 'on' : ''} onClick=${() => go(t.id)}>
           <${Icon} name=${t.icon} /><span>${t.label}</span>
         </button>`)}
     </nav>`;

@@ -2,7 +2,7 @@
 import { html, useState, useMemo } from '../lib.js';
 import {
   db, useLive, getSetting, setSetting, getPrefs, activePlan, stockMap, candidateIds,
-  deductStock, deleteLog, round1,
+  deductStock, restoreStock, deleteLog, round1,
 } from '../db.js';
 import {
   NUTRS, GROUPS, sumN, planRef, mealBlocks, blockFoods, visibleFood, cookFactor, toRaw, nutrFor,
@@ -20,9 +20,10 @@ export function Hoy({ go }) {
   const prefs = useLive(getPrefs, []);
   const logs = useLive(() => db.logs.where('date').equals(date).toArray(), [date]);
   const elecciones = useLive(() => getSetting('opciones:' + date, {}), [date]);
+  const ayer = useLive(() => db.logs.where('date').equals(addDays(date, -1)).toArray(), [date]);
   const [sheet, setSheet] = useState(null);
 
-  if ([plan, foods, lots, basicos, prefs, logs, elecciones].includes(undefined)) {
+  if ([plan, foods, lots, basicos, prefs, logs, elecciones, ayer].includes(undefined)) {
     return html`<div class="loading">Cargando…</div>`;
   }
 
@@ -55,6 +56,7 @@ export function Hoy({ go }) {
       </header>
 
       <${Resumen} total=${total} objetivo=${ref} />
+      <${Agua} date=${date} prefs=${prefs} />
       ${isToday && html`<${Avisos} ...${ctx} basicos=${basicos} choice=${choice} logs=${logs} go=${go} />`}
 
       ${!plan && html`
@@ -65,6 +67,19 @@ export function Hoy({ go }) {
 
       ${plan?.comidas.map(m => html`
         <${MealCard} key=${m.id} meal=${m} ...${ctx} logs=${logs} option=${choice[m.id]}
+          ayer=${ayer.filter(l => l.mealId === m.id && l.foodId)}
+          onRepetir=${async ayerLogs => {
+            const opt = ayerLogs.find(l => l.optionId)?.optionId;
+            if (opt) await setChoice(m.id, opt);
+            for (const l of ayerLogs) {
+              const food = byId[l.foodId];
+              if (!food) continue;
+              const rawG = toRaw(food, l.g, l.crudo, byId);
+              await saveLog({ date, mealId: m.id, optionId: l.optionId, blockId: l.blockId, food, g: l.g, crudo: l.crudo,
+                rawG, n: nutrFor(food, rawG), deduct: (stock[food.id]?.g || 0) > 0, foods });
+            }
+            toast(`${m.nombre}: repetido de ayer ✓`);
+          }}
           onOption=${o => setChoice(m.id, o)}
           onBlock=${(block, optionId) => setSheet({ type: 'block', meal: m, block, optionId })}
           onLog=${log => setSheet({ type: 'log', log })} />
@@ -90,7 +105,7 @@ export function Hoy({ go }) {
         ${sheet?.type === 'block' && html`<${BlockSheet} ...${ctx} ...${sheet} onDone=${() => setSheet(null)} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'log'} onClose=${() => setSheet(null)} title="Registro">
-        ${sheet?.type === 'log' && html`<${LogDetail} log=${sheet.log} byId=${byId} onDone=${() => setSheet(null)} />`}
+        ${sheet?.type === 'log' && html`<${LogDetail} log=${sheet.log} byId=${byId} foods=${foods} onDone=${() => setSheet(null)} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'extra'} onClose=${() => setSheet(null)} title="Fuera del plan">
         ${sheet?.type === 'extra' && html`<${ExtraSheet} ...${ctx} onDone=${() => setSheet(null)} />`}
@@ -161,7 +176,7 @@ function Avisos({ lots, foods, byId, stock, basicos, prefs, plan, choice, logs, 
     </section>`;
 }
 
-function MealCard({ meal, plan, byId, prefs, logs, option, onOption, onBlock, onLog }) {
+function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlock, onLog, onRepetir }) {
   const mealLogs = logs.filter(l => l.mealId === meal.id);
   const opt = meal.opciones?.find(o => o.id === option);
   const blocks = [
@@ -177,6 +192,10 @@ function MealCard({ meal, plan, byId, prefs, logs, option, onOption, onBlock, on
         <div><h3>${meal.nombre}</h3><small>${meal.hora}</small></div>
         <span class="muted small">${kcal ? `${fmt(kcal)} kcal · ` : ''}${doneCount}/${blocks.length}</span>
       </header>
+      ${mealLogs.length === 0 && ayer.length > 0 && html`
+        <button class="chip repetir" onClick=${() => onRepetir(ayer)}>
+          <${Icon} name="repeat" size=${15} /> Repetir lo de ayer (${ayer.map(l => l.name.split(' · ')[0]).join(', ')})
+        </button>`}
       ${meal.opciones?.length > 1 && html`
         <div class="chips">
           ${meal.opciones.map(o => html`
@@ -248,11 +267,16 @@ function AmountForm({ food, defaultG, byId, stockG, onSave }) {
   const factor = cookFactor(food, byId);
   const rawG = g ? toRaw(food, g, crudo, byId) : 0;
   const n = nutrFor(food, rawG);
+  const ultimo = useLive(() => db.logs.where('foodId').equals(food.id).last(), [food.id]);
 
   return html`
     <div class="form">
       <h4><${Dot} group=${food.group} /> ${food.name}</h4>
       <${Num} value=${g} onChange=${setG} suffix="g" autofocus />
+      ${ultimo?.g && ultimo.g !== g && html`
+        <button class="chip" onClick=${() => { setG(ultimo.g); setCrudo(!!ultimo.crudo); }}>
+          Última vez: ${fmt(ultimo.g)} g${ultimo.crudo ? ' (crudo)' : ''}
+        </button>`}
       ${food.unitG && html`
         <div class="chips">
           ${[1, 2, 3, 4].map(u => html`
@@ -278,11 +302,28 @@ async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, 
   });
 }
 
-function LogDetail({ log, byId, onDone }) {
+function LogDetail({ log, byId, foods, onDone }) {
   const descontado = (log.deducted || []).reduce((s, d) => s + d.g, 0);
+  const food = log.foodId && byId[log.foodId];
+  const [g, setG] = useState(log.g);
+  const guardar = async () => {
+    // Devolvemos lo descontado, recalculamos y volvemos a descontar con el peso nuevo
+    await restoreStock(log.deducted);
+    const rawG = toRaw(food, g, log.crudo, byId);
+    const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
+    const n = Object.fromEntries(Object.entries(nutrFor(food, rawG)).map(([k, v]) => [k, round1(v)]));
+    await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted });
+    toast('Actualizado ✓');
+    onDone();
+  };
   return html`
     <div class="form">
       <h4>${log.name}${log.aprox ? html` <span class="tag">aprox.</span>` : ''}</h4>
+      ${food && html`
+        <div class="inline">
+          <${Num} value=${g} onChange=${setG} suffix=${log.crudo ? 'g crudo' : 'g'} />
+          <button class="btn small" disabled=${!g || g === log.g} onClick=${guardar}>Cambiar</button>
+        </div>`}
       ${log.g ? html`<p class="muted">${fmt(log.g)} g ${log.crudo ? 'en crudo' : 'pesado'}${log.rawG !== log.g ? ` · ${fmt(log.rawG)} g en crudo` : ''}</p>` : ''}
       <table class="ntable">
         ${NUTRS.map(({ k, name, unit }) => html`<tr><td>${name}</td><td>${fmt(log.n[k] || 0, 1)} ${unit}</td></tr>`)}
@@ -339,4 +380,21 @@ function ExtraSheet({ foods, byId, stock, prefs, date, onDone }) {
           toast('Registrado ✓'); onDone();
         }}>Guardar</button>
       </div>`}`;
+}
+
+// Agua del día: se suma por vasos
+function Agua({ date, prefs }) {
+  const ml = useLive(() => getSetting('agua:' + date, 0), [date]) || 0;
+  const meta = prefs.aguaObjetivo, vaso = prefs.aguaVaso;
+  const set = v => setSetting('agua:' + date, Math.max(0, v));
+  return html`
+    <section class="card agua">
+      <span class="agua-icon"><${Icon} name="drop" size=${20} /></span>
+      <div class="grow">
+        <div class="bar-top"><span>Agua</span><span>${fmt(ml / 1000, 2)} / ${fmt(meta / 1000, 1)} L</span></div>
+        <div class="bar-track"><div class="bar-fill" style=${{ width: Math.min(100, (ml / meta) * 100) + '%', background: 'var(--fat)' }}></div></div>
+      </div>
+      <button class="icon-btn" aria-label="Quitar un vaso" disabled=${!ml} onClick=${() => set(ml - vaso)}>−</button>
+      <button class="icon-btn accent" aria-label="Añadir un vaso" onClick=${() => set(ml + vaso)}><${Icon} name="plus" size=${18} /></button>
+    </section>`;
 }

@@ -14,6 +14,8 @@ db.version(1).stores({
   weights: 'date',                               // peso corporal por día
   settings: 'key',                               // preferencias varias
 });
+// v2: buscar registros por alimento (para recordar el último peso que usaste)
+db.version(2).stores({ logs: '++id, date, foodId' });
 
 // Carga los alimentos base la primera vez y los actualiza si cambian en una versión nueva
 // (sin pisar los que hayas editado tú, por ejemplo al calibrar un factor de cocción).
@@ -40,7 +42,7 @@ export async function getSetting(key, def) {
 }
 export const setSetting = (key, value) => db.settings.put({ key, value });
 
-export const DEFAULT_PREFS = { excluirMar: true, avisoCaducaDias: 3 };
+export const DEFAULT_PREFS = { excluirMar: true, avisoCaducaDias: 3, aguaObjetivo: 3000, aguaVaso: 250 };
 export async function getPrefs() {
   return { ...DEFAULT_PREFS, ...(await getSetting('prefs', {})) };
 }

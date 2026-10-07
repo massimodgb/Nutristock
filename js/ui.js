@@ -107,6 +107,9 @@ const P = {
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
   bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',
   bell: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0',
+  chart: 'M4 20h16M7 16v-5M12 16V6M17 16v-8',
+  repeat: 'M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4',
+  drop: 'M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z',
 };
 export const Icon = ({ name, size = 22 }) => html`
   <svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor"

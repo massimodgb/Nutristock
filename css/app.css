@@ -234,3 +234,27 @@ main { padding: env(safe-area-inset-top) 0 calc(var(--tabbar-h) + env(safe-area-
   max-width: calc(100% - 32px);
 }
 .toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+/* Fase 1.1: agua, repetir, progreso */
+.agua { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+.agua-icon { color: var(--fat); display: grid; }
+.agua .icon-btn { font-size: 22px; }
+.chip.repetir { align-self: flex-start; white-space: normal; text-align: left; color: var(--accent); }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile { background: var(--card); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; }
+.tile small { color: var(--muted); font-size: 12px; }
+.tile b { font-size: 26px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.tile span { color: var(--muted); font-size: 12px; }
+.chart { width: 100%; height: auto; display: block; margin: 6px 0; overflow: visible; }
+.chart .axis { stroke: var(--line); stroke-width: 1; }
+.chart .target { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.chart .tick { fill: var(--muted); font-size: 10px; }
+.chart .bar-g { cursor: pointer; }
+.chart .bar-g.dim path { opacity: 0.35; }
+.chart .peso-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.chart .peso-dot { fill: var(--fat); stroke: var(--card); stroke-width: 2; opacity: 0.8; }
+.ntable.dias td { text-align: right; }
+.ntable.dias td:first-child { text-align: left; }
+.vista-c { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--line); }
+.vista-b { display: flex; gap: 8px; align-items: baseline; font-size: 14px; }
+.vista-b .dot { transform: translateY(1px); }

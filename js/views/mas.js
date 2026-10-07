@@ -4,7 +4,7 @@ import { db, useLive, getPrefs, setSetting, exportAll, importAll } from '../db.j
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
 import { Num, Toggle, Icon, toast } from '../ui.js';
 
-export function Mas() {
+export function Mas({ go }) {
   const weights = useLive(() => db.weights.orderBy('date').reverse().limit(60).toArray(), []);
   const prefs = useLive(getPrefs, []);
   const [peso, setPeso] = useState(null);
@@ -39,6 +39,12 @@ export function Mas() {
     <div class="page">
       <header class="top"><h1>Más</h1></header>
 
+      <section class="card list">
+        <button class="row" onClick=${() => go('plan')}>
+          <${Icon} name="plan" /><span class="grow">Mi plan de alimentación</span><${Icon} name="right" size=${18} />
+        </button>
+      </section>
+
       <section class="card">
         <h3>Peso corporal</h3>
         <div class="inline">
@@ -56,13 +62,17 @@ export function Mas() {
         </table>
       </section>
 
-      <section class="card">
+      <section class="card form">
         <h3>Preferencias</h3>
         <${Toggle} label="Excluir comida del mar" checked=${prefs.excluirMar} onChange=${v => setPref('excluirMar', v)}
           hint="Oculta pescado y marisco del plan, sugerencias y búsquedas" />
         <label>Avisar caducidad con
           <${Num} value=${prefs.avisoCaducaDias} onChange=${v => v != null && setPref('avisoCaducaDias', v)} suffix="días" />
         </label>
+        <div class="grid2">
+          <label>Agua al día<${Num} value=${prefs.aguaObjetivo} onChange=${v => v && setPref('aguaObjetivo', v)} suffix="ml" /></label>
+          <label>Tamaño del vaso<${Num} value=${prefs.aguaVaso} onChange=${v => v && setPref('aguaVaso', v)} suffix="ml" /></label>
+        </div>
       </section>
 
       <section class="card">

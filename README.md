@@ -13,6 +13,7 @@ Todo es gratis: Open Food Facts para los códigos de barras, Live Text del iPhon
 | `js/db.js` | Base de datos en el teléfono (despensa, diario, plan…) |
 | `js/nutri.js` | Cálculos: cocido → crudo, calorías, estimación del plan |
 | `js/importar.js` | Open Food Facts, lector de etiquetas y escáner |
+| `js/plan-pdf.js` | Lee el PDF del nutricionista y lo convierte en plan |
 | `js/data/foods.js` | Alimentos base con valores por 100 g y factor de cocción |
 | `js/views/*.js` | Cada pantalla: hoy, despensa, biblioteca, plan, más |
 | `sw.js` | Permite abrirla sin conexión. **Cambia `VERSION` al publicar cambios** |
@@ -38,5 +39,8 @@ Luego abre http://localhost:5180
 
 ## Plan nuevo cada mes
 
-1. Pásale el PDF a Claude y te devuelve `privado/plan-AAAA-MM-DD.json`.
-2. En el iPhone: Plan → Nuevo plan → elegir el archivo (desde OneDrive o Archivos).
+En el iPhone: Más → Mi plan → Nuevo plan → elige el **PDF** que te manda el nutricionista.
+
+La app lo lee en el propio teléfono (`js/plan-pdf.js`) y te enseña una vista previa antes de guardarlo. Si el nutricionista cambia la plantilla y algo no se entiende bien, pásale el PDF a Claude: te dará un `.json`, que también se puede subir ahí.
+
+Si aparece un alimento nuevo que no reconoce, se añade a la lista `ALIAS` de `js/plan-pdf.js`.
