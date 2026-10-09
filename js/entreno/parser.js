@@ -104,6 +104,8 @@ function analizarLinea(l) {
   const out = { ...l };
   const sr = (l.prescripcion || l.texto).match(/\b(\d+)\s*x\s*(\d+)\b/i);
   if (sr) { out.series = +sr[1]; out.reps = +sr[2]; }
+  const rl = l.texto.match(/^\s*(?:\d+\)\s*)?(\d+)\s*(?:reps?|repes|x)?\s+[a-záéíóúñ]/i);
+  if (rl && !sr) out.repsLinea = +rl[1];
   // Porcentajes en cualquier forma: "@ 100-110%", "(80-85-90%)", "60%-65%-70%", "con 70%"
   const pcts = [...todo.matchAll(/(\d{2,3}(?:\s*[-–\/]\s*\d{2,3})*)\s*%/g)].flatMap(m => m[1].split(/[-–\/]/).map(x => +x.trim()));
   if (pcts.length) out.pct = pcts;

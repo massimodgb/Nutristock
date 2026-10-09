@@ -104,7 +104,9 @@ export async function iniciarEscaner(elementId, onCode) {
     { facingMode: 'environment' },
     {
       fps: 15,
-      qrbox: (w, h) => ({ width: Math.min(320, w * 0.9), height: Math.min(170, h * 0.5) }),
+      // Recuadro grande (casi toda la imagen) y vídeo cuadrado: el código se encuentra mucho más fácil
+      aspectRatio: 1,
+      qrbox: (w, h) => ({ width: Math.floor(w * 0.92), height: Math.floor(Math.min(h * 0.7, w * 0.62)) }),
       // Más resolución = lee mejor códigos pequeños o en bolsas arrugadas (como el muesli)
       videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
     },

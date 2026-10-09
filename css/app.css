@@ -199,7 +199,8 @@ main { padding: env(safe-area-inset-top) 0 calc(var(--tabbar-h) + env(safe-area-
 .action:active { opacity: 0.6; }
 .lot { display: flex; gap: 8px; align-items: center; }
 .lot small { display: block; margin-top: 4px; }
-.reader { width: 100%; border-radius: 12px; overflow: hidden; background: #000; min-height: 200px; margin-bottom: 8px; }
+.reader { width: 100%; border-radius: 12px; overflow: hidden; background: #000; min-height: 72vw; margin-bottom: 8px; }
+.reader video { object-fit: cover; }
 .reader video { width: 100% !important; }
 
 /* Hoja inferior */
@@ -350,3 +351,16 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 .copiar-g .num input { font-size: 16px; padding: 8px 40px 8px 10px; }
 .caja { width: 22px; height: 22px; padding: 0; flex-shrink: 0; accent-color: var(--accent); -webkit-appearance: checkbox; appearance: auto; }
 .peso-hoy { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 14px; color: var(--text); }
+
+/* Resumen del día (objetivo − comido = te quedan) */
+.resumen-dia { display: flex; flex-direction: column; gap: 10px; }
+.bar-track.grande { height: 10px; border-radius: 5px; }
+.bar-track.grande .bar-fill { border-radius: 5px; }
+/* Despensa por envases */
+.stock-total { font-size: 17px; margin: 0; }
+.lot { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.lot.abierto b { color: var(--accent); }
+
+/* Guías */
+.guia summary { font-weight: 600; cursor: pointer; font-size: 16px; }
+.guia ul { margin: 10px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; font-size: 15px; }

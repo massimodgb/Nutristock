@@ -40,6 +40,9 @@ export function Mas({ go }) {
       <header class="top"><h1>Más</h1></header>
 
       <section class="card list">
+        <button class="row" onClick=${() => go('guia')}>
+          <${Icon} name="check" /><span class="grow"><b>Cómo se usa (guías)</b></span><${Icon} name="right" size=${18} />
+        </button>
         <button class="row" onClick=${() => go('plan')}>
           <${Icon} name="plan" /><span class="grow">Mi plan de alimentación</span><${Icon} name="right" size=${18} />
         </button>

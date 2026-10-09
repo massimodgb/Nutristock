@@ -16,8 +16,10 @@ export function Entreno({ go, inicial }) {
   const [reloj, setReloj] = useState(null); // { cfg, onResultado }
   const workouts = useLive(() => db.workouts.where('date').equals(date).toArray(), [date]);
   const marcas = useLive(() => db.marcas.toArray(), []);
+  const todos = useLive(() => db.workouts.toArray(), []);
 
-  if (!workouts || !marcas) return html`<div class="loading">Cargando…</div>`;
+  if (!workouts || !marcas || !todos) return html`<div class="loading">Cargando…</div>`;
+  const hist = historialPesos(todos);
   if (reloj) return html`<${RelojActivo} cfg=${reloj.cfg} onResultado=${reloj.onResultado} onCerrar=${() => setReloj(null)} />`;
   const isToday = date === todayStr();
 
@@ -36,7 +38,7 @@ export function Entreno({ go, inicial }) {
           <button class="icon-btn" onClick=${() => setDate(addDays(date, 1))} aria-label="Día siguiente"><${Icon} name="right" /></button>
         </div>
         ${workouts.length === 0 && html`<${Pegar} date=${date} />`}
-        ${workouts.map(w => html`<${Workout} key=${w.id} w=${w} marcas=${marcas} onReloj=${setReloj} />`)}`}
+        ${workouts.map(w => html`<${Workout} key=${w.id} w=${w} marcas=${marcas} hist=${hist} onReloj=${setReloj} />`)}`}
       ${vista === 'marcas' && html`<${Marcas} marcas=${marcas} />`}
       ${vista === 'ejercicios' && html`<${Ejercicios} />`}
       ${vista === 'relojes' && html`<section class="card"><${Relojes} onIniciar=${cfg => setReloj({ cfg })} /></section>`}
@@ -66,7 +68,7 @@ function Pegar({ date, inicial = '', id, onDone }) {
 }
 
 // ---------- Un entreno ----------
-function Workout({ w, marcas, onReloj }) {
+function Workout({ w, marcas, hist, onReloj }) {
   const [editando, setEditando] = useState(false);
   if (editando) return html`<${Pegar} date=${w.date} inicial=${w.texto} id=${w.id} onDone=${() => setEditando(false)} />`;
   const res = w.resultados || {};
@@ -79,7 +81,7 @@ function Workout({ w, marcas, onReloj }) {
   return html`
     <p class="muted small center">${hechas}/${leer(w).secciones.length} secciones hechas</p>
     ${leer(w).secciones.map((s, si) => html`
-      <${Seccion} key=${si} s=${s} si=${si} r=${res[si] || {}} marcas=${marcas} onReloj=${onReloj}
+      <${Seccion} key=${si} s=${s} si=${si} r=${res[si] || {}} marcas=${marcas} hist=${hist} date=${w.date} onReloj=${onReloj}
         onGuardar=${c => guardarRes(si, c)} />`)}
     <div class="inline">
       <button class="btn secondary" onClick=${() => setEditando(true)}><${Icon} name="pen" size=${16} /> Editar texto</button>
@@ -87,7 +89,7 @@ function Workout({ w, marcas, onReloj }) {
     </div>`;
 }
 
-function Seccion({ s, si, r, marcas, onReloj, onGuardar }) {
+function Seccion({ s, si, r, marcas, hist, date, onReloj, onGuardar }) {
   const esWod = s.formato && ES_WOD.includes(s.formato.tipo);
   const relojSeccion = s.formato && {
     cfg: s.formato,
@@ -119,14 +121,14 @@ function Seccion({ s, si, r, marcas, onReloj, onGuardar }) {
                 <button class="chip" onClick=${() => onReloj({ cfg: p.formato })}><${Icon} name="bolt" size=${13} /> ${textoFormato(p.formato)}</button>`}
             </div>`}
           ${p.lineas.map((l, li) => html`
-            <${Linea} l=${l} clave=${`${pi}-${li}`} r=${r} marcas=${marcas} onGuardar=${onGuardar} />`)}
+            <${Linea} l=${l} clave=${`${pi}-${li}`} r=${r} marcas=${marcas} hist=${hist} date=${date} onGuardar=${onGuardar} />`)}
           ${p.links?.map(u => html`<a class="video" href=${u} target="_blank" rel="noopener">▶ Ver vídeo</a>`)}
         </div>`)}
       <${Resultado} s=${s} r=${r} esWod=${esWod} onGuardar=${onGuardar} />
     </section>`;
 }
 
-function Linea({ l, clave, r, marcas, onGuardar }) {
+function Linea({ l, clave, r, marcas, hist, date, onGuardar }) {
   const rm = l.pct ? rmParaLinea(l, marcas) : null;
   const kgSugerido = i => {
     if (l.kg) return l.kg;
@@ -146,7 +148,9 @@ function Linea({ l, clave, r, marcas, onGuardar }) {
               ${!rm.esPropio && propio && !l.pctDe ? html`<br /><span class="muted">No tienes RM de ${propio}: uso el de ${rm.nombre}</span>` : ''}`
           : `Apunta tu RM de ${rm.nombre} en Marcas para calcular los kilos`}</small>`}
       ${l.links?.map(u => html` <a class="video" href=${u} target="_blank" rel="noopener">▶ vídeo</a>`)}
+      ${propio && html`<${UltimaVez} lista=${hist[claveEjercicio(propio)]} date=${date} />`}
       ${l.series && html`<${Series} l=${l} clave=${clave} r=${r} kgSugerido=${kgSugerido} marcas=${marcas} onGuardar=${onGuardar} />`}
+      ${!l.series && propio && html`<${PesoLinea} l=${l} clave=${clave} r=${r} marcas=${marcas} ultimo=${hist[claveEjercicio(propio)]?.find(h => h.date < date)} onGuardar=${onGuardar} />`}
     </div>`;
 }
 
@@ -171,22 +175,8 @@ function Series({ l, clave, r, kgSugerido, marcas, onGuardar }) {
     const final = filas.map((f, i) => ({ kg: kgDe(f, i), reps: f.reps }));
     await onGuardar({ series: { ...(r.series || {}), [clave]: final } });
     setAbierto(false);
-    // Récords: se guarda tu mejor marca de ESTE ejercicio para cada nº de repeticiones
-    // (así los RM de Hang Power Clean, Front Squat… se van llenando solos)
-    const nombre = l.ejercicios?.[0];
-    if (nombre) {
-      const id = idRM(nombre);
-      const records = [];
-      for (const reps of [...new Set(final.filter(f => f.kg && f.reps).map(f => f.reps))]) {
-        const kg = Math.max(...final.filter(f => f.reps === reps && f.kg).map(f => f.kg));
-        const prev = Math.max(0, ...marcas.filter(m => m.ejercicio === id && m.reps === reps).map(m => m.kg));
-        if (kg > prev) {
-          await db.marcas.add({ tipo: 'fuerza', ejercicio: id, nombre: nombreRM(id, marcas) === id.replace(/^x:/, '') ? nombre : nombreRM(id, marcas), kg, reps, date: todayStr() });
-          records.push(`${reps}RM ${fmt(kg, 1)} kg`);
-        }
-      }
-      if (records.length) { toast(`🏆 ¡Récord en ${nombreRM(id, marcas) === id.replace(/^x:/, '') ? nombre : nombreRM(id, marcas)}! ${records.join(' · ')}`); return; }
-    }
+    const records = l.ejercicios?.[0] ? await registrarRecords(l.ejercicios[0], final, marcas) : null;
+    if (records) return;
     toast('Series guardadas ✓');
   };
   return html`
@@ -352,7 +342,7 @@ function Ejercicios() {
         e.veces++;
         if (w.date > e.ultima) e.ultima = w.date;
         (l.links || []).forEach(u => e.links.add(u));
-        const series = w.resultados?.[si]?.series?.[`${pi}-${li}`];
+        const series = w.resultados?.[si]?.series?.[`${pi}-${li}`] || (w.resultados?.[si]?.pesos?.[`${pi}-${li}`] ? [w.resultados[si].pesos[`${pi}-${li}`]] : null);
         e.historial.push({ date: w.date, texto: l.texto + (l.prescripcion ? ' ' + l.prescripcion : ''), series });
       }
     })));
@@ -439,4 +429,76 @@ export function leer(w) {
   const k = w.id + ':' + w.texto;
   if (!cacheLectura.has(k)) cacheLectura.set(k, parsearEntreno(w.texto));
   return cacheLectura.get(k);
+}
+
+// Guarda tu mejor marca de un ejercicio para cada nº de repeticiones (sirve para cualquier ejercicio,
+// tenga o no RM "oficial"). Devuelve true si hubo récord (y lo avisa).
+async function registrarRecords(nombre, filas, marcas) {
+  const id = idRM(nombre);
+  const nombreBonito = id.startsWith('x:') ? nombre : nombreRM(id, marcas);
+  const records = [];
+  for (const reps of [...new Set(filas.filter(f => f.kg && f.reps).map(f => f.reps))]) {
+    const kg = Math.max(...filas.filter(f => f.reps === reps && f.kg).map(f => f.kg));
+    const prev = Math.max(0, ...marcas.filter(m => m.ejercicio === id && m.reps === reps).map(m => m.kg));
+    if (kg > prev) {
+      await db.marcas.add({ tipo: 'fuerza', ejercicio: id, nombre: nombreBonito, kg, reps, date: todayStr() });
+      records.push(`${reps}RM ${fmt(kg, 1)} kg`);
+    }
+  }
+  if (records.length) toast(`🏆 ¡Récord en ${nombreBonito}! ${records.join(' · ')}`);
+  return records.length > 0;
+}
+
+// Todos los pesos que has usado en cada ejercicio (de las series y de "+ kg"), del más reciente al más antiguo
+function historialPesos(workouts) {
+  const h = {};
+  for (const w of workouts) {
+    const res = w.resultados || {};
+    leer(w).secciones.forEach((s, si) => s.partes.forEach((p, pi) => p.lineas.forEach((l, li) => {
+      const nombre = l.ejercicios?.[0];
+      if (!nombre) return;
+      const k = `${pi}-${li}`;
+      const usados = res[si]?.series?.[k] || (res[si]?.pesos?.[k] ? [res[si].pesos[k]] : null);
+      const conKg = (usados || []).filter(x => x.kg);
+      if (conKg.length) (h[claveEjercicio(nombre)] ||= []).push({ date: w.date, sets: conKg });
+    })));
+  }
+  for (const k of Object.keys(h)) h[k].sort((a, b) => b.date.localeCompare(a.date));
+  return h;
+}
+
+// "Última vez: 20 kg × 10 (3 oct)"
+function UltimaVez({ lista, date }) {
+  const prev = lista?.find(h => h.date < date);
+  if (!prev) return null;
+  const max = Math.max(...prev.sets.map(x => x.kg));
+  const txt = prev.sets.map(x => `${fmt(x.kg, 1)} kg${x.reps ? ' × ' + x.reps : ''}`).join(' · ');
+  return html`<small class="muted">${`Última vez: ${txt} (${fmtDate(prev.date, { day: 'numeric', month: 'short' })})${prev.sets.length > 1 ? ` · máx. ${fmt(max, 1)} kg` : ''}`}</small>`;
+}
+
+// Apuntar el peso de un ejercicio que no viene en series (Bulgarian Split Squat, Hip Thrust…)
+function PesoLinea({ l, clave, r, marcas, ultimo, onGuardar }) {
+  const guardado = r.pesos?.[clave];
+  const [abierto, setAbierto] = useState(false);
+  const [kg, setKg] = useState(guardado?.kg ?? l.kg ?? (ultimo ? Math.max(...ultimo.sets.map(x => x.kg)) : null));
+  const [reps, setReps] = useState(guardado?.reps ?? l.repsLinea ?? null);
+  if (!abierto) return html`
+    <div class="series-resumen">
+      ${guardado && html`<small class="pct">✓ ${fmt(guardado.kg, 1)} kg${guardado.reps ? ` × ${guardado.reps}` : ''}</small>`}
+      <button class="chip" onClick=${() => setAbierto(true)}>${guardado ? 'Editar peso' : '+ kg'}</button>
+    </div>`;
+  return html`
+    <div class="serie">
+      <span></span>
+      <${Num} value=${kg} onChange=${setKg} suffix="kg" />
+      <${Num} value=${reps} onChange=${setReps} suffix="reps" />
+    </div>
+    <div class="inline">
+      <button class="btn small" disabled=${!kg} onClick=${async () => {
+        await onGuardar({ pesos: { ...(r.pesos || {}), [clave]: { kg, reps } } });
+        setAbierto(false);
+        if (!(reps && await registrarRecords(l.ejercicios[0], [{ kg, reps }], marcas))) toast('Peso guardado ✓');
+      }}>Guardar peso</button>
+      <button class="link" onClick=${() => setAbierto(false)}>Cancelar</button>
+    </div>`;
 }

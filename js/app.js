@@ -10,6 +10,7 @@ import { Mas } from './views/mas.js';
 import { Progreso } from './views/progreso.js';
 import { Perfil } from './views/perfil.js';
 import { Entreno } from './views/entreno.js';
+import { Guia } from './views/guia.js';
 
 // "oculta": se abre desde otra pantalla (el plan, desde Más)
 const TABS = [
@@ -21,6 +22,7 @@ const TABS = [
   { id: 'biblioteca', label: 'Productos', icon: 'biblio', View: Biblioteca, oculta: true, padre: 'despensa' },
   { id: 'plan', label: 'Plan', icon: 'plan', View: Plan, oculta: true, padre: 'mas' },
   { id: 'perfil', label: 'Perfil', icon: 'mas', View: Perfil, oculta: true, padre: 'mas' },
+  { id: 'guia', label: 'Guía', icon: 'mas', View: Guia, oculta: true, padre: 'mas' },
   { id: 'ejercicios', label: 'Ejercicios', icon: 'pesa', View: p => html`<${Entreno} ...${p} inicial="ejercicios" />`, oculta: true, padre: 'entreno' },
 ];
 

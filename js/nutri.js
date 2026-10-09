@@ -21,6 +21,7 @@ export const GROUPS = {
   grasa: { name: 'Grasas', color: '#eab308' },
   suplemento: { name: 'Suplementos', color: '#a855f7' },
   otro: { name: 'Otros', color: '#8b8b8b' },
+  hogar: { name: 'Hogar, limpieza e higiene', color: '#14b8a6' },
 };
 
 // Factor de cocción: el propio o el del alimento base al que equivale
@@ -58,8 +59,9 @@ export function blockFoods(block, plan) {
   return out;
 }
 
+// ¿Se puede comer? (oculta lo del mar si lo tienes excluido, y las cosas de casa como toallitas)
 export function visibleFood(food, prefs) {
-  return food && !(prefs.excluirMar && food.mar);
+  return food && food.group !== 'hogar' && !(prefs.excluirMar && food.mar);
 }
 
 // Bloques de una comida según la opción elegida

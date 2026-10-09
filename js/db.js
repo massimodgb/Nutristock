@@ -92,8 +92,14 @@ export function stockMap(lots, foods) {
   return byFood;
 }
 
-// Descuenta gramos en crudo de la despensa: primero lo que caduca antes.
-// Devuelve qué se descontó de cada lote para poder deshacerlo.
+// Cada "lote" es un envase (una bolsa, un paquete, un bote) o, si el producto no tiene envase, una cantidad suelta.
+// Orden de gasto: primero el envase ABIERTO, luego el que caduca antes, luego el más antiguo.
+export function ordenGasto(a, b) {
+  return (!!b.abierto - !!a.abierto) || (a.expiry || '9999').localeCompare(b.expiry || '9999') || a.addedAt - b.addedAt;
+}
+
+// Descuenta gramos en crudo de la despensa. Cuando un envase se acaba, se marca como terminado
+// y el siguiente pasa a estar abierto. Devuelve qué se descontó de cada lote para poder deshacerlo.
 export async function deductStock(foodIds, rawG) {
   const deducted = [];
   await db.transaction('rw', db.lots, async () => {
@@ -101,15 +107,15 @@ export async function deductStock(foodIds, rawG) {
       .filter(l => l.g > 0)
       .sort((a, b) => {
         const pa = foodIds.indexOf(a.foodId), pb = foodIds.indexOf(b.foodId);
-        if (pa !== pb) return pa - pb;
-        return (a.expiry || '9999').localeCompare(b.expiry || '9999') || a.addedAt - b.addedAt;
+        return pa !== pb ? pa - pb : ordenGasto(a, b);
       });
     let left = rawG;
     for (const l of lots) {
       if (left <= 0) break;
       const take = Math.min(l.g, left);
-      await db.lots.update(l.id, { g: round1(l.g - take) });
-      deducted.push({ lotId: l.id, g: take });
+      const queda = round1(l.g - take);
+      await db.lots.update(l.id, { g: queda, abierto: queda > 0, ...(queda <= 0 ? { terminado: Date.now() } : {}) });
+      deducted.push({ lotId: l.id, g: take, estabaAbierto: !!l.abierto });
       left -= take;
     }
   });
@@ -120,9 +126,20 @@ export async function restoreStock(deducted = []) {
   await db.transaction('rw', db.lots, async () => {
     for (const d of deducted) {
       const l = await db.lots.get(d.lotId);
-      if (l) await db.lots.update(l.id, { g: round1(l.g + d.g) });
+      if (l) await db.lots.update(l.id, { g: round1(l.g + d.g), abierto: d.estabaAbierto ?? l.abierto, terminado: null });
     }
   });
+}
+
+// Resumen del stock de un producto en envases: "2 cerrados + 1 abierto (320 g)"
+export function resumenStock(food, lots) {
+  const mios = lots.filter(l => l.foodId === food.id && l.g > 0);
+  const total = mios.reduce((s, l) => s + l.g, 0);
+  const pack = food.packG;
+  if (!pack) return { total, envases: null, cerrados: 0, abiertos: [], mios };
+  const abiertos = mios.filter(l => l.abierto || l.g < pack * 0.98);
+  const cerrados = mios.length - abiertos.length;
+  return { total, envases: total / pack, cerrados, abiertos, mios };
 }
 
 export async function deleteLog(log) {

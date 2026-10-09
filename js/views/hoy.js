@@ -11,6 +11,7 @@ import {
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast } from '../ui.js';
 import { PRESETS_FUERA } from '../data/foods.js';
 import { leer } from './entreno.js';
+import { estadoCompra, textoStock } from './stock.js';
 
 export function Hoy({ go }) {
   const [date, setDate] = useState(todayStr());
@@ -118,14 +119,19 @@ export function Hoy({ go }) {
 }
 
 function Resumen({ total, objetivo: ref, onClick }) {
-  const kcalPct = ref?.kcal ? Math.min(100, (total.kcal / ref.kcal) * 100) : 0;
+  const pct = ref?.kcal ? (total.kcal / ref.kcal) * 100 : 0;
   const quedan = ref ? ref.kcal - total.kcal : null;
   return html`
-    <section class="card resumen tocable" onClick=${onClick}>
-      <div class="kcal-ring" style=${{ '--pct': kcalPct }}>
-        <div><b>${fmt(total.kcal)}</b><small>${ref ? `de ≈${fmt(ref.kcal)}` : 'kcal'}</small>
-          ${quedan != null && html`<small class=${quedan < 0 ? 'over' : ''}>${quedan >= 0 ? `quedan ${fmt(quedan)}` : `+${fmt(-quedan)} de más`}</small>`}</div>
-      </div>
+    <section class="card resumen-dia tocable" onClick=${onClick}>
+      ${ref ? html`
+        <div class="ecuacion">
+          <div><b>${fmt(ref.kcal)}</b><small>Objetivo</small></div><span>−</span>
+          <div><b>${fmt(total.kcal)}</b><small>Comido</small></div><span>=</span>
+          <div class=${quedan < 0 ? 'over' : 'ok'}><b>${fmt(Math.abs(quedan))}</b><small>${quedan >= 0 ? 'Te quedan' : 'Te pasaste'}</small></div>
+        </div>
+        <div class="bar-track grande"><div class="bar-fill" style=${{ width: Math.min(100, pct) + '%', background: pct > 110 ? 'var(--danger)' : 'var(--accent)' }}></div></div>
+        <small class="muted">Llevas el ${fmt(pct)}% de las calorías de tu plan de hoy.</small>` : html`
+        <div class="ecuacion"><div><b>${fmt(total.kcal)}</b><small>Comido hoy (kcal)</small></div></div>`}
       <div class="bars">
         <${Bar} label="Proteína" value=${total.prot} target=${ref?.prot} color="var(--prot)" />
         <${Bar} label="Carbohidratos" value=${total.carb} target=${ref?.carb} color="var(--carb)" />
@@ -134,7 +140,7 @@ function Resumen({ total, objetivo: ref, onClick }) {
           <span>Fibra ${fmt(total.fib)} g</span><span>Azúcar ${fmt(total.sug)} g</span>
           <span>Sat. ${fmt(total.sat, 1)} g</span><span>Sal ${fmt(total.salt, 1)} g</span>
         </div>
-        <small class="ver-mas">Toca para ver el desglose ›</small>
+        <small class="ver-mas">Toca para ver el desglose por comida ›</small>
       </div>
     </section>`;
 }
@@ -232,9 +238,9 @@ function Avisos({ lots, foods, byId, stock, basicos, prefs, plan, choice, logs, 
     const name = byId[l.foodId]?.name || 'Producto';
     items.push({ tipo: d < 0 ? 'mal' : 'warn', txt: d < 0 ? `${name} caducó` : d === 0 ? `${name} caduca hoy` : `${name} caduca en ${d} día${d > 1 ? 's' : ''}`, to: 'despensa' });
   }
-  for (const f of foods) {
-    const g = stock[f.id]?.g || 0;
-    if (f.minG && g < f.minG) items.push({ tipo: 'warn', txt: `Queda poco: ${f.name} (${fmtG(g, f)})`, to: 'despensa' });
+  const aComprar = foods.filter(f => estadoCompra(f, lots).necesita);
+  if (aComprar.length) {
+    items.push({ tipo: 'warn', txt: `A la lista de la compra: ${aComprar.map(f => `${f.name} (quedan ${textoStock(f, lots)})`).join(', ')}`, to: 'despensa' });
   }
   const sin = basicos.filter(b => b.status === 'no').map(b => b.name);
   if (sin.length) items.push({ tipo: 'warn', txt: `Se acabó: ${sin.join(', ')}`, to: 'despensa' });

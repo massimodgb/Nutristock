@@ -4,6 +4,7 @@ import { db, useLive, getPrefs, round1 } from '../db.js';
 import { NUTRS, GROUPS, fmt, parseNum, todayStr } from '../nutri.js';
 import { Sheet, Num, Toggle, Dot, Empty, Icon, toast } from '../ui.js';
 import { buscarCodigo, parseEtiqueta, iniciarEscaner, leerCodigoDeFoto } from '../importar.js';
+import { CantidadStock } from './stock.js';
 
 export function Biblioteca({ go }) {
   const foods = useLive(() => db.foods.toArray(), []);
@@ -71,7 +72,12 @@ export function Biblioteca({ go }) {
       <//>
       <${Sheet} open=${sheet?.type === 'form'} onClose=${() => setSheet(null)} title=${sheet?.food?.id ? 'Editar' : 'Nuevo producto'}>
         ${sheet?.type === 'form' && html`<${FoodForm} key=${sheet.food?.id || 'nuevo'} initial=${sheet.food} aviso=${sheet.aviso}
-          foods=${foods} onDone=${() => setSheet(null)} />`}
+          foods=${foods} onDone=${() => setSheet(null)}
+          onSaved=${f => (sheet.food?.id ? setSheet(null) : setSheet({ type: 'cantidad', food: f }))} />`}
+      <//>
+      <${Sheet} open=${sheet?.type === 'cantidad'} onClose=${() => setSheet(null)} title="¿Cuánto tienes en casa?">
+        ${sheet?.type === 'cantidad' && html`<${CantidadStock} food=${sheet.food} onDone=${() => setSheet(null)} />
+          <button class="link" onClick=${() => setSheet(null)}>Ahora no tengo</button>`}
       <//>
     </div>`;
 }
@@ -198,7 +204,7 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
   const [cocido, setCocido] = useState(!!initial?.factor);
   const [cal, setCal] = useState({ crudo: null, cocido: null });
   const esNuevo = !initial?.id;
-  const [stockAhora, setStockAhora] = useState({ on: esNuevo, envases: 1, g: null, expiry: '' });
+  const hogar = f.group === 'hogar';
   const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
   const setN = (k, v) => setF(prev => ({ ...prev, n: { ...prev.n, [k]: v } }));
 
@@ -215,15 +221,12 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
       factor: cocido ? f.factor || null : null,
       n: Object.fromEntries(NUTRS.map(({ k }) => [k, f.n[k] ?? 0])),
     };
+    if (hogar) { food.factor = null; food.genericId = ''; food.mar = false; }
     if (food.source === 'base') food.edited = true;
     await db.foods.put(food);
-    if (esNuevo && stockAhora.on) {
-      const g = f.packG ? f.packG * (stockAhora.envases || 1) : stockAhora.g;
-      if (g) await db.lots.add({ foodId: food.id, g, expiry: stockAhora.expiry || null, addedAt: Date.now() });
-    }
     toast('Guardado ✓');
-    onSaved?.(food);
-    onDone();
+    // Si quien abrió la ficha quiere seguir (por ejemplo, para decir cuánto tienes), le pasamos el producto
+    if (onSaved) onSaved(food); else onDone();
   };
 
   const borrar = async () => {
@@ -237,38 +240,45 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
   return html`
     <div class="form">
       ${aviso && html`<p class="notice">${aviso}</p>`}
-      <label>Nombre<input value=${f.name} onInput=${e => set('name', e.target.value)} placeholder="Ej: Pechuga de pollo fileteada" /></label>
+      <label>Nombre<input value=${f.name} onInput=${e => set('name', e.target.value)} placeholder=${hogar ? 'Ej: Toallitas húmedas' : 'Ej: Pechuga de pollo fileteada'} /></label>
+      <${Toggle} label="No es comida" hint="Casa, limpieza, higiene: toallitas, papel, detergente…"
+        checked=${hogar} onChange=${v => set('group', v ? 'hogar' : '')} />
       <div class="grid2">
         <label>Marca<input value=${f.brand || ''} onInput=${e => set('brand', e.target.value)} placeholder="Hacendado" /></label>
-        <label>Grupo
+        ${!hogar && html`<label>Grupo
           <select value=${f.group || generic?.group || ''} onChange=${e => set('group', e.target.value)}>
             <option value="">—</option>
-            ${Object.entries(GROUPS).map(([k, g]) => html`<option value=${k}>${g.name}</option>`)}
+            ${Object.entries(GROUPS).filter(([k]) => k !== 'hogar').map(([k, g]) => html`<option value=${k}>${g.name}</option>`)}
           </select>
-        </label>
+        </label>`}
       </div>
-      <label>Cuenta como (en tu plan)
+      ${!hogar && html`<label>Cuenta como (en tu plan)
         <select value=${f.genericId || ''} onChange=${e => set('genericId', e.target.value)}>
           <option value="">— Ninguno —</option>
           ${bases.filter(b => b.id !== f.id).map(b => html`<option value=${b.id}>${b.name}</option>`)}
         </select>
         <small class="muted">Así, cuando tu plan diga "Pechuga de pollo", te ofrecerá este producto y descontará su stock.</small>
-      </label>
+      </label>`}
 
-      <h4>Por 100 g (como viene en la etiqueta)</h4>
+      ${!hogar && html`<h4>Por 100 g (como viene en la etiqueta)</h4>
       <div class="grid2">
         ${NUTRS.map(({ k, name, unit }) => html`
           <label>${name.replace('· ', '')}<${Num} value=${f.n[k]} onChange=${v => setN(k, v)} suffix=${unit} /></label>`)}
-      </div>
+      </div>`}
 
-      <h4>Peso y cocción</h4>
+      <h4>Envase</h4>
       <div class="grid2">
-        <label>Peso del envase<${Num} value=${f.packG} onChange=${v => set('packG', v)} suffix="g" /></label>
+        ${!hogar && html`<label>Peso de cada envase<${Num} value=${f.packG} onChange=${v => set('packG', v)} suffix="g" /></label>`}
+        <label>El envase se llama<input value=${f.envase || ''} onInput=${e => set('envase', e.target.value)} placeholder=${hogar ? 'paquete, rollo, bote…' : 'bolsa, paquete, bote…'} /></label>
+        ${!hogar && html`
+          <label>Peso de cada unidad<${Num} value=${f.unitG} onChange=${v => set('unitG', v)} suffix="g" /></label>
+          <label>La unidad se llama<input value=${f.unitName || ''} onInput=${e => set('unitName', e.target.value)} placeholder="rebanada, yogur, huevo…" /></label>`}
         <label>Código de barras<input inputmode="numeric" value=${f.barcode || ''} onInput=${e => set('barcode', e.target.value.trim())} /></label>
-        <label>Peso por unidad<${Num} value=${f.unitG} onChange=${v => set('unitG', v)} suffix="g" /></label>
-        <label>Nombre de unidad<input value=${f.unitName || ''} onInput=${e => set('unitName', e.target.value)} placeholder="huevo, loncha…" /></label>
       </div>
-      <${Toggle} label="Lo peso cocinado" checked=${cocido} onChange=${setCocido}
+      ${!hogar && html`<small class="muted">Ej.: pan de molde → envase "bolsa" de 450 g, unidad "rebanada" de 30 g. Yogures → envase "pack" de 500 g, unidad "yogur" de 125 g.</small>`}
+
+      ${!hogar && html`<h4>Cocción</h4>`}
+      ${!hogar && html`<${Toggle} label="Lo peso cocinado" checked=${cocido} onChange=${setCocido}
         hint=${factorHeredado && !cocido ? `Usa el factor de ${generic.name}: ×${fmt(generic.factor, 2)}` : 'Para arroz, pasta, carnes…'} />
       ${cocido && html`
         <label>Factor (peso cocido ÷ peso crudo)<${Num} value=${f.factor} onChange=${v => set('factor', v)} suffix="×" /></label>
@@ -282,22 +292,12 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
             <button class="btn small" onClick=${() => set('factor', Math.round((cal.cocido / cal.crudo) * 100) / 100)}>
               Usar factor ×${fmt(cal.cocido / cal.crudo, 2)}
             </button>`}
-        </div>`}
+        </div>`}`}
 
-      <h4>Despensa</h4>
-      <label>Avisarme si queda menos de<${Num} value=${f.minG} onChange=${v => set('minG', v)} suffix="g" /></label>
-      <${Toggle} label="Es comida del mar" checked=${!!f.mar} onChange=${v => set('mar', v)} />
-      ${esNuevo && html`
-        <${Toggle} label="Añadir a la despensa ahora" checked=${stockAhora.on} onChange=${v => setStockAhora({ ...stockAhora, on: v })} />
-        ${stockAhora.on && html`
-          <div class="grid2">
-            ${f.packG
-              ? html`<label>Envases<${Num} value=${stockAhora.envases} onChange=${v => setStockAhora({ ...stockAhora, envases: v })} suffix=${`× ${fmt(f.packG)} g`} /></label>`
-              : html`<label>Cantidad<${Num} value=${stockAhora.g} onChange=${v => setStockAhora({ ...stockAhora, g: v })} suffix="g" /></label>`}
-            <label>Caduca<input type="date" min=${todayStr()} value=${stockAhora.expiry} onInput=${e => setStockAhora({ ...stockAhora, expiry: e.target.value })} /></label>
-          </div>`}`}
+      ${!hogar && html`<${Toggle} label="Es comida del mar" checked=${!!f.mar} onChange=${v => set('mar', v)} />`}
+      ${esNuevo && html`<p class="muted small">Al guardar podrás decir cuántos tienes en casa.</p>`}
 
-      <button class="btn" disabled=${!f.name || f.n.kcal == null} onClick=${save}>Guardar</button>
+      <button class="btn" disabled=${!f.name || (!hogar && f.n.kcal == null)} onClick=${save}>Guardar</button>
       ${!esNuevo && f.source !== 'base' && html`<button class="btn danger" onClick=${borrar}><${Icon} name="trash" size=${18} /> Borrar producto</button>`}
     </div>`;
 }
