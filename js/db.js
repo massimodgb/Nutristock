@@ -152,8 +152,11 @@ export function resumenStock(food, lots) {
 }
 
 export async function deleteLog(log) {
-  await restoreStock(log.deducted);
-  await db.logs.delete(log.id);
+  // Devolver a la despensa y borrar el registro: todo o nada
+  await db.transaction('rw', db.lots, db.logs, async () => {
+    await restoreStock(log.deducted);
+    await db.logs.delete(log.id);
+  });
 }
 
 // ---------- Copia de seguridad ----------

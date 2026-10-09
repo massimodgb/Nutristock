@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NutriStock · comprobación antes de publicar</title>
+  <style>
+    body { font: 15px -apple-system, Segoe UI, sans-serif; margin: 24px; background: #111; color: #eee; }
+    h1 { font-size: 20px; }
+    li { margin: 3px 0; }
+    .ok { color: #4ade80; } .mal { color: #f87171; font-weight: 600; }
+    #resumen { font-size: 18px; margin: 12px 0; padding: 10px; border-radius: 8px; background: #222; }
+  </style>
+</head>
+<body>
+  <h1>Comprobación de NutriStock (antes de publicar)</h1>
+  <p>Uso: <code>py herramientas/servidor.py</code> y abrir <code>http://127.0.0.1:5180/herramientas/comprobar.html</code>.
+    Tiene que salir TODO en verde. Sirve igual para Claude y para Codex.</p>
+  <div id="resumen">Comprobando…</div>
+  <ul id="lista"></ul>
+  <script type="module">
+    const lista = document.getElementById('lista');
+    let fallos = 0, total = 0;
+    const apunta = (ok, texto) => {
+      total++; if (!ok) fallos++;
+      const li = document.createElement('li');
+      li.className = ok ? 'ok' : 'mal';
+      li.textContent = (ok ? '✓ ' : '✗ ') + texto;
+      lista.appendChild(li);
+    };
+    const prueba = async (texto, fn) => {
+      try { const r = await fn(); apunta(r === true, texto + (r === true ? '' : ` → ${JSON.stringify(r)}`)); }
+      catch (e) { apunta(false, `${texto} → error: ${e.message}`); }
+    };
+
+    // 1) Todos los módulos que lista sw.js cargan (sin caché vieja)
+    const sw = await (await fetch('/sw.js', { cache: 'reload' })).text();
+    const archivos = [...sw.matchAll(/'(js\/[^']+\.js)'/g)].map(m => m[1]);
+    for (const f of archivos) await fetch('/' + f, { cache: 'reload' });
+    for (const f of archivos) {
+      try { await import('/' + f); apunta(true, `carga ${f}`); }
+      catch (e) { apunta(false, `carga ${f} → ${e.message}`); }
+    }
+    // Todos los .js de la carpeta deberían estar en sw.js (si no, no funcionan sin conexión)
+    apunta(archivos.length >= 25, `sw.js lista ${archivos.length} módulos`);
+
+    // 2) Nunca usar "ref" como prop de un componente (Preact lo reserva: ya rompió la app dos veces)
+    for (const f of archivos) {
+      const src = await (await fetch('/' + f)).text();
+      const malos = [...src.matchAll(/<\$\{[A-Z]\w*\}[^>]*?\sref=\$\{/g)];
+      if (malos.length) apunta(false, `${f}: componente con prop "ref" (reservada)`);
+    }
+    apunta(true, 'revisado el uso de "ref" en componentes');
+
+    // 3) Cálculos clave
+    const N = await import('/js/nutri.js');
+    const { FOODS } = await import('/js/data/foods.js');
+    const byId = Object.fromEntries(FOODS.map(f => [f.id, f]));
+    await prueba('240 g de pollo cocido = 320 g en crudo', () => Math.round(N.toRaw(byId['pollo-pechuga'], 240, false, byId)) === 320 || N.toRaw(byId['pollo-pechuga'], 240, false, byId));
+    await prueba('200 g de arroz cocido ≈ 257 kcal', () => Math.round(N.nutrFor(byId['arroz-integral'], N.toRaw(byId['arroz-integral'], 200, false, byId)).kcal) === 257);
+
+    const P = await import('/js/entreno/parser.js');
+    const R = await import('/js/entreno/rm.js');
+    const linea = t => P.parsearEntreno('FUERZA\n' + t).secciones[0].partes[0].lineas[0];
+    const marcas = [{ tipo: 'fuerza', ejercicio: 'clean', kg: 100, reps: 1 }];
+    await prueba('"5x3 Clean 75%" → Clean, 5 series, 75 % de 100 = 75 kg', () => {
+      const l = linea('5x3 Clean 75%'); const rm = R.rmParaLinea(l, marcas);
+      return l.ejercicios[0] === 'Clean' && l.series === 5 && l.reps === 3 && Math.round(rm.kg * l.pct[0] / 100) === 75 || { l, rm };
+    });
+    await prueba('"10 clean con 70kg" → 70 kg', () => linea('10 clean con 70kg').kg === 70);
+    await prueba('"Hang Power Clean 3x3 @70%" usa el padre (Clean) si no hay RM propio', () => R.rmParaLinea(linea('Hang Power Clean 3x3 @70%'), marcas).id === 'clean');
+    await prueba('DB y DBs son ejercicios distintos', () => P.claveEjercicio('Power DB Clean') !== P.claveEjercicio('Power DBs Clean'));
+    await prueba('EMOM x 18min se detecta', () => P.textoFormato(P.parsearEntreno('WOD\nEMOM x 18min\n1) 10 burpees').secciones[0].formato) === 'EMOM 18 min');
+
+    const { alimentoPorNombre } = await import('/js/plan-pdf.js');
+    await prueba('"Queso Ricotta Hacendado" se clasifica como ricotta', () => alimentoPorNombre('Queso Ricotta Hacendado') === 'ricotta');
+
+    const { parseEtiqueta } = await import('/js/importar.js');
+    await prueba('Lee una etiqueta pegada con Live Text', () => {
+      const n = parseEtiqueta('Valor energético 1046 kJ / 250 kcal\nGrasas 10 g\nde las cuales saturadas 2,5 g\nHidratos de carbono 30 g\nProteínas 12 g\nSal 1,2 g');
+      return n.kcal === 250 && n.sat === 2.5 && n.prot === 12 && n.salt === 1.2 || n;
+    });
+
+    const C = await import('/js/copias.js');
+    await prueba('Una copia dañada NO se acepta', () => C.validarCopia({ app: 'otra' }).ok === false);
+    await prueba('Una copia con partes rotas se rechaza sin fallar', () => C.validarCopia({ app: 'nutristock', foods: [], logs: 'roto' }).ok === false);
+    await prueba('Una copia buena se acepta', () => C.validarCopia({ app: 'nutristock', foods: [{ id: 'a', name: 'A' }], logs: [{ date: '2026-10-10', n: { kcal: 1 } }], weights: [] }).ok === true);
+
+    document.getElementById('resumen').innerHTML = fallos
+      ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
+      : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;
+    window.__comprobacion = { fallos, total };
+  </script>
+</body>
+</html>

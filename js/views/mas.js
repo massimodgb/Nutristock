@@ -1,8 +1,9 @@
 // "Más": peso corporal, preferencias y copias de seguridad.
 import { html, useState, useEffect } from '../lib.js';
-import { db, useLive, getPrefs, setSetting, exportAll, importAll } from '../db.js';
+import { db, useLive, getPrefs, setSetting } from '../db.js';
+import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
-import { Num, Toggle, Icon, toast } from '../ui.js';
+import { Num, Toggle, Icon, Sheet, toast } from '../ui.js';
 
 export function Mas({ go }) {
   const weights = useLive(() => db.weights.orderBy('date').reverse().limit(60).toArray(), []);
@@ -22,18 +23,7 @@ export function Mas({ go }) {
   };
 
 
-  const exportar = async () => {
-    const data = JSON.stringify(await exportAll());
-    const name = `nutristock-${todayStr()}.json`;
-    const file = new File([data], name, { type: 'application/json' });
-    if (navigator.canShare?.({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: 'Copia NutriStock' }); return; } catch {}
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(file);
-    a.download = name;
-    a.click();
-  };
+
 
   return html`
     <div class="page">
@@ -42,6 +32,9 @@ export function Mas({ go }) {
       <section class="card list">
         <button class="row" onClick=${() => go('guia')}>
           <${Icon} name="check" /><span class="grow"><b>Cómo se usa (guías)</b></span><${Icon} name="right" size=${18} />
+        </button>
+        <button class="row" onClick=${() => go('informes')}>
+          <${Icon} name="plan" /><span class="grow"><b>Informes</b> para nutricionista y entrenadora</span><${Icon} name="right" size=${18} />
         </button>
         <button class="row" onClick=${() => go('ideas')}>
           <${Icon} name="bolt" /><span class="grow">Ideas y recetas</span><${Icon} name="right" size=${18} />
@@ -90,22 +83,89 @@ export function Mas({ go }) {
         </div>
       </section>
 
-      <section class="card">
-        <h3>Tus datos</h3>
-        <p class="muted small">Ahora mismo todo se guarda en este iPhone${persist ? ' (protegido contra borrado ✓)' : ''}.
-          Haz una copia de vez en cuando y guárdala en OneDrive o Archivos.</p>
-        <button class="btn" onClick=${exportar}>Exportar copia de seguridad</button>
-        <label class="btn secondary">
-          Restaurar copia
-          <input type="file" accept=".json,application/json" hidden onChange=${async e => {
-            const f = e.target.files[0];
-            if (!f || !confirm('Esto reemplaza TODOS los datos actuales por los de la copia. ¿Seguir?')) return;
-            try { await importAll(JSON.parse(await f.text())); toast('Copia restaurada ✓'); }
-            catch (err) { alert(err.message); }
-          }} />
-        </label>
-      </section>
+      <${TusDatos} persist=${persist} />
 
       <p class="muted small center">NutriStock · Fase 1</p>
     </div>`;
+}
+
+// ---------- Tus datos: copias y restauración ----------
+function TusDatos({ persist }) {
+  const [estado, setEstado] = useState(null);
+  const [internas, setInternas] = useState([]);
+  const [revisar, setRevisar] = useState(null); // { datos, v, origen }
+  const recargar = async () => { setEstado(await estadoCopia()); setInternas(await listarInternas()); };
+  useEffect(() => { recargar(); }, []);
+
+  const exportar = async () => { if (await exportarCopia()) { toast('Copia guardada ✓'); recargar(); } };
+  const abrirArchivo = async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    let datos = null;
+    try { datos = JSON.parse(await f.text()); } catch {}
+    setRevisar({ datos, v: validarCopia(datos), origen: f.name });
+  };
+  const abrirInterna = async id => {
+    const c = await leerInterna(id);
+    setRevisar({ datos: c.datos, v: validarCopia(c.datos), origen: `copia automática del ${new Date(c.fecha).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` });
+  };
+  const restaurar = async () => {
+    try {
+      await restaurarCopia(revisar.datos);
+      toast('Copia restaurada ✓');
+      setRevisar(null);
+      setTimeout(() => location.reload(), 600);
+    } catch (err) { alert(err.message); }
+  };
+  const u = estado?.ultima;
+
+  return html`
+    <section class="card form">
+      <h3>Tus datos</h3>
+      <p class="small">Todo se guarda en este iPhone, dentro de la app. ${persist ? html`<span class="tag ok">protegido contra borrado ✓</span>` : html`<span class="tag warn">iOS podría borrarlos si no usas la app en semanas</span>`}</p>
+      <div class=${'aviso ' + (estado?.recordar ? 'warn' : 'ok')}>
+        <span>${u
+          ? html`Última copia guardada fuera: <b>${estado.dias === 0 ? 'hoy' : estado.dias === 1 ? 'ayer' : `hace ${estado.dias} días`}</b>.`
+          : html`<b>Aún no has guardado ninguna copia fuera del iPhone.</b>`}
+          ${estado?.recordar ? ' Haz una ahora: es lo que te salva si se borra la app o cambias de móvil.' : ''}</span>
+      </div>
+      <button class="btn" onClick=${exportar}><${Icon} name="check" size=${18} /> Exportar copia de seguridad</button>
+      <small class="muted">Se abre "Compartir": elige "Guardar en Archivos" → OneDrive (o iCloud Drive). Hazlo una vez por semana.</small>
+
+      <h4>Copias automáticas (dentro de la app)</h4>
+      <small class="muted">La app guarda sola una copia al día (las últimas ${internas.length || 7}). Sirven si algo sale mal (por ejemplo, restaurar el archivo equivocado), pero no si se borra la app: para eso es la copia de arriba.</small>
+      ${internas.length === 0 && html`<p class="muted small">Todavía no hay ninguna (se crea al abrir la app).</p>`}
+      <div class="list">
+        ${internas.map(c => html`
+          <button class="row" onClick=${() => abrirInterna(c.id)}>
+            <span class="grow">${new Date(c.fecha).toLocaleString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              <br /><small class="muted">${c.motivo} · ${c.registros} registros</small></span>
+            <small class="muted">Ver</small>
+          </button>`)}
+      </div>
+
+      <label class="btn secondary">
+        Restaurar desde un archivo
+        <input type="file" accept=".json,application/json" hidden onChange=${abrirArchivo} />
+      </label>
+    </section>
+
+    <${Sheet} open=${!!revisar} onClose=${() => setRevisar(null)} title="Revisar copia">
+      ${revisar && html`
+        <div class="form">
+          <p class="small">Origen: ${revisar.origen}</p>
+          ${revisar.v.ok ? html`
+            <div class="preview small">
+              <b>La copia está bien.</b> Contiene:<br />
+              ${revisar.v.resumen.registros} registros de comida · ${revisar.v.resumen.productos} productos tuyos ·
+              ${revisar.v.resumen.despensa} envases en la despensa · ${revisar.v.resumen.pesos} pesos · ${revisar.v.resumen.entrenos} entrenos
+              ${revisar.v.resumen.fecha !== '¿?' ? html`<br />Exportada el ${revisar.v.resumen.fecha}.` : ''}
+            </div>
+            <p class="aviso warn">Restaurar <b>reemplaza todo</b> lo que tienes ahora por esta copia. Antes, la app guarda sola una copia automática de lo actual, por si te arrepientes.</p>
+            <button class="btn danger" onClick=${restaurar}>Reemplazar mis datos por esta copia</button>` : html`
+            <p class="error"><b>Este archivo no se puede restaurar.</b> No se ha cambiado nada.</p>
+            <ul class="small">${revisar.v.errores.map(e => html`<li>${e}</li>`)}</ul>`}
+        </div>`}
+    <//>`;
 }

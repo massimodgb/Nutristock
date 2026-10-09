@@ -110,6 +110,7 @@ export function Ideas({ go }) {
 function Receta({ r, e, meal, foods, stock, onDone }) {
   const date = todayStr();
   const registrar = async () => {
+    await db.transaction('rw', db.lots, db.logs, async () => {
     for (const it of e.items) {
       const rawG = toRaw(it.food, it.g, false, Object.fromEntries(foods.map(f => [f.id, f])));
       await saveLog({
@@ -117,6 +118,7 @@ function Receta({ r, e, meal, foods, stock, onDone }) {
         g: it.g, crudo: false, rawG, n: nutrFor(it.food, rawG), deduct: (stock[it.food.id]?.g || 0) > 0, foods,
       });
     }
+    });
     if (e.optionId) {
       const el = await getSetting('opciones:' + date, {});
       await setSetting('opciones:' + date, { ...el, [meal.id]: e.optionId });

@@ -13,6 +13,7 @@ import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
 import { leer } from './entreno.js';
 import { estadoCompra, textoStock } from './stock.js';
+import { exportarCopia, estadoCopia } from '../copias.js';
 
 export function Hoy({ go }) {
   const [date, setDate] = useState(todayStr());
@@ -53,13 +54,17 @@ export function Hoy({ go }) {
     <div class="page">
       <header class="top">
         <button class="icon-btn" onClick=${() => setDate(addDays(date, -1))} aria-label="Día anterior"><${Icon} name="left" /></button>
-        <button class="top-title" onClick=${() => setDate(todayStr())}>
+        <label class="top-title fecha-picker">
           ${isToday ? 'Hoy' : fmtDate(date, { weekday: 'long' })}
-          <small>${fmtDate(date, { day: 'numeric', month: 'long' })}</small>
-        </button>
+          <small>${fmtDate(date, { day: 'numeric', month: 'long' })} ▾</small>
+          <input type="date" aria-label="Elegir fecha" value=${date}
+            onChange=${e => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && setDate(e.target.value)} />
+        </label>
         <button class="icon-btn" onClick=${() => setDate(addDays(date, 1))} aria-label="Día siguiente"><${Icon} name="right" /></button>
       </header>
 
+      ${!isToday && html`<button class="chip volver-hoy" onClick=${() => setDate(todayStr())}>Volver a hoy</button>`}
+      ${isToday && html`<${RecordatorioCopia} />`}
       <${Resumen} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
       <${Rapido} date=${date} logs=${logs} ayer=${ayer}
         onCopiar=${(titulo, entradas) => setSheet({ type: 'copiar', titulo, entradas })}
@@ -138,7 +143,7 @@ function Resumen({ total, objetivo: ref, onClick }) {
         </div>
         <div class="bar-track grande"><div class="bar-fill" style=${{ width: Math.min(100, pct) + '%', background: pct > 110 ? 'var(--danger)' : 'var(--accent)' }}></div></div>
         <small class="muted">Llevas el ${fmt(pct)}% de las calorías de tu plan de hoy.</small>` : html`
-        <div class="ecuacion"><div><b>${fmt(total.kcal)}</b><small>Comido hoy (kcal)</small></div></div>`}
+        <div class="ecuacion"><div><b>${fmt(total.kcal)}</b><small>Comido (kcal)</small></div></div>`}
       <div class="bars">
         <${Bar} label="Proteína" value=${total.prot} target=${ref?.prot} color="var(--prot)" />
         <${Bar} label="Carbohidratos" value=${total.carb} target=${ref?.carb} color="var(--carb)" />
@@ -453,19 +458,24 @@ function AmountForm({ food, defaultG, byId, stockG, onSave }) {
         <${Toggle} label="Lo pesé en crudo" checked=${crudo} onChange=${setCrudo}
           hint=${crudo ? '' : `${fmt(g || 0)} g cocido ≈ ${fmt(rawG)} g en crudo (factor ${fmt(factor, 2)})`} />`}
       <${Toggle} label="Descontar de la despensa" checked=${deduct} onChange=${setDeduct}
-        hint=${stockG > 0 ? `En casa: ${fmtG(stockG, food)} → se descontarán ${fmt(rawG)} g` : 'No hay stock registrado'} />
+        hint=${stockG > 0 ? `En casa: ${fmtG(stockG, food)} → se descontarán ${fmt(Math.min(rawG, stockG))} g` : 'No hay stock registrado'} />
+      ${deduct && stockG > 0 && rawG > stockG * 1.02 && html`
+        <p class="aviso warn small">Registras ${fmt(rawG)} g en crudo pero en casa solo constan ${fmtG(stockG, food)}: se descontará lo que hay y la comida se apunta entera. Si te falta stock por registrar, añádelo en Despensa.</p>`}
       <div class="preview"><${MacroLine} n=${n} /></div>
       <button class="btn" disabled=${!g} onClick=${() => onSave({ food, g, crudo, rawG, n, deduct })}>Guardar</button>
     </div>`;
 }
 
+// Descontar de la despensa y apuntar el registro van juntos: o se hacen las dos cosas o ninguna
 export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods }) {
-  const deducted = deduct ? await deductStock(candidateIds(food, foods), rawG) : [];
-  const nr = Object.fromEntries(Object.entries(n).map(([k, v]) => [k, round1(v)]));
-  await db.logs.add({
-    date, mealId, optionId: optionId || null, blockId: blockId || null,
-    foodId: food.id, name: food.name + (food.brand ? ` · ${food.brand}` : ''), group: food.group,
-    g, crudo, rawG: round1(rawG), n: nr, deducted, ts: Date.now(),
+  await db.transaction('rw', db.lots, db.logs, async () => {
+    const deducted = deduct ? await deductStock(candidateIds(food, foods), rawG) : [];
+    const nr = Object.fromEntries(Object.entries(n).map(([k, v]) => [k, round1(v)]));
+    await db.logs.add({
+      date, mealId, optionId: optionId || null, blockId: blockId || null,
+      foodId: food.id, name: food.name + (food.brand ? ` · ${food.brand}` : ''), group: food.group,
+      g, crudo, rawG: round1(rawG), n: nr, deducted, ts: Date.now(),
+    });
   });
 }
 
@@ -474,12 +484,14 @@ function LogDetail({ log, byId, foods, onDone }) {
   const food = log.foodId && byId[log.foodId];
   const [g, setG] = useState(log.g);
   const guardar = async () => {
-    // Devolvemos lo descontado, recalculamos y volvemos a descontar con el peso nuevo
-    await restoreStock(log.deducted);
-    const rawG = toRaw(food, g, log.crudo, byId);
-    const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
-    const n = Object.fromEntries(Object.entries(nutrFor(food, rawG)).map(([k, v]) => [k, round1(v)]));
-    await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted });
+    // Devolvemos lo descontado, recalculamos y volvemos a descontar con el peso nuevo (todo o nada)
+    await db.transaction('rw', db.lots, db.logs, async () => {
+      await restoreStock(log.deducted);
+      const rawG = toRaw(food, g, log.crudo, byId);
+      const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
+      const n = Object.fromEntries(Object.entries(nutrFor(food, rawG)).map(([k, v]) => [k, round1(v)]));
+      await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted });
+    });
     toast('Actualizado ✓');
     onDone();
   };
@@ -762,6 +774,8 @@ function CopiarSheet({ entradas, plan, foods, byId, stock, date, elecciones, onD
 
   const anadir = async () => {
     const opciones = { ...(elecciones || {}) };
+    // Todo el día de una vez: o se añade todo, o nada
+    await db.transaction('rw', db.lots, db.logs, async () => {
     for (const f of elegidas) {
       const { food, rawG, n } = calcular(f);
       if (f.optionId) opciones[f.mealId] = f.optionId;
@@ -772,6 +786,7 @@ function CopiarSheet({ entradas, plan, foods, byId, stock, date, elecciones, onD
         await db.logs.add({ date, mealId: f.mealId, name: f.name, n: f.n, aprox: f.aprox, deducted: [], ts: Date.now() });
       }
     }
+    });
     await setSetting('opciones:' + date, opciones);
     toast(`Añadidos ${elegidas.length} alimentos ✓`);
     onDone();
@@ -873,4 +888,16 @@ function ProductoFuera({ plato, date, onBack, onDone }) {
         onDone();
       }}>Registrar ≈ ${fmt(n.kcal)} kcal</button>
     </div>`;
+}
+
+// Si hace tiempo que no guardas una copia fuera del iPhone, te lo recordamos (sin bloquear nada)
+function RecordatorioCopia() {
+  const [estado, setEstado] = useState(null);
+  useEffect(() => { estadoCopia().then(setEstado); }, []);
+  if (!estado?.recordar) return null;
+  return html`
+    <section class="card aviso warn copia-aviso">
+      <span class="grow">${estado.ultima ? `Hace ${estado.dias} días que no guardas una copia de tus datos.` : 'Aún no has guardado ninguna copia de tus datos fuera del iPhone.'}</span>
+      <button class="btn small" onClick=${async () => { if (await exportarCopia()) { toast('Copia guardada ✓'); setEstado(await estadoCopia()); } }}>Guardar copia</button>
+    </section>`;
 }

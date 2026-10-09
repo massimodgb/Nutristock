@@ -1,6 +1,7 @@
 // Punto de entrada: carga datos base y dibuja la app con la barra de pestañas.
 import { html, render, useState, useEffect } from './lib.js';
 import { seed } from './db.js';
+import { copiaDiaria } from './copias.js';
 import { Icon } from './ui.js';
 import { Hoy } from './views/hoy.js';
 import { Despensa } from './views/despensa.js';
@@ -12,6 +13,7 @@ import { Perfil } from './views/perfil.js';
 import { Entreno } from './views/entreno.js';
 import { Guia } from './views/guia.js';
 import { Ideas } from './views/ideas.js';
+import { Informes } from './views/informes.js';
 
 // "oculta": se abre desde otra pantalla (el plan, desde Más)
 const TABS = [
@@ -25,6 +27,7 @@ const TABS = [
   { id: 'perfil', label: 'Perfil', icon: 'mas', View: Perfil, oculta: true, padre: 'mas' },
   { id: 'guia', label: 'Guía', icon: 'mas', View: Guia, oculta: true, padre: 'mas' },
   { id: 'ideas', label: 'Ideas', icon: 'hoy', View: Ideas, oculta: true, padre: 'hoy' },
+  { id: 'informes', label: 'Informes', icon: 'plan', View: Informes, oculta: true, padre: 'mas' },
   { id: 'ejercicios', label: 'Ejercicios', icon: 'pesa', View: p => html`<${Entreno} ...${p} inicial="ejercicios" />`, oculta: true, padre: 'entreno' },
 ];
 
@@ -56,6 +59,7 @@ seed()
     raiz.textContent = '';
     render(html`<${App} />`, raiz);
     window.__arrancada = true;
+    copiaDiaria(); // copia interna automática, una al día
   })
   .catch(e => {
     document.getElementById('app').innerHTML = `<p class="error" style="padding:24px">Error al iniciar: ${e.message}</p>`;
