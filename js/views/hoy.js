@@ -193,7 +193,7 @@ function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
       <tr><td>Saturadas</td><td>${fmt(total.sat, 1)} g</td><td colspan="2" class="muted">—</td></tr>
       <tr><td>Sal</td><td>${fmt(total.salt, 1)} g</td><td colspan="2" class="muted">máx. 5 g (OMS)</td></tr>
     </table>
-    <p class="muted small">Proteína por kg: ${html`<${ProtKg} total=${total} ref=${ref} />`}</p>
+    <p class="muted small">Proteína por kg: ${html`<${ProtKg} total=${total} objetivo=${ref} />`}</p>
 
     <h4>De dónde salen tus calorías</h4>
     <div class="reparto">
@@ -230,7 +230,7 @@ function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
 }
 
 // Proteína por kilo de peso corporal (si tienes el peso registrado)
-function ProtKg({ total, ref }) {
+function ProtKg({ total, objetivo: ref }) {
   const w = useLive(() => db.weights.orderBy('date').last(), []);
   if (!w?.kg) return html`apunta tu peso en Más para verla.`;
   return html`llevas ${fmt(total.prot / w.kg, 1)} g/kg, el plan da ${fmt(ref.prot / w.kg, 1)} g/kg (con ${fmt(w.kg, 1)} kg).`;

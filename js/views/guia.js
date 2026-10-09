@@ -93,6 +93,7 @@ const GUIAS = [
     p: [
       'Más → Mi plan → Nuevo plan → elige el PDF. Revisa la vista previa y pulsa "Usar este plan".',
       'Tu historial no cambia: cada día guarda sus calorías.',
+      'Si el nutricionista te corrige algo (por ejemplo, la patata de la cena son 50 g y no 100 g): Más → Mi plan → toca el lápiz ✏️ del bloque, cambia los gramos y "Guardar cambios". También puedes quitar o añadir alimentos, y con el lápiz de cada comida, cambiar su hora.',
       'Si algo sale raro en la vista previa, pásale el PDF a Claude.',
     ],
   },

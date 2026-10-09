@@ -397,3 +397,4 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 .idea-link svg:first-child { color: var(--carb); flex-shrink: 0; }
 
 .progreso-bloque { background: var(--fill); border-radius: 12px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.editar-al { gap: 8px; }

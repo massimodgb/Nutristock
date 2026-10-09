@@ -1,5 +1,5 @@
 // Piezas de interfaz reutilizables
-import { html, useEffect, useState } from './lib.js';
+import { html, useEffect, useState, useErrorBoundary } from './lib.js';
 import { GROUPS, fmt, parseNum } from './nutri.js';
 
 // Hoja que sube desde abajo (estilo iOS)
@@ -32,7 +32,7 @@ export function Sheet({ open, onClose, title, children, actions }) {
           <span class="sheet-actions">${actions || ''}</span>
         </div>
         <div class="sheet-body">
-          ${children}
+          <${Seguro}>${children}<//>
           <button class="btn secondary cerrar-abajo" onPointerUp=${cerrar} onClick=${cerrar}>Cerrar</button>
         </div>
       </div>
@@ -133,3 +133,10 @@ export const Icon = ({ name, size = 22 }) => html`
     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     <path d=${P[name]} />
   </svg>`;
+
+// Si algo falla dentro de una hoja, en vez de bloquear la app enseña el error (y la hoja se puede cerrar)
+function Seguro({ children }) {
+  const [error] = useErrorBoundary(e => console.error(e));
+  if (error) return html`<p class="error">Algo ha fallado aquí: ${String(error.message || error)}. Cierra y vuelve a intentarlo; si se repite, haz captura para Claude.</p>`;
+  return children;
+}
