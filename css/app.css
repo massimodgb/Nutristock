@@ -225,6 +225,7 @@ main { padding: env(safe-area-inset-top) 0 calc(var(--tabbar-h) + env(safe-area-
   backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
   border-top: 1px solid var(--line);
 }
+body.teclado .tabbar { display: none; } /* con el teclado abierto no hace falta y en iOS se descoloca */
 .tabbar button { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10px; color: var(--muted); padding: 2px 0; }
 .tabbar button.on { color: var(--accent); }
 

@@ -134,7 +134,7 @@ function TusDatos({ persist }) {
       <small class="muted">Se abre "Compartir": elige "Guardar en Archivos" → OneDrive (o iCloud Drive). Hazlo una vez por semana.</small>
 
       <h4>Copias automáticas (dentro de la app)</h4>
-      <small class="muted">La app guarda sola una copia al día (las últimas ${internas.length || 7}). Sirven si algo sale mal (por ejemplo, restaurar el archivo equivocado), pero no si se borra la app: para eso es la copia de arriba.</small>
+      <small class="muted">La app guarda sola una copia al día y guarda las 7 últimas (ahora hay ${internas.length}). Sirven si algo sale mal (por ejemplo, restaurar el archivo equivocado), pero no si se borra la app: para eso es la copia de arriba.</small>
       ${internas.length === 0 && html`<p class="muted small">Todavía no hay ninguna (se crea al abrir la app).</p>`}
       <div class="list">
         ${internas.map(c => html`

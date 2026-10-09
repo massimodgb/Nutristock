@@ -66,6 +66,21 @@ seed()
     console.error(e);
   });
 
+// iPhone: al cerrar el teclado, la barra de pestañas se quedaba flotando a media pantalla.
+// Mientras escribes la escondemos, y al cerrar el teclado obligamos a iOS a recolocar todo.
+const conTeclado = () => document.body.classList.toggle('teclado',
+  !!window.visualViewport && window.visualViewport.height < window.innerHeight * 0.8 ||
+  /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '') && !/^(checkbox|radio|file|date|button)$/.test(document.activeElement.type));
+document.addEventListener('focusin', conTeclado);
+const alSalir = () => setTimeout(() => {
+  conTeclado();
+  if (!document.body.classList.contains('teclado')) window.scrollTo(window.scrollX, window.scrollY);
+}, 120);
+document.addEventListener('focusout', alSalir);
+document.addEventListener('blur', alSalir, true);
+window.visualViewport?.addEventListener('resize', conTeclado);
+document.addEventListener('touchstart', () => document.body.classList.contains('teclado') && conTeclado(), { passive: true });
+
 if ('serviceWorker' in navigator && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
   // updateViaCache: 'none' = comprobar siempre si hay versión nueva de la app
   navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
