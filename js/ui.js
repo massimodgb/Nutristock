@@ -18,7 +18,10 @@ export function Sheet({ open, onClose, title, children, actions }) {
           <strong>${title}</strong>
           <span class="sheet-actions">${actions || ''}</span>
         </div>
-        <div class="sheet-body">${children}</div>
+        <div class="sheet-body">
+          ${children}
+          <button class="btn secondary cerrar-abajo" onClick=${onClose}>Cerrar</button>
+        </div>
       </div>
     </div>`;
 }

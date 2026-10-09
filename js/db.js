@@ -1,6 +1,7 @@
 // Base de datos local (vive en el teléfono). Más adelante se sincronizará con Supabase.
 import { Dexie, liveQuery, useState, useEffect } from './lib.js';
 import { FOODS, BASICOS } from './data/foods.js';
+import { alimentoPorNombre } from './plan-pdf.js';
 
 export const db = new Dexie('nutristock');
 
@@ -31,6 +32,14 @@ export async function seed() {
       return !cur || (cur.source === 'base' && !cur.edited);
     });
     await db.foods.bulkPut(toPut);
+    // Productos tuyos sin clasificar (por ejemplo, escaneados antes de que existiera esto)
+    const todos = await db.foods.toArray();
+    for (const f of todos) {
+      if (f.source === 'base' || f.genericId || f.group === 'hogar') continue;
+      const gen = alimentoPorNombre(f.name);
+      const g = gen && todos.find(x => x.id === gen);
+      if (g) await db.foods.update(f.id, { genericId: gen, ...(!f.group || f.group === 'otro' ? { group: g.group } : {}) });
+    }
     if ((await db.basicos.count()) === 0) {
       await db.basicos.bulkAdd(BASICOS.map(name => ({ id: slug(name), name, status: 'tengo' })));
     }

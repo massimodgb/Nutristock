@@ -383,3 +383,18 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35); pointer-events: none; }
 .scan-guia::after { content: ''; position: absolute; left: 8%; right: 8%; top: 50%; height: 2px; background: #ef4444; opacity: .8; }
 .scan-texto { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; color: #fff; font-size: 14px; text-shadow: 0 1px 3px #000; }
+
+/* Hojas: que nunca se queden "atrapadas" en el iPhone */
+.sheet { overscroll-behavior: contain; }
+.sheet-head { flex-shrink: 0; }
+.sheet-head .link { padding: 10px 12px 10px 0; font-size: 16px; }
+.sheet-body { overscroll-behavior: contain; min-height: 0; }
+.cerrar-abajo { margin-top: 8px; }
+body.no-scroll { overflow: hidden; touch-action: none; }
+.sheet-bg { touch-action: none; }
+.sheet-body { touch-action: pan-y; }
+
+.acabados summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+
+.idea-link { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; color: var(--text); }
+.idea-link svg:first-child { color: var(--carb); flex-shrink: 0; }

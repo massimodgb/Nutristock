@@ -65,6 +65,10 @@ export function Hoy({ go }) {
       <${Agua} date=${date} prefs=${prefs} />
       ${isToday && html`<${PesoHoy} date=${date} />`}
       <${EntrenoHoy} date=${date} go=${go} />
+      ${isToday && plan && html`
+        <button class="card idea-link" onClick=${() => go('ideas')}>
+          <${Icon} name="bolt" size=${20} /><span class="grow"><b>Ideas y recetas</b><br /><small class="muted">Qué cocinar con lo que tienes en casa y tu plan</small></span><${Icon} name="right" size=${16} />
+        </button>`}
       ${isToday && html`<${Avisos} ...${ctx} basicos=${basicos} choice=${choice} logs=${logs} go=${go} />`}
 
       ${!plan && html`
@@ -332,6 +336,14 @@ function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, da
     }
     return list.sort((a, b) => (b.st > 0) - (a.st > 0));
   }, [block.id]);
+  // Lo demás que tienes en casa (por si un producto no está clasificado como este bloque)
+  const otros = useMemo(() => {
+    const ya = new Set(opciones.map(o => o.food.id));
+    return foods.filter(f => !ya.has(f.id) && visibleFood(f, prefs) && (stock[f.id]?.g || 0) > 0)
+      .map(f => ({ food: f, g: blockFoods(block, plan)[0]?.g || 100, st: stock[f.id].g, otro: true }))
+      .sort((a, b) => (b.food.group === block.grupo) - (a.food.group === block.grupo) || a.food.name.localeCompare(b.food.name));
+  }, [block.id]);
+  const [verOtros, setVerOtros] = useState(false);
   const [sel, setSel] = useState(null);
 
   if (sel) {
@@ -340,6 +352,8 @@ function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, da
       <${AmountForm} food=${sel.food} defaultG=${sel.g} byId=${byId} foods=${foods} stockG=${sel.st}
         onSave=${async r => {
           await saveLog({ ...r, date, mealId: meal.id, optionId, blockId: block.id, foods });
+          // Si era un producto sin clasificar, lo clasificamos con el grupo de este bloque
+          if (sel.otro && (!sel.food.group || sel.food.group === 'otro')) await db.foods.update(sel.food.id, { group: block.grupo });
           toast('Registrado ✓');
           onDone();
         }} />`;
@@ -354,7 +368,17 @@ function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, da
           ${o.st > 0 && html`<span class="tag ok">en casa ${fmtG(o.st, o.food)}</span>`}
           <small class="muted">${o.g} g</small>
         </button>`)}
-    </div>`;
+    </div>
+    ${otros.length > 0 && html`
+      <button class="link" onClick=${() => setVerOtros(!verOtros)}>${verOtros ? 'Ocultar' : `Otros productos de tu despensa (${otros.length})`}</button>
+      ${verOtros && html`<div class="list">
+        ${otros.map(o => html`
+          <button class="row" onClick=${() => setSel(o)}>
+            <${Dot} group=${o.food.group} />
+            <span class="grow">${o.food.name}${o.food.brand ? html` <small class="muted">${o.food.brand}</small>` : ''}</span>
+            <span class="tag ok">en casa ${fmtG(o.st, o.food)}</span>
+          </button>`)}
+      </div>`}`}`;
 }
 
 // Cantidad + vista previa de lo que aporta. Común a plan y "fuera del plan".
@@ -390,7 +414,7 @@ function AmountForm({ food, defaultG, byId, stockG, onSave }) {
     </div>`;
 }
 
-async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods }) {
+export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods }) {
   const deducted = deduct ? await deductStock(candidateIds(food, foods), rawG) : [];
   const nr = Object.fromEntries(Object.entries(n).map(([k, v]) => [k, round1(v)]));
   await db.logs.add({

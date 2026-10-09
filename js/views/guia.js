@@ -35,13 +35,24 @@ const GUIAS = [
     ],
   },
   {
+    t: '💡 Ideas y recetas',
+    p: [
+      'Hoy → "Ideas y recetas" (o Más → Ideas y recetas). Eliges la comida (Desayuno, Comida, Cena…) y ves recetas que encajan en tu plan, con las cantidades de tu plan.',
+      'Primero salen las que puedes hacer con lo que tienes en casa ("Tienes todo ✓"); en las demás te dice qué falta.',
+      'Dentro de una receta: "Registrar en Comida de hoy" apunta todos los ingredientes de golpe y los descuenta de la despensa. "Añadir lo que falta a la compra" lo pasa a tu lista.',
+      'Nada lleva pescado ni marisco. Si quieres más recetas, pídeselas a Claude.',
+    ],
+  },
+  {
     t: '🛒 Despensa por envases',
     p: [
       'Cada cosa se cuenta en envases (bolsa, paquete, bote…). Al añadir, dices cuántos nuevos tienes y si hay uno ya abierto (y cuánto le queda).',
       'Al registrar comidas se descuenta solo, empezando por el envase abierto. Cuando se acaba, empieza el siguiente.',
       'Si la cuenta no cuadra (se cayó, lo regalaste, calculó mal): abre el producto en Despensa y pulsa "Se terminó" en ese envase, o corrige los gramos que quedan.',
       'Toca un producto → "Avisar cuando queden X" y "comprar Y". Ej.: almendras en bolsas de 500 g, compras 3 → avisar cuando quede 1, comprar 3. Cuando baje, aparece solo en Compra.',
-      'Si un producto aún no tiene envase, al añadirlo te pregunta cuánto pesa cada uno y cómo se llama (pan: bolsa de 450 g con rebanadas de 30 g).',
+      'Al añadir: peso de cada envase (si el escáner lo sabe ya viene puesto), cuántos tienes sin abrir y si hay uno ya abierto. Todo en la misma pantalla.',
+      'Lo que escaneas se clasifica solo ("Queso ricotta Hacendado" cuenta como Ricotta) para que te salga al registrar tu plan. Si alguno no sale en un bloque, abajo tienes "Otros productos de tu despensa".',
+      'Para borrar algo de la despensa: tócalo → "Quitar de la despensa" (sigue en tu biblioteca).',
       'Cosas que no son comida (toallitas, papel, detergente): + → "Crear producto nuevo" → activa "No es comida". Se cuentan por paquetes y pulsas "Se terminó" cuando acabas uno.',
       'Especias y salsas: en Básicos, solo "Tengo / Poco / No".',
     ],

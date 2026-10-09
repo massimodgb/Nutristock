@@ -39,7 +39,7 @@ export function Despensa({ go }) {
         ${sheet?.type === 'add' && html`<${AddStock} ...${ctx} food=${sheet.food} onDone=${() => setSheet(null)} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'food'} onClose=${() => setSheet(null)} title=${sheet?.food?.name}>
-        ${sheet?.type === 'food' && html`<${FichaStock} food=${byId[sheet.food.id] || sheet.food} lots=${lots} onAdd=${() => setSheet({ type: 'add', food: byId[sheet.food.id] || sheet.food })} />`}
+        ${sheet?.type === 'food' && html`<${FichaStock} food=${byId[sheet.food.id] || sheet.food} lots=${lots} onAdd=${() => setSheet({ type: 'add', food: byId[sheet.food.id] || sheet.food })} onQuitar=${() => setSheet(null)} />`}
       <//>
     </div>`;
 }
@@ -47,14 +47,16 @@ export function Despensa({ go }) {
 function Stock({ foods, lots, setSheet }) {
   const conStock = new Set(lots.filter(l => l.g > 0).map(l => l.foodId));
   // Lo que tienes + lo que vigilas (con aviso) aunque se haya acabado
-  const items = foods.filter(f => conStock.has(f.id) || f.aviso != null || f.minG);
-  if (!items.length) return html`
+  const items = foods.filter(f => conStock.has(f.id));
+  // Lo que se acabó pero vigilas para la compra va aparte, al final
+  const acabados = foods.filter(f => !conStock.has(f.id) && (f.aviso != null || f.minG));
+  if (!items.length && !acabados.length) return html`
     <${Empty}>
       Tu despensa está vacía.<br />Toca <b>+</b> para añadir tu compra: escanea los productos o elígelos de tu biblioteca.
       También puedes añadir cosas de casa (toallitas, papel, detergente…).
     <//>`;
   const grupos = Object.keys(GROUPS).filter(g => items.some(f => (f.group || 'otro') === g));
-  return grupos.map(g => html`
+  return html`${grupos.map(g => html`
     <section class="card list">
       <h3 class="group-title"><${Dot} group=${g} /> ${GROUPS[g].name}</h3>
       ${items.filter(f => (f.group || 'otro') === g).sort((a, b) => a.name.localeCompare(b.name)).map(f => {
@@ -71,7 +73,15 @@ function Stock({ foods, lots, setSheet }) {
             <${Icon} name="right" size=${16} />
           </button>`;
       })}
-    </section>`);
+    </section>`)}
+    ${acabados.length > 0 && html`
+      <details class="card acabados">
+        <summary>Se acabaron (${acabados.length}) · están en tu lista de la compra</summary>
+        <div class="list">${acabados.map(f => html`
+          <button class="row" onClick=${() => setSheet({ type: 'food', food: f })}>
+            <span class="grow">${f.name}</span><small class="muted">no queda</small>
+          </button>`)}</div>
+      </details>`}`;
 }
 
 function AddStock({ foods, prefs, food: inicial, onDone }) {

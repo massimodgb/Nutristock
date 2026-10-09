@@ -307,3 +307,10 @@ function buscarNutricionista(texto) {
   const nombre = m[1].trim().split(/\s+/).slice(0, 2).map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
   return `${nombre}${/strong/i.test(texto) ? ' · Strong Nutrition' : ''}`;
 }
+
+// A qué alimento base se parece un producto por su nombre ("Queso ricotta Hacendado" → ricotta).
+// Lo usan el escáner y la biblioteca para clasificar solos lo que compras.
+export function alimentoPorNombre(nombre) {
+  if (!nombre) return null;
+  return reconocer(nombre, norm(nombre))[0] || null;
+}

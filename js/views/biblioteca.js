@@ -5,6 +5,7 @@ import { NUTRS, GROUPS, fmt, parseNum, todayStr } from '../nutri.js';
 import { Sheet, Num, Toggle, Dot, Empty, Icon, toast } from '../ui.js';
 import { buscarCodigo, parseEtiqueta, iniciarEscaner, leerCodigoDeFoto } from '../importar.js';
 import { CantidadStock } from './stock.js';
+import { alimentoPorNombre } from '../plan-pdf.js';
 
 export function Biblioteca({ go }) {
   const foods = useLive(() => db.foods.toArray(), []);
@@ -92,6 +93,12 @@ export async function resolverCodigo(code, foods) {
     // Está en Open Food Facts pero sin tabla nutricional (o sin lo básico): no sirve tal cual
     if (draft && (draft.n.kcal == null || draft.n.prot == null || draft.n.carb == null || draft.n.fat == null)) {
       return { estado: 'incompleto', code, draft };
+    }
+    if (draft) {
+      // Clasificarlo solo: "Queso ricotta X" cuenta como Ricotta (así aparece al registrar tu plan)
+      const gen = alimentoPorNombre(draft.name);
+      const g = gen && foods.find(f => f.id === gen);
+      if (g) { draft.genericId = gen; draft.group = g.group; if (g.factor) draft.factor = g.factor; }
     }
     if (draft) return {
       estado: 'off', code, draft,
@@ -257,6 +264,11 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
           </select>
         </label>`}
       </div>
+      ${!hogar && !f.genericId && alimentoPorNombre(f.name) && html`
+        <button class="chip on" onClick=${() => {
+          const g = foods.find(x => x.id === alimentoPorNombre(f.name));
+          setF(prev => ({ ...prev, genericId: g.id, group: prev.group && prev.group !== 'otro' ? prev.group : g.group }));
+        }}>Parece "${foods.find(x => x.id === alimentoPorNombre(f.name))?.name}": tocar para que cuente como eso en tu plan</button>`}
       ${!hogar && html`<label>Cuenta como (en tu plan)
         <select value=${f.genericId || ''} onChange=${e => set('genericId', e.target.value)}>
           <option value="">— Ninguno —</option>

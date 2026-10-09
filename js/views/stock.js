@@ -60,71 +60,66 @@ export async function anadirStock(food, { envases = 0, abiertoG = null, g = null
   return filas.length;
 }
 
-// Formulario para añadir stock de un producto (después de comprar o la primera vez que lo cargas)
-export function CantidadStock({ food: inicial, onDone }) {
-  const [food, setFood] = useState(inicial);
+// Formulario para añadir stock de un producto: todo en una pantalla.
+// 1) peso de cada envase (si el escáner lo sabe, ya viene puesto)  2) cuántos sin abrir  3) uno ya abierto
+export function CantidadStock({ food, onDone }) {
   const hogar = esHogar(food);
-  const env = nombreEnvase(food);
+  const [packG, setPackG] = useState(food.packG || null);
+  const [envNombre, setEnvNombre] = useState(food.envase || '');
   const [envases, setEnvases] = useState(food.comprar || 1);
   const [hayAbierto, setHayAbierto] = useState(false);
   const [abiertoG, setAbiertoG] = useState(null);
-  const [g, setG] = useState(null);
   const [expiry, setExpiry] = useState('');
-  // Si el producto aún no sabe cómo viene (peso del envase), se lo decimos aquí
-  const [packG, setPackG] = useState(food.packG || null);
-  const [envNombre, setEnvNombre] = useState(food.envase || '');
+  const env = envNombre.trim() || nombreEnvase(food);
+  const peso = hogar ? 1 : packG;
 
-  const conEnvase = hogar || food.packG;
-  const guardarEnvase = async () => {
-    const cambios = { packG, envase: envNombre.trim() || null, ...(food.source === 'base' ? { edited: true } : {}) };
+  const resumen = [
+    envases > 0 && `${envases} ${plural(env, envases)} ${conGenero(env, 'nuev', envases)}`,
+    hayAbierto && (hogar ? `1 ${conGenero(env, 'empezad')}` : abiertoG && `1 ${conGenero(env, 'abiert')} con ${fmtG(abiertoG)}`),
+  ].filter(Boolean).join(' + ');
+  const falta = !hogar && !packG ? 'Pon cuánto pesa cada envase' : !resumen ? 'Indica cuántos tienes' : '';
+
+  const anadir = async () => {
+    // Guardamos en el producto cómo viene, para no volver a preguntarlo
+    const cambios = { envase: envNombre.trim() || food.envase || null, ...(hogar ? {} : { packG }), ...(food.source === 'base' ? { edited: true } : {}) };
     await db.foods.update(food.id, cambios);
-    setFood({ ...food, ...cambios });
+    const n = await anadirStock({ ...food, ...cambios }, { envases, abiertoG: hayAbierto ? (hogar ? 1 : abiertoG) : null, expiry: expiry || null });
+    toast(n ? `Añadido: ${resumen} ✓` : 'No se añadió nada');
+    onDone?.();
   };
-
-  const resumen = conEnvase
-    ? [envases > 0 && `${envases} ${plural(env, envases)} ${conGenero(env, 'nuev', envases)}`,
-      hayAbierto && (hogar ? `1 ${conGenero(env, 'empezad')}` : abiertoG && `1 ${conGenero(env, 'abiert')} con ${fmtG(abiertoG)}`)].filter(Boolean).join(' + ')
-    : g ? fmtG(g) : '';
 
   return html`
     <div class="form">
       <h4><${Dot} group=${food.group} /> ${food.name}${food.brand ? ` · ${food.brand}` : ''}</h4>
-      ${!conEnvase && html`
-        <div class="notice">
-          <b>¿Cómo viene?</b> Si dices cuánto pesa cada envase, la app cuenta bolsas/paquetes y sabe cuál tienes abierto.
-          <div class="grid2" style=${{ marginTop: '8px' }}>
-            <label>Peso de cada envase<${Num} value=${packG} onChange=${setPackG} suffix="g" /></label>
-            <label>Se llama<input value=${envNombre} onInput=${e => setEnvNombre(e.target.value)} placeholder="bolsa, paquete, bote…" /></label>
-          </div>
-          <button class="btn small" disabled=${!packG} onClick=${guardarEnvase}>Usar envases</button>
-        </div>`}
-      ${conEnvase ? html`
-        <label>${plural(env, 2).charAt(0).toUpperCase() + plural(env, 2).slice(1)} ${conGenero(env, 'nuev', 2)} sin abrir${hogar ? '' : ` (de ${fmtG(food.packG)} cada un${fem(env) ? 'a' : 'o'})`}
-          <${Num} value=${envases} onChange=${v => setEnvases(v || 0)} suffix=${plural(env, envases || 2)} /></label>
-        <${Toggle} label=${`Además tengo un${fem(env) ? 'a' : ''} ${env} ya ${conGenero(env, hogar ? 'empezad' : 'abiert')}`}
-          checked=${hayAbierto} onChange=${setHayAbierto} />
-        ${hayAbierto && !hogar && html`
-          <label>¿Cuánto le queda?</label>
-          <div class="chips">
-            ${[[0.75, 'Casi lleno'], [0.5, 'La mitad'], [0.25, 'Poco']].map(([p, t]) => html`
-              <button class=${'chip' + (abiertoG === Math.round(food.packG * p) ? ' on' : '')} onClick=${() => setAbiertoG(Math.round(food.packG * p))}>${t}</button>`)}
-          </div>
-          <${Num} value=${abiertoG} onChange=${setAbiertoG} suffix="g" />
-          ${food.unitG && html`<small class="muted">${abiertoG ? `≈ ${fmt(abiertoG / food.unitG)} ${plural(food.unitName || 'ud', 2)}` : ''}</small>`}`}` : html`
-        <label>Cantidad<${Num} value=${g} onChange=${setG} suffix="g" /></label>
-        ${food.unitG && html`<div class="chips">${[4, 6, 10, 12].map(u => html`
-          <button class="chip" onClick=${() => setG(u * food.unitG)}>${u} ${plural(food.unitName || 'ud', u)}</button>`)}</div>`}`}
+      ${!hogar && html`
+        <div class="grid2">
+          <label>Peso de cada envase<${Num} value=${packG} onChange=${setPackG} suffix="g" /></label>
+          <label>El envase es un/a<input value=${envNombre} onInput=${e => setEnvNombre(e.target.value)} placeholder="paquete, bote, bolsa…" /></label>
+        </div>
+        ${!food.packG && html`<small class="muted">Viene en la etiqueta (ej. "250 g"). Solo se pregunta la primera vez.</small>`}`}
+      ${hogar && html`<label>Se cuenta por<input value=${envNombre} onInput=${e => setEnvNombre(e.target.value)} placeholder="paquete, rollo, bote…" /></label>`}
+      <label>¿Cuántos tienes sin abrir?
+        <${Num} value=${envases} onChange=${v => setEnvases(v || 0)} suffix=${plural(env, envases === 1 ? 1 : 2)} /></label>
+      <div class="chips">${[0, 1, 2, 3, 4, 6].map(n => html`
+        <button class=${'chip' + (envases === n ? ' on' : '')} onClick=${() => setEnvases(n)}>${n}</button>`)}</div>
+      <${Toggle} label=${`Además tengo un${fem(env) ? 'a' : ''} ${env} ya ${conGenero(env, hogar ? 'empezad' : 'abiert')}`}
+        checked=${hayAbierto} onChange=${setHayAbierto} />
+      ${hayAbierto && !hogar && html`
+        <label>¿Cuánto le queda?</label>
+        <div class="chips">
+          ${[[0.75, 'Casi lleno'], [0.5, 'La mitad'], [0.25, 'Poco']].map(([p, t]) => html`
+            <button class=${'chip' + (peso && abiertoG === Math.round(peso * p) ? ' on' : '')} disabled=${!peso}
+              onClick=${() => setAbiertoG(Math.round(peso * p))}>${t}</button>`)}
+        </div>
+        <${Num} value=${abiertoG} onChange=${setAbiertoG} suffix="g que quedan" />
+        ${food.unitG && abiertoG ? html`<small class="muted">≈ ${fmt(abiertoG / food.unitG)} ${plural(food.unitName || 'ud', 2)}</small>` : ''}`}
       ${!hogar && html`<label>Caduca (opcional)<input type="date" min=${todayStr()} value=${expiry} onInput=${e => setExpiry(e.target.value)} /></label>`}
-      <button class="btn" disabled=${!resumen} onClick=${async () => {
-        const n = await anadirStock(food, { envases: conEnvase ? envases : 0, abiertoG: hayAbierto ? (hogar ? 1 : abiertoG) : null, g, expiry: expiry || null });
-        toast(n ? `Añadido: ${resumen} ✓` : 'No se añadió nada');
-        onDone?.();
-      }}>${resumen ? `Añadir ${resumen}` : 'Indica cuánto añadir'}</button>
+      <button class="btn" disabled=${!!falta} onClick=${anadir}>${falta || `Añadir ${resumen}`}</button>
     </div>`;
 }
 
 // Ficha de stock de un producto: envases, el abierto, "se terminó", aviso y cuántos comprar
-export function FichaStock({ food, lots, onAdd }) {
+export function FichaStock({ food, lots, onAdd, onQuitar }) {
   const hogar = esHogar(food);
   const env = nombreEnvase(food);
   const mios = lots.filter(l => l.foodId === food.id && l.g > 0).sort((a, b) => (!!b.abierto - !!a.abierto) || (a.expiry || '9').localeCompare(b.expiry || '9') || a.addedAt - b.addedAt);
@@ -151,6 +146,13 @@ export function FichaStock({ food, lots, onAdd }) {
           <button class="btn small secondary" onClick=${() => terminar(l)}>Se terminó</button>
         </div>`)}
       <button class="btn" onClick=${onAdd}><${Icon} name="plus" size=${18} /> Añadir más</button>
+      <button class="btn danger" onClick=${async () => {
+        if (!confirm(`¿Quitar "${food.name}" de tu despensa? Se borra lo que tienes registrado y deja de vigilarse para la compra. El producto sigue en tu biblioteca.`)) return;
+        await db.lots.where('foodId').equals(food.id).delete();
+        await db.foods.update(food.id, { aviso: null, minG: null });
+        toast('Quitado de la despensa');
+        onQuitar?.();
+      }}><${Icon} name="trash" size=${18} /> Quitar de la despensa</button>
 
       <h4>Lista de la compra</h4>
       ${(food.packG || hogar) ? html`
