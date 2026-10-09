@@ -258,3 +258,83 @@ main { padding: env(safe-area-inset-top) 0 calc(var(--tabbar-h) + env(safe-area-
 .vista-c { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--line); }
 .vista-b { display: flex; gap: 8px; align-items: baseline; font-size: 14px; }
 .vista-b .dot { transform: translateY(1px); }
+
+/* Escáner: resultado cuando no se encuentra el producto */
+label.btn { display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; }
+.resultado-scan { display: flex; flex-direction: column; gap: 10px; text-align: center; }
+.resultado-scan h3 { margin: 0; }
+.resultado-scan p { margin: 0; }
+.res-icon { width: 56px; height: 56px; border-radius: 50%; margin: 4px auto 0; display: grid; place-items: center; font-size: 28px; font-weight: 700; }
+.res-icon.info { background: var(--info-soft); color: var(--accent); }
+.res-icon.warn { background: var(--warn-soft); color: var(--warn); }
+.resultado-scan .steps, .notice .steps { text-align: left; margin: 6px 0 0; }
+
+/* Desglose del día */
+.tocable { cursor: pointer; }
+.tocable:active { opacity: 0.85; }
+.ver-mas { font-size: 12px; color: var(--accent); }
+.kcal-ring small.over, .ntable td.over, .ecuacion .over b { color: var(--danger); }
+.ecuacion { display: flex; align-items: center; justify-content: space-between; gap: 4px; background: var(--fill); border-radius: 12px; padding: 12px; text-align: center; }
+.ecuacion > div { display: flex; flex-direction: column; flex: 1; }
+.ecuacion b { font-size: 22px; font-variant-numeric: tabular-nums; }
+.ecuacion .ok b { color: var(--accent); }
+.ecuacion small { font-size: 12px; color: var(--muted); }
+.ecuacion > span { color: var(--muted); font-size: 18px; }
+.ntable.desg td { text-align: right; font-variant-numeric: tabular-nums; font-size: 14px; }
+.ntable.desg td:first-child { text-align: left; }
+.ntable.desg tr.th td { font-size: 12px; color: var(--muted); }
+.ntable.desg .dot { margin-right: 6px; }
+.reparto { display: flex; height: 12px; border-radius: 6px; overflow: hidden; background: var(--fill); }
+.explica { font-size: 14px; display: flex; flex-direction: column; gap: 8px; }
+.explica p { margin: 0; }
+
+/* Balance y objetivo */
+.balance { display: flex; flex-direction: column; gap: 10px; }
+.titular { font-size: 17px; margin: 0; }
+.bal-filas { display: flex; flex-direction: column; gap: 10px; }
+.bal-fila small { font-size: 12px; }
+.porque summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.porque ul { margin: 8px 0 0; padding-left: 18px; font-size: 14px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Entreno */
+.day-nav { display: flex; align-items: center; justify-content: space-between; }
+.entreno-hoy { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; color: var(--text); }
+.entreno-hoy svg:first-child { color: var(--accent); flex-shrink: 0; }
+.entreno-hoy.vacio { color: var(--muted); font-size: 14px; }
+.seccion { display: flex; flex-direction: column; gap: 6px; }
+.seccion.hecha { box-shadow: inset 3px 0 0 var(--accent); }
+.parte { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--line); }
+.parte-tit { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.linea { font-size: 15px; display: flex; flex-direction: column; gap: 3px; padding: 2px 0; }
+.linea .pct, small.pct { color: var(--accent); font-size: 13px; font-weight: 500; }
+.video { color: var(--accent); font-size: 13px; text-decoration: none; }
+.series { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 6px; }
+.serie { display: grid; grid-template-columns: 26px 1fr 1fr; gap: 6px; align-items: center; }
+.serie .num input { font-size: 16px; padding: 8px 44px 8px 10px; }
+.resultado-linea { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding-top: 6px; border-top: 1px solid var(--line); }
+.resultado { padding-top: 8px; border-top: 1px solid var(--line); }
+.pct-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 8px; font-size: 12px; text-align: center; color: var(--muted); }
+.pct-grid span { display: flex; flex-direction: column; }
+.pct-grid b { color: var(--text); font-size: 15px; }
+
+/* Reloj a pantalla completa */
+.reloj { position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; justify-content: space-between;
+  padding: calc(env(safe-area-inset-top) + 12px) 16px calc(env(safe-area-inset-bottom) + 16px);
+  background: #0b0b0c; color: #fff; transition: background .3s; }
+.reloj.prep { background: #3b2a05; }
+.reloj.trabajo { background: #052e16; }
+.reloj.descanso { background: #0c1f3d; }
+.reloj.fin { background: #1c1c1e; }
+.reloj .link { color: #fff; }
+.reloj-top { display: flex; justify-content: space-between; align-items: center; font-size: 14px; opacity: .85; gap: 8px; }
+.reloj-centro { text-align: center; display: flex; flex-direction: column; gap: 10px; }
+.reloj-label { font-size: 22px; font-weight: 600; }
+.reloj-sub { font-size: 20px; opacity: .9; }
+.reloj-num { font-size: min(28vw, 180px); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; line-height: 1; }
+.reloj-next { opacity: .7; font-size: 15px; }
+.reloj-rondas { font-size: 20px; }
+.reloj-botones { display: flex; gap: 10px; }
+.reloj-botones .btn { padding: 18px; font-size: 18px; }
+.reloj-botones .btn.secondary { background: rgba(255,255,255,.15); color: #fff; }
+.reloj-botones .btn.ronda { background: #fff; color: #000; }
+.series-resumen { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }

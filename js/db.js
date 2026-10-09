@@ -16,6 +16,8 @@ db.version(1).stores({
 });
 // v2: buscar registros por alimento (para recordar el último peso que usaste)
 db.version(2).stores({ logs: '++id, date, foodId' });
+// v3: entrenos pegados de la entrenadora y marcas (récords de fuerza y benchmarks)
+db.version(3).stores({ workouts: '++id, date', marcas: '++id, ejercicio, date' });
 
 // Carga los alimentos base la primera vez y los actualiza si cambian en una versión nueva
 // (sin pisar los que hayas editado tú, por ejemplo al calibrar un factor de cocción).
@@ -127,7 +129,7 @@ export async function deleteLog(log) {
 }
 
 // ---------- Copia de seguridad ----------
-const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings'];
+const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas'];
 
 export async function exportAll() {
   const out = { app: 'nutristock', version: 1, exportedAt: new Date().toISOString() };

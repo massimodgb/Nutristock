@@ -3,9 +3,9 @@ import { html, useState } from '../lib.js';
 import { db, useLive, getPrefs, stockMap, round1, slug } from '../db.js';
 import { GROUPS, fmt, fmtG, daysUntil, fmtDate, todayStr, visibleFood } from '../nutri.js';
 import { Sheet, Num, Seg, Dot, Empty, Icon, toast } from '../ui.js';
-import { Escaner, resolverCodigo, FoodForm } from './biblioteca.js';
+import { Escaner, resolverCodigo, FoodForm, NoEncontrado, PegarEtiqueta } from './biblioteca.js';
 
-export function Despensa() {
+export function Despensa({ go }) {
   const [tab, setTab] = useState('comida');
   const foods = useLive(() => db.foods.toArray(), []);
   const lots = useLive(() => db.lots.toArray(), []);
@@ -22,6 +22,7 @@ export function Despensa() {
     <div class="page">
       <header class="top">
         <h1>Despensa</h1>
+        <button class="btn small secondary" onClick=${() => go('biblioteca')}>Productos</button>
         ${tab === 'comida' && html`<button class="icon-btn accent" onClick=${() => setSheet({ type: 'add' })} aria-label="Añadir compra"><${Icon} name="plus" /></button>`}
       </header>
       <${Seg} value=${tab} onChange=${setTab} options=${[
@@ -93,22 +94,36 @@ function FoodStock({ food, lots, onAdd }) {
 
 function AddStock({ foods, prefs, food: inicial, onDone }) {
   const [food, setFood] = useState(inicial || null);
-  const [modo, setModo] = useState(inicial ? 'cantidad' : 'buscar'); // buscar | escanear | nuevo | cantidad
+  const [modo, setModo] = useState(inicial ? 'cantidad' : 'buscar'); // buscar | escanear | cargando | noencontrado | pegar | nuevo | cantidad
   const [nuevo, setNuevo] = useState(null);
   const [q, setQ] = useState('');
   const [envases, setEnvases] = useState(1);
   const [g, setG] = useState(null);
   const [expiry, setExpiry] = useState('');
 
-  if (modo === 'escanear') {
-    return html`<${Escaner} onCode=${async code => {
-      setModo('cargando');
-      const r = await resolverCodigo(code, foods);
-      if (r.food) { setFood(r.food); setModo('cantidad'); toast(r.food.name); }
-      else { setNuevo(r); setModo('nuevo'); }
+  const buscar = async code => {
+    setNuevo({ code });
+    setModo('cargando');
+    const r = await resolverCodigo(code, foods);
+    setNuevo(r);
+    if (r.food) { setFood(r.food); setModo('cantidad'); toast(r.food.name); }
+    else setModo(r.estado === 'off' ? 'nuevo' : 'noencontrado');
+  };
+  if (modo === 'escanear') return html`<${Escaner} onCode=${buscar} />`;
+  if (modo === 'cargando') return html`<p class="muted">Código leído: <b>${nuevo?.code || ''}</b>. Buscando el producto…</p>`;
+  if (modo === 'noencontrado') {
+    return html`<${NoEncontrado} r=${nuevo}
+      onPegar=${() => setModo('pegar')}
+      onMano=${() => { setNuevo({ ...nuevo, aviso: '' }); setModo('nuevo'); }}
+      onReintentar=${() => buscar(nuevo.code)}
+      onOtro=${() => setModo('escanear')} />`;
+  }
+  if (modo === 'pegar') {
+    return html`<${PegarEtiqueta} onDone=${n => {
+      setNuevo({ ...nuevo, draft: { ...nuevo.draft, n, source: 'livetext' }, aviso: 'Revisa que los números coincidan con la etiqueta.' });
+      setModo('nuevo');
     }} />`;
   }
-  if (modo === 'cargando') return html`<p class="muted">Buscando el producto…</p>`;
   if (modo === 'nuevo') {
     return html`<${FoodForm} initial=${nuevo.draft} aviso=${nuevo.aviso} foods=${foods} onDone=${onDone} />`;
   }

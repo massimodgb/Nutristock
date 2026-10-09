@@ -8,15 +8,19 @@ import { Biblioteca } from './views/biblioteca.js';
 import { Plan } from './views/plan.js';
 import { Mas } from './views/mas.js';
 import { Progreso } from './views/progreso.js';
+import { Perfil } from './views/perfil.js';
+import { Entreno } from './views/entreno.js';
 
 // "oculta": se abre desde otra pantalla (el plan, desde Más)
 const TABS = [
   { id: 'hoy', label: 'Hoy', icon: 'hoy', View: Hoy },
+  { id: 'entreno', label: 'Entreno', icon: 'pesa', View: Entreno },
   { id: 'despensa', label: 'Despensa', icon: 'despensa', View: Despensa },
-  { id: 'biblioteca', label: 'Biblioteca', icon: 'biblio', View: Biblioteca },
   { id: 'progreso', label: 'Progreso', icon: 'chart', View: Progreso },
   { id: 'mas', label: 'Más', icon: 'mas', View: Mas },
+  { id: 'biblioteca', label: 'Productos', icon: 'biblio', View: Biblioteca, oculta: true, padre: 'despensa' },
   { id: 'plan', label: 'Plan', icon: 'plan', View: Plan, oculta: true, padre: 'mas' },
+  { id: 'perfil', label: 'Perfil', icon: 'mas', View: Perfil, oculta: true, padre: 'mas' },
 ];
 
 function App() {
@@ -41,7 +45,12 @@ function App() {
 }
 
 seed()
-  .then(() => render(html`<${App} />`, document.getElementById('app')))
+  .then(() => {
+    // Quitamos el "Cargando…" inicial: si no, se queda pegado al final de cada pantalla
+    const raiz = document.getElementById('app');
+    raiz.textContent = '';
+    render(html`<${App} />`, raiz);
+  })
   .catch(e => {
     document.getElementById('app').innerHTML = `<p class="error" style="padding:24px">Error al iniciar: ${e.message}</p>`;
     console.error(e);

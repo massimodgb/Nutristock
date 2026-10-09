@@ -3,9 +3,9 @@ import { html, useState, useEffect, useMemo } from '../lib.js';
 import { db, useLive, getPrefs, round1 } from '../db.js';
 import { NUTRS, GROUPS, fmt, parseNum, todayStr } from '../nutri.js';
 import { Sheet, Num, Toggle, Dot, Empty, Icon, toast } from '../ui.js';
-import { buscarCodigo, parseEtiqueta, iniciarEscaner } from '../importar.js';
+import { buscarCodigo, parseEtiqueta, iniciarEscaner, leerCodigoDeFoto } from '../importar.js';
 
-export function Biblioteca() {
+export function Biblioteca({ go }) {
   const foods = useLive(() => db.foods.toArray(), []);
   const prefs = useLive(getPrefs, []);
   const [q, setQ] = useState('');
@@ -20,14 +20,16 @@ export function Biblioteca() {
     .sort((a, b) => (a.source === 'base') - (b.source === 'base') || a.name.localeCompare(b.name));
 
   const onCode = async code => {
-    setSheet({ type: 'loading' });
+    setSheet({ type: 'loading', code });
     const r = await resolverCodigo(code, foods);
-    setSheet({ type: 'form', food: r.food || r.draft, aviso: r.aviso });
+    if (r.estado === 'mio' || r.estado === 'off') setSheet({ type: 'form', food: r.food || r.draft, aviso: r.aviso });
+    else setSheet({ type: 'noencontrado', r });
   };
 
   return html`
     <div class="page">
-      <header class="top"><h1>Biblioteca</h1></header>
+      <button class="link back" onClick=${() => go('despensa')}>‹ Despensa</button>
+      <header class="top"><h1>Productos</h1></header>
       <div class="actions3">
         <button class="action" onClick=${() => setSheet({ type: 'scan' })}><${Icon} name="scan" /><span>Escanear</span></button>
         <button class="action" onClick=${() => setSheet({ type: 'paste' })}><${Icon} name="paste" /><span>Pegar etiqueta</span></button>
@@ -54,10 +56,18 @@ export function Biblioteca() {
         ${sheet?.type === 'scan' && html`<${Escaner} onCode=${onCode} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'loading'} onClose=${() => setSheet(null)} title="Buscando…">
-        <p class="muted">Buscando el producto en Open Food Facts…</p>
+        <p class="muted">Código leído: <b>${sheet?.code}</b>. Buscando el producto en Open Food Facts…</p>
+      <//>
+      <${Sheet} open=${sheet?.type === 'noencontrado'} onClose=${() => setSheet(null)} title="Producto nuevo">
+        ${sheet?.type === 'noencontrado' && html`<${NoEncontrado} r=${sheet.r}
+          onPegar=${() => setSheet({ type: 'paste', draft: sheet.r.draft })}
+          onMano=${() => setSheet({ type: 'form', food: sheet.r.draft })}
+          onReintentar=${() => onCode(sheet.r.code)}
+          onOtro=${() => setSheet({ type: 'scan' })} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'paste'} onClose=${() => setSheet(null)} title="Pegar etiqueta">
-        ${sheet?.type === 'paste' && html`<${PegarEtiqueta} onDone=${n => setSheet({ type: 'form', food: { n, source: 'livetext' }, aviso: 'Revisa que los números coincidan con la etiqueta.' })} />`}
+        ${sheet?.type === 'paste' && html`<${PegarEtiqueta} onDone=${n => setSheet({ type: 'form',
+          food: { ...(sheet.draft || {}), n, source: 'livetext' }, aviso: 'Revisa que los números coincidan con la etiqueta.' })} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'form'} onClose=${() => setSheet(null)} title=${sheet?.food?.id ? 'Editar' : 'Nuevo producto'}>
         ${sheet?.type === 'form' && html`<${FoodForm} key=${sheet.food?.id || 'nuevo'} initial=${sheet.food} aviso=${sheet.aviso}
@@ -66,40 +76,103 @@ export function Biblioteca() {
     </div>`;
 }
 
-// Busca un código: primero en tu biblioteca, luego en Open Food Facts
+// Busca un código: primero en tu biblioteca, luego en Open Food Facts.
+// estado: 'mio' (ya lo tenías) | 'off' (encontrado) | 'nuevo' (no está) | 'error' (sin conexión)
 export async function resolverCodigo(code, foods) {
   const mine = foods.find(f => f.barcode === code);
-  if (mine) return { food: mine, aviso: 'Ya lo tenías en tu biblioteca.' };
-  let draft = null;
-  try { draft = await buscarCodigo(code); } catch {}
-  if (draft) return { draft, aviso: 'Encontrado en Open Food Facts. Revisa los datos y elige a qué equivale en tu plan.' };
-  return {
-    draft: { barcode: code, n: {} },
-    aviso: 'No está en Open Food Facts. Usa "Pegar etiqueta" o rellénalo a mano: solo tendrás que hacerlo esta vez.',
-  };
+  if (mine) return { estado: 'mio', code, food: mine, aviso: 'Ya lo tenías en tu biblioteca.' };
+  try {
+    const draft = await buscarCodigo(code);
+    // Está en Open Food Facts pero sin tabla nutricional (o sin lo básico): no sirve tal cual
+    if (draft && (draft.n.kcal == null || draft.n.prot == null || draft.n.carb == null || draft.n.fat == null)) {
+      return { estado: 'incompleto', code, draft };
+    }
+    if (draft) return {
+      estado: 'off', code, draft,
+      aviso: draft.name
+        ? 'Encontrado en Open Food Facts. Revisa los datos y elige a qué equivale en tu plan.'
+        : 'Encontrado en Open Food Facts con sus calorías y macros, pero sin nombre: escríbelo tú (por ejemplo, "Muesli Hacendado").',
+    };
+    return { estado: 'nuevo', code, draft: { barcode: code, n: {} } };
+  } catch {
+    return { estado: 'error', code, draft: { barcode: code, n: {} } };
+  }
+}
+
+// Pantalla clara para cuando el producto no está o no hay internet
+export function NoEncontrado({ r, onPegar, onMano, onReintentar, onOtro }) {
+  const sinRed = r.estado === 'error', incompleto = r.estado === 'incompleto';
+  const nombre = [r.draft?.name, r.draft?.brand].filter(Boolean).join(' · ');
+  return html`
+    <div class="resultado-scan">
+      <div class=${'res-icon ' + (sinRed ? 'warn' : 'info')}>${sinRed ? '!' : '?'}</div>
+      <h3>${sinRed ? 'No hay conexión' : incompleto ? 'Producto sin tabla nutricional' : 'Este producto no está en la base de datos'}</h3>
+      ${nombre && html`<p><b>${nombre}</b></p>`}
+      <p class="muted">Código leído: <b>${r.code}</b></p>
+      <p class="small">${sinRed
+        ? 'El código se leyó bien, pero no pude buscarlo porque falla internet. Prueba otra vez cuando tengas cobertura, o rellénalo tú.'
+        : incompleto
+          ? 'Está en Open Food Facts, pero nadie ha subido sus calorías y macros. Hazle una foto a la tabla y pégala: solo tendrás que hacerlo esta vez.'
+          : 'El código se leyó bien, pero nadie lo ha subido todavía a Open Food Facts. Cárgalo una vez y quedará guardado para siempre.'}</p>
+      ${sinRed && html`<button class="btn" onClick=${onReintentar}>Reintentar</button>`}
+      <button class=${'btn' + (sinRed ? ' secondary' : '')} onClick=${onPegar}><${Icon} name="paste" size=${18} /> Pegar etiqueta (foto de la tabla)</button>
+      <button class="btn secondary" onClick=${onMano}><${Icon} name="pen" size=${18} /> Rellenar a mano</button>
+      <button class="link" onClick=${onOtro}>Escanear otro producto</button>
+    </div>`;
 }
 
 export function Escaner({ onCode }) {
   const [err, setErr] = useState('');
   const [manual, setManual] = useState('');
+  const [lento, setLento] = useState(false);
+  const [leyendoFoto, setLeyendoFoto] = useState(false);
   useEffect(() => {
-    let stop;
+    let stop, vivo = true;
     iniciarEscaner('reader', code => { stop?.(); onCode(code); })
-      .then(s => { stop = s; })
+      .then(s => { stop = s; if (!vivo) s(); })
       .catch(e => setErr(e?.message || String(e)));
-    return () => stop?.();
+    // Si en 8 segundos no lee nada, damos consejos
+    const t = setTimeout(() => setLento(true), 8000);
+    return () => { vivo = false; clearTimeout(t); stop?.(); };
   }, []);
+
+  const foto = async e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setLeyendoFoto(true);
+    const code = await leerCodigoDeFoto(file);
+    setLeyendoFoto(false);
+    if (code) onCode(code);
+    else toast('No encontré un código en la foto. Prueba más de cerca y con buena luz.');
+  };
+
   return html`
     <div id="reader" class="reader"></div>
-    ${err && html`<p class="error">No se pudo abrir la cámara: ${err}. Revisa los permisos de cámara de Safari.</p>`}
-    <p class="muted small">Apunta al código de barras. También puedes escribirlo:</p>
+    ${err && html`<p class="error">No se pudo abrir la cámara: ${err}. Revisa los permisos de cámara de Safari, o usa la foto o el número de abajo.</p>`}
+    ${!err && html`<p class="muted small">Apunta al código de barras. Cuando lo lea, sonará un pitido.</p>`}
+    ${(lento || err) && html`
+      <div class="notice">
+        <b>¿No lo lee?</b>
+        <ul class="steps">
+          <li>Aleja un poco el móvil (unos 15-20 cm) y deja que enfoque.</li>
+          <li>Si es una bolsa, estírala para que el código quede plano.</li>
+          <li>Busca buena luz y evita reflejos.</li>
+          <li>O hazle una foto al código, o escribe los números que hay debajo de las barras.</li>
+        </ul>
+      </div>`}
+    <label class="btn secondary">
+      <${Icon} name="scan" size=${18} /> ${leyendoFoto ? 'Leyendo la foto…' : 'Hacer foto del código'}
+      <input type="file" accept="image/*" capture="environment" hidden onChange=${foto} />
+    </label>
+    <p class="muted small">O escribe el número que hay debajo de las barras (8 o 13 cifras):</p>
     <div class="inline">
-      <input inputmode="numeric" placeholder="8480000…" value=${manual} onInput=${e => setManual(e.target.value.trim())} />
+      <input inputmode="numeric" placeholder="8480000…" value=${manual} onInput=${e => setManual(e.target.value.replace(/\D/g, ''))} />
       <button class="btn small" disabled=${manual.length < 6} onClick=${() => onCode(manual)}>Buscar</button>
     </div>`;
 }
 
-function PegarEtiqueta({ onDone }) {
+export function PegarEtiqueta({ onDone }) {
   const [txt, setTxt] = useState('');
   return html`
     <ol class="steps">

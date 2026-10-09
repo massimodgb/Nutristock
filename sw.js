@@ -1,11 +1,11 @@
 // Service worker: permite abrir la app sin conexión (en el súper sin cobertura, por ejemplo).
 // Cambia VERSION cada vez que publiques cambios para que el iPhone descargue lo nuevo.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'nutristock-' + VERSION;
 const LOCAL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/lib.js', 'js/db.js', 'js/nutri.js', 'js/ui.js', 'js/importar.js', 'js/plan-pdf.js', 'js/data/foods.js',
-  'js/views/hoy.js', 'js/views/despensa.js', 'js/views/biblioteca.js', 'js/views/plan.js', 'js/views/mas.js', 'js/views/progreso.js',
+  'js/app.js', 'js/lib.js', 'js/db.js', 'js/nutri.js', 'js/ui.js', 'js/importar.js', 'js/plan-pdf.js', 'js/balance.js', 'js/data/foods.js', 'js/entreno/parser.js', 'js/entreno/datos.js',
+  'js/views/hoy.js', 'js/views/despensa.js', 'js/views/biblioteca.js', 'js/views/plan.js', 'js/views/mas.js', 'js/views/progreso.js', 'js/views/perfil.js', 'js/views/entreno.js', 'js/views/reloj.js',
   'icons/icon-180.png', 'icons/icon-192.png',
 ];
 

@@ -1,10 +1,11 @@
 // Progreso: medias de la semana / mes, cumplimiento del plan, calorías por día y peso.
 import { html, useState } from '../lib.js';
-import { db, useLive, getPrefs, activePlan } from '../db.js';
+import { db, useLive, getPrefs, getSetting, activePlan } from '../db.js';
+import { calcularBalance, fraseCambio, OBJETIVOS } from '../balance.js';
 import { sumN, planRef, mealBlocks, blockFoods, visibleFood, fmt, todayStr, addDays, fmtDate } from '../nutri.js';
 import { Seg, Bar, MacroLine, Empty } from '../ui.js';
 
-export function Progreso() {
+export function Progreso({ go }) {
   const [dias, setDias] = useState(7);
   const [sel, setSel] = useState(null);
   const hoy = todayStr();
@@ -15,8 +16,11 @@ export function Progreso() {
   const plan = useLive(activePlan, []);
   const foods = useLive(() => db.foods.toArray(), []);
   const prefs = useLive(getPrefs, []);
+  const perfil = useLive(() => getSetting('perfil', null), []);
+  const pesosTodos = useLive(() => db.weights.toArray(), []);
+  const logs28 = useLive(() => db.logs.where('date').aboveOrEqual(addDays(hoy, -27)).toArray(), []);
 
-  if ([logs, weights, agua, plan, foods, prefs].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
+  if ([logs, weights, agua, plan, foods, prefs, perfil, pesosTodos, logs28].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
   const ref = plan ? planRef(plan, byId, prefs) : null;
   const aguaPor = Object.fromEntries(agua.map(a => [a.key.slice(5), a.value]));
@@ -53,6 +57,8 @@ export function Progreso() {
       <${Seg} value=${dias} onChange=${d => { setDias(d); setSel(null); }}
         options=${[{ value: 7, label: '7 días' }, { value: 30, label: '30 días' }]} />
 
+      <${Balance} b=${calcularBalance({ perfil, plan: ref, weights: pesosTodos, logs: logs28 })} perfil=${perfil} plan=${plan} go=${go} />
+
       ${conDatos.length === 0 ? html`<${Empty}>Aún no hay registros en estos días. Empieza en la pestaña Hoy.<//>` : html`
         <div class="tiles">
           <div class="tile"><small>Media diaria</small><b>${fmt(medias.kcal)}</b><span>kcal${ref ? ` de ≈${fmt(ref.kcal)}` : ''}</span></div>
@@ -64,7 +70,7 @@ export function Progreso() {
         <section class="card">
           <h3>Calorías por día</h3>
           <p class="muted small">Toca una barra para ver el detalle${ref ? '. La línea es lo que marca tu plan' : ''}.</p>
-          <${GraficoKcal} dias=${porDia} objetivo=${ref?.kcal} sel=${sel} onSel=${setSel} />
+          <${GraficoBarras} dias=${porDia} valor=${d => d.n.kcal} objetivo=${ref?.kcal} sel=${sel} onSel=${setSel} color="var(--accent)" />
           ${diaSel && html`
             <div class="preview">
               <strong>${fmtDate(diaSel.date, { weekday: 'long', day: 'numeric', month: 'long' })}</strong><br />
@@ -73,6 +79,12 @@ export function Progreso() {
                 ${diaSel.adherencia != null ? `Plan: ${fmt(diaSel.adherencia * 100)}% · ` : ''}Fuera del plan: ${fmt(diaSel.fuera)} kcal · Agua: ${fmt(diaSel.agua / 1000, 1)} L
               </div>
             </div>`}
+        </section>
+
+        <section class="card">
+          <h3>Proteína por día</h3>
+          <p class="muted small">Para rendir y recuperar, lo importante es llegar todos los días, no solo la media.</p>
+          <${GraficoBarras} dias=${porDia} valor=${d => d.n.prot} objetivo=${ref?.prot} sel=${sel} onSel=${setSel} color="var(--prot)" unidad=" g" />
         </section>
 
         <section class="card">
@@ -106,10 +118,10 @@ export function Progreso() {
     </div>`;
 }
 
-// Barras de calorías por día con la línea del objetivo
-function GraficoKcal({ dias, objetivo, sel, onSel }) {
+// Barras por día (calorías, proteína…) con la línea del objetivo
+function GraficoBarras({ dias, valor, objetivo, sel, onSel, color, unidad = '' }) {
   const W = 340, H = 150, top = 12, bottom = 20;
-  const max = Math.max(objetivo || 0, ...dias.map(d => d.n.kcal), 1) * 1.1;
+  const max = Math.max(objetivo || 0, ...dias.map(valor), 1) * 1.1;
   const y = v => top + (H - top - bottom) * (1 - v / max);
   const paso = W / dias.length;
   const ancho = Math.max(3, Math.min(28, paso - 4));
@@ -121,18 +133,18 @@ function GraficoKcal({ dias, objetivo, sel, onSel }) {
       <line x1="0" x2=${W} y1=${y(0)} y2=${y(0)} class="axis" />
       ${dias.map((d, i) => {
         const x = i * paso + (paso - ancho) / 2;
-        const h = Math.max(0, y(0) - y(d.n.kcal));
+        const h = Math.max(0, y(0) - y(valor(d)));
         const r = Math.min(4, ancho / 2, h);
         return html`
           <g class=${'bar-g' + (sel && sel !== d.date ? ' dim' : '')} onClick=${() => onSel(sel === d.date ? null : d.date)}>
             <rect x=${i * paso} y=${top} width=${paso} height=${H - top} fill="transparent" />
-            ${h > 0 && html`<path d=${`M${x},${y(0)} V${y(0) - h + r} q0,-${r} ${r},-${r} H${x + ancho - r} q${r},0 ${r},${r} V${y(0)} Z`} fill="var(--accent)" />`}
+            ${h > 0 && html`<path d=${`M${x},${y(0)} V${y(0) - h + r} q0,-${r} ${r},-${r} H${x + ancho - r} q${r},0 ${r},${r} V${y(0)} Z`} fill=${color} />`}
             <text x=${x + ancho / 2} y=${H - 5} text-anchor="middle" class="tick">${etiqueta(d, i)}</text>
           </g>`;
       })}
       ${objetivo && html`
         <line x1="0" x2=${W} y1=${y(objetivo)} y2=${y(objetivo)} class="target" />
-        <text x=${W} y=${y(objetivo) - 4} text-anchor="end" class="tick">${fmt(objetivo)}</text>`}
+        <text x=${W} y=${y(objetivo) - 4} text-anchor="end" class="tick">${fmt(objetivo)}${unidad}</text>`}
     </svg>`;
 }
 
@@ -163,4 +175,69 @@ function GraficoPeso({ weights, desde, hoy }) {
       <path d=${linea} class="peso-line" />
     </svg>
     <p class="muted small">Puntos: peso de cada día · línea: media de 7 días.</p>`;
+}
+
+// Balance: gasto, plan, lo que comes y a dónde te lleva cada cosa
+function Balance({ b, perfil, plan, go }) {
+  if (!perfil?.altura) return html`
+    <section class="card">
+      <h3>¿A dónde te lleva tu plan?</h3>
+      <p class="small">Para decirte si con tu plan vas a bajar, mantener o subir, necesito tu altura, edad y nivel de actividad.</p>
+      <button class="btn" onClick=${() => go('perfil')}>Completar mi perfil</button>
+    </section>`;
+  if (!b.gasto) return html`
+    <section class="card"><h3>¿A dónde te lleva tu plan?</h3>
+      <p class="small">Apunta tu peso en Más para poder calcular tu gasto.</p></section>`;
+
+  const filas = [
+    { label: 'Tu gasto', v: b.gasto, nota: b.fuenteGasto === 'real' ? 'calculado con tus datos reales' : 'estimado con fórmula', color: 'var(--muted)' },
+    b.planKcal && { label: 'Tu plan', v: b.planKcal, nota: 'con él vas a ' + fraseCambio(b.proyPlan), color: 'var(--accent)' },
+    b.comido && { label: 'Lo que comes', v: b.comido, nota: `media de ${b.diasRegistrados} días · así vas a ${fraseCambio(b.proyComido)}`, color: 'var(--carb)' },
+    b.kcalObjetivo && { label: 'Tu objetivo', v: b.kcalObjetivo, nota: OBJETIVOS.find(o => o.value === b.ritmo)?.label || '', color: 'var(--fat)' },
+  ].filter(Boolean);
+  const max = Math.max(...filas.map(f => f.v)) * 1.05;
+
+  const porque = razones(b, plan);
+  return html`
+    <section class="card balance">
+      <h3>¿A dónde te lleva tu plan?</h3>
+      ${b.planKcal && html`<p class="titular">Con este plan vas a <b>${fraseCambio(b.proyPlan)}</b>.</p>`}
+      <div class="bal-filas">
+        ${filas.map(f => html`
+          <div class="bal-fila">
+            <div class="bar-top"><span>${f.label}</span><span><b>${fmt(f.v)}</b> kcal</span></div>
+            <div class="bar-track"><div class="bar-fill" style=${{ width: (f.v / max) * 100 + '%', background: f.color }}></div></div>
+            <small class="muted">${f.nota}</small>
+          </div>`)}
+      </div>
+      ${b.tendencia && html`<p class="small">Tu peso real: <b>${b.tendencia.kgSemana >= 0 ? '+' : ''}${fmt(b.tendencia.kgSemana, 2)} kg por semana</b>
+        <span class="muted"> (últimos ${Math.round(b.tendencia.dias)} días)</span></p>`}
+      ${b.difObjetivo != null && Math.abs(b.difObjetivo) > 100 && html`
+        <p class="notice">Para tu objetivo (${(OBJETIVOS.find(o => o.value === b.ritmo)?.label || '').toLowerCase()}) necesitarías unas <b>${fmt(b.kcalObjetivo)} kcal</b> al día: ${fmt(Math.abs(b.difObjetivo))} ${b.difObjetivo < 0 ? 'menos' : 'más'} que tu plan.
+          Coméntalo con tu nutricionista antes de cambiar nada.</p>`}
+      ${porque.length > 0 && html`
+        <details class="porque"><summary>¿Por qué puede no cuadrar con la báscula?</summary>
+          <ul>${porque.map(r => html`<li>${r}</li>`)}</ul></details>`}
+      <p class="muted small">${b.fuenteGasto === 'real'
+        ? 'Tu gasto sale de comparar lo que has comido con cómo ha cambiado tu peso: es lo más fiable.'
+        : 'Tu gasto es una estimación con fórmula. Con unas 2-3 semanas registrando comida y peso, la app calculará tu gasto real.'}</p>
+      <button class="link" onClick=${() => go('perfil')}>Cambiar perfil y objetivo ›</button>
+    </section>`;
+}
+
+function razones(b, plan) {
+  const out = [];
+  if (b.comido && b.planKcal && b.comido > b.planKcal + 100) {
+    out.push(html`Comes de media <b>${fmt(b.comido - b.planKcal)} kcal más</b> que el plan al día${b.fuera > 50 ? html`, sobre todo fuera del plan (≈${fmt(b.fuera)} kcal/día)` : ''}.`);
+  }
+  if (b.tendencia && b.tendencia.kgSemana > 0.1 && b.proyPlan != null && b.proyPlan < 0) {
+    out.push('Según el plan deberías bajar, pero tu peso sube: o comes más de lo que apuntas, o gastas menos de lo que estima la fórmula.');
+  }
+  out.push('Si entrenas menos de lo normal (por ejemplo, con una lesión), gastas menos: el mismo plan que antes te hacía bajar puede ahora mantenerte o hacerte subir.');
+  if (plan && JSON.stringify(plan).includes('creatina')) {
+    out.push('Tomas creatina: hace que el músculo guarde agua (1-2 kg las primeras semanas). Ese peso no es grasa.');
+  }
+  out.push('Un día con más carbohidratos o sal puede sumar 0,5-1 kg de agua al día siguiente. Por eso hay que fijarse en la media de 7 días, no en el número de un día.');
+  if (b.diasRegistrados < 10) out.push(`Solo hay ${b.diasRegistrados} días con comida registrada en las últimas 3 semanas: cuantos más registres, más preciso será todo.`);
+  return out;
 }

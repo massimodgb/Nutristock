@@ -4,11 +4,14 @@
 import { parseNum } from './nutri.js';
 
 // ---------- Open Food Facts ----------
+// Devuelve el producto, o null si no está en la base de datos.
+// Si falla internet, lanza un error (para poder decir "no hay conexión" en vez de "no existe").
 export async function buscarCodigo(barcode) {
   const fields = 'product_name,product_name_es,brands,quantity,product_quantity,nutriments,categories_tags';
   const url = `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(barcode)}.json?fields=${fields}`;
   const res = await fetch(url);
-  if (!res.ok) return null;
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Open Food Facts no responde (' + res.status + ')');
   const data = await res.json();
   if (data.status !== 1 || !data.product) return null;
   const p = data.product, nu = p.nutriments || {};
@@ -84,19 +87,67 @@ function cargarLib() {
   return libPromise;
 }
 
-export async function iniciarEscaner(elementId, onCode) {
-  const Html5Qrcode = await cargarLib();
+function crearLector(Html5Qrcode, elementId) {
   const F = window.Html5QrcodeSupportedFormats;
-  const scanner = new Html5Qrcode(elementId, {
+  return new Html5Qrcode(elementId, {
     formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128],
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
     verbose: false,
   });
+}
+
+export async function iniciarEscaner(elementId, onCode) {
+  const Html5Qrcode = await cargarLib();
+  const scanner = crearLector(Html5Qrcode, elementId);
   let done = false;
   await scanner.start(
     { facingMode: 'environment' },
-    { fps: 12, qrbox: (w, h) => ({ width: Math.min(300, w * 0.85), height: Math.min(160, h * 0.5) }) },
-    code => { if (!done) { done = true; onCode(code); } },
+    {
+      fps: 15,
+      qrbox: (w, h) => ({ width: Math.min(320, w * 0.9), height: Math.min(170, h * 0.5) }),
+      // Más resolución = lee mejor códigos pequeños o en bolsas arrugadas (como el muesli)
+      videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+    },
+    code => { if (!done) { done = true; avisarLectura(); onCode(code); } },
     () => {},
   );
   return async () => { try { await scanner.stop(); scanner.clear(); } catch {} };
+}
+
+// Lee el código desde una foto (la cámara normal del iPhone enfoca mejor de cerca)
+export async function leerCodigoDeFoto(file) {
+  const Html5Qrcode = await cargarLib();
+  const div = document.createElement('div');
+  div.id = 'lector-foto';
+  div.style.display = 'none';
+  document.body.appendChild(div);
+  try {
+    const code = await crearLector(Html5Qrcode, div.id).scanFile(file, false);
+    avisarLectura();
+    return code;
+  } catch {
+    return null; // no se encontró ningún código en la foto
+  } finally {
+    div.remove();
+  }
+}
+
+// Pitido corto (y vibración en Android; el iPhone no deja vibrar desde una web)
+let audio;
+addEventListener('touchend', () => {
+  // Safari solo deja sonar si el audio se "despierta" con un toque del usuario
+  try { audio ||= new AudioContext(); audio.resume(); } catch {}
+}, { passive: true });
+
+function avisarLectura() {
+  try { navigator.vibrate?.(80); } catch {}
+  try {
+    audio ||= new AudioContext();
+    const osc = audio.createOscillator(), vol = audio.createGain();
+    osc.frequency.value = 1400;
+    vol.gain.value = 0.15;
+    osc.connect(vol).connect(audio.destination);
+    osc.start();
+    osc.stop(audio.currentTime + 0.12);
+  } catch {}
 }

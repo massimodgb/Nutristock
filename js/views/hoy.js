@@ -5,7 +5,7 @@ import {
   deductStock, restoreStock, deleteLog, round1,
 } from '../db.js';
 import {
-  NUTRS, GROUPS, sumN, planRef, mealBlocks, blockFoods, visibleFood, cookFactor, toRaw, nutrFor,
+  NUTRS, GROUPS, sumN, planRef, blockRef, mealBlocks, blockFoods, visibleFood, cookFactor, toRaw, nutrFor,
   fmt, fmtG, todayStr, addDays, fmtDate, daysUntil,
 } from '../nutri.js';
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast } from '../ui.js';
@@ -55,8 +55,9 @@ export function Hoy({ go }) {
         <button class="icon-btn" onClick=${() => setDate(addDays(date, 1))} aria-label="Día siguiente"><${Icon} name="right" /></button>
       </header>
 
-      <${Resumen} total=${total} objetivo=${ref} />
+      <${Resumen} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
       <${Agua} date=${date} prefs=${prefs} />
+      <${EntrenoHoy} date=${date} go=${go} />
       ${isToday && html`<${Avisos} ...${ctx} basicos=${basicos} choice=${choice} logs=${logs} go=${go} />`}
 
       ${!plan && html`
@@ -101,6 +102,9 @@ export function Hoy({ go }) {
           </button>`)}
       </section>
 
+      <${Sheet} open=${sheet?.type === 'desglose'} onClose=${() => setSheet(null)} title="Desglose del día">
+        ${sheet?.type === 'desglose' && html`<${Desglose} ...${ctx} logs=${logs} choice=${choice} total=${total} objetivo=${ref} />`}
+      <//>
       <${Sheet} open=${sheet?.type === 'block'} onClose=${() => setSheet(null)} title=${sheet?.block?.nombre}>
         ${sheet?.type === 'block' && html`<${BlockSheet} ...${ctx} ...${sheet} onDone=${() => setSheet(null)} />`}
       <//>
@@ -113,12 +117,14 @@ export function Hoy({ go }) {
     </div>`;
 }
 
-function Resumen({ total, objetivo: ref }) {
+function Resumen({ total, objetivo: ref, onClick }) {
   const kcalPct = ref?.kcal ? Math.min(100, (total.kcal / ref.kcal) * 100) : 0;
+  const quedan = ref ? ref.kcal - total.kcal : null;
   return html`
-    <section class="card resumen">
+    <section class="card resumen tocable" onClick=${onClick}>
       <div class="kcal-ring" style=${{ '--pct': kcalPct }}>
-        <div><b>${fmt(total.kcal)}</b><small>${ref ? `de ≈${fmt(ref.kcal)}` : 'kcal'}</small></div>
+        <div><b>${fmt(total.kcal)}</b><small>${ref ? `de ≈${fmt(ref.kcal)}` : 'kcal'}</small>
+          ${quedan != null && html`<small class=${quedan < 0 ? 'over' : ''}>${quedan >= 0 ? `quedan ${fmt(quedan)}` : `+${fmt(-quedan)} de más`}</small>`}</div>
       </div>
       <div class="bars">
         <${Bar} label="Proteína" value=${total.prot} target=${ref?.prot} color="var(--prot)" />
@@ -128,8 +134,92 @@ function Resumen({ total, objetivo: ref }) {
           <span>Fibra ${fmt(total.fib)} g</span><span>Azúcar ${fmt(total.sug)} g</span>
           <span>Sat. ${fmt(total.sat, 1)} g</span><span>Sal ${fmt(total.salt, 1)} g</span>
         </div>
+        <small class="ver-mas">Toca para ver el desglose ›</small>
       </div>
     </section>`;
+}
+
+// Desglose del día, al estilo MyFitnessPal: objetivo − comido = te queda
+function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
+  if (!plan || !ref) return html`<p class="muted">Carga el plan de tu nutricionista para ver tus objetivos.</p>`;
+  const quedan = ref.kcal - total.kcal;
+  const macros = [
+    { k: 'prot', name: 'Proteína', color: 'var(--prot)', kcalG: 4 },
+    { k: 'carb', name: 'Carbohidratos', color: 'var(--carb)', kcalG: 4 },
+    { k: 'fat', name: 'Grasas', color: 'var(--fat)', kcalG: 9 },
+  ];
+  // De dónde vienen tus calorías de hoy (y las del plan)
+  const reparto = n => {
+    const t = macros.reduce((s, m) => s + n[m.k] * m.kcalG, 0) || 1;
+    return Object.fromEntries(macros.map(m => [m.k, Math.round((n[m.k] * m.kcalG / t) * 100)]));
+  };
+  const rHoy = reparto(total), rPlan = reparto(ref);
+  const comidas = plan.comidas.map(m => ({
+    m,
+    obj: sumN(mealBlocks(m, choice[m.id]).map(b => blockRef(b, plan, byId, prefs))),
+    hecho: sumN(logs.filter(l => l.mealId === m.id).map(l => l.n)),
+  }));
+  const fuera = sumN(logs.filter(l => l.mealId === 'extra').map(l => l.n));
+
+  return html`
+    <div class="ecuacion">
+      <div><b>${fmt(ref.kcal)}</b><small>Objetivo</small></div><span>−</span>
+      <div><b>${fmt(total.kcal)}</b><small>Comido</small></div><span>=</span>
+      <div class=${quedan < 0 ? 'over' : 'ok'}><b>${fmt(Math.abs(quedan))}</b><small>${quedan >= 0 ? 'Te quedan' : 'Te pasaste'}</small></div>
+    </div>
+
+    <h4>Macros</h4>
+    <table class="ntable desg">
+      <tr class="th"><td></td><td>Llevas</td><td>Objetivo</td><td>Faltan</td></tr>
+      ${macros.map(m => html`
+        <tr><td><span class="dot" style=${{ background: m.color }}></span>${m.name}</td>
+          <td>${fmt(total[m.k])} g</td><td>${fmt(ref[m.k])} g</td>
+          <td class=${total[m.k] > ref[m.k] * 1.1 ? 'over' : ''}>${total[m.k] >= ref[m.k] ? '✓' : fmt(ref[m.k] - total[m.k]) + ' g'}</td></tr>`)}
+      <tr><td>Fibra</td><td>${fmt(total.fib)} g</td><td>${fmt(ref.fib)} g</td><td>${total.fib >= ref.fib ? '✓' : fmt(ref.fib - total.fib) + ' g'}</td></tr>
+      <tr><td>Azúcares</td><td>${fmt(total.sug)} g</td><td colspan="2" class="muted">—</td></tr>
+      <tr><td>Saturadas</td><td>${fmt(total.sat, 1)} g</td><td colspan="2" class="muted">—</td></tr>
+      <tr><td>Sal</td><td>${fmt(total.salt, 1)} g</td><td colspan="2" class="muted">máx. 5 g (OMS)</td></tr>
+    </table>
+    <p class="muted small">Proteína por kg: ${html`<${ProtKg} total=${total} ref=${ref} />`}</p>
+
+    <h4>De dónde salen tus calorías</h4>
+    <div class="reparto">
+      ${macros.map(m => html`<span style=${{ width: rHoy[m.k] + '%', background: m.color }}></span>`)}
+    </div>
+    <p class="muted small">Hoy: proteína ${rHoy.prot}% · carbos ${rHoy.carb}% · grasas ${rHoy.fat}%.
+      Tu plan: ${rPlan.prot}% · ${rPlan.carb}% · ${rPlan.fat}%.</p>
+
+    <h4>Por comida</h4>
+    <table class="ntable desg">
+      <tr class="th"><td></td><td>Comido</td><td>Plan</td><td>P / C / G</td></tr>
+      ${comidas.map(({ m, obj, hecho }) => html`
+        <tr><td>${m.nombre}<br /><small class="muted">${m.hora}</small></td>
+          <td>${hecho.kcal ? fmt(hecho.kcal) : '—'}</td><td>${fmt(obj.kcal)}</td>
+          <td class="small">${hecho.kcal ? `${fmt(hecho.prot)} / ${fmt(hecho.carb)} / ${fmt(hecho.fat)}` : '—'}</td></tr>`)}
+      ${fuera.kcal > 0 && html`
+        <tr><td>Fuera del plan</td><td>${fmt(fuera.kcal)}</td><td>0</td>
+          <td class="small">${fmt(fuera.prot)} / ${fmt(fuera.carb)} / ${fmt(fuera.fat)}</td></tr>`}
+    </table>
+
+    <h4>¿De dónde sale el objetivo?</h4>
+    <div class="explica">
+      <p>No es una fórmula de "quiero bajar X kilos" como en MyFitnessPal. <b>Es lo que suma el plan de tu nutricionista</b>:
+        la app coge cada bloque de cada comida (por ejemplo, 240 g de pollo cocido o 200 g de arroz integral cocido)
+        y calcula sus calorías. Por eso pone "≈": si eliges ternera en vez de pollo, o la opción dulce del desayuno, el número cambia un poco.</p>
+      <p>Si tu nutricionista pensó el plan para mantenerte, para ganar músculo o para definir, eso lo decide él con tus datos;
+        la app te dice si lo estás cumpliendo.</p>
+      <p><b>¿Estoy en déficit o en mantenimiento?</b> Para saberlo hay que comparar lo que comes con lo que gastas.
+        Cuando conectemos Whoop, la app pondrá al lado tu gasto del día (incluido el CrossFit) y te dirá si ese día comiste por debajo,
+        igual o por encima. Mientras, la pista más fiable es tu peso medio de la semana en Progreso: si se mantiene estable comiendo
+        lo del plan, el plan es de mantenimiento para ti.</p>
+    </div>`;
+}
+
+// Proteína por kilo de peso corporal (si tienes el peso registrado)
+function ProtKg({ total, ref }) {
+  const w = useLive(() => db.weights.orderBy('date').last(), []);
+  if (!w?.kg) return html`apunta tu peso en Más para verla.`;
+  return html`llevas ${fmt(total.prot / w.kg, 1)} g/kg, el plan da ${fmt(ref.prot / w.kg, 1)} g/kg (con ${fmt(w.kg, 1)} kg).`;
 }
 
 function Avisos({ lots, foods, byId, stock, basicos, prefs, plan, choice, logs, go }) {
@@ -397,4 +487,24 @@ function Agua({ date, prefs }) {
       <button class="icon-btn" aria-label="Quitar un vaso" disabled=${!ml} onClick=${() => set(ml - vaso)}>−</button>
       <button class="icon-btn accent" aria-label="Añadir un vaso" onClick=${() => set(ml + vaso)}><${Icon} name="plus" size=${18} /></button>
     </section>`;
+}
+
+// Entreno del día (lo que pegaste en la pestaña Entreno)
+function EntrenoHoy({ date, go }) {
+  const ws = useLive(() => db.workouts.where('date').equals(date).toArray(), [date]);
+  if (!ws) return null;
+  if (!ws.length) {
+    return date === todayStr() ? html`
+      <button class="card entreno-hoy vacio" onClick=${() => go('entreno')}>
+        <${Icon} name="pesa" size=${20} /><span class="grow">¿Entrenas hoy? Pega el entreno de tu entrenadora</span><${Icon} name="right" size=${16} />
+      </button>` : null;
+  }
+  const w = ws[0], secs = w.parsed.secciones, hechas = secs.filter((s, i) => w.resultados?.[i]?.hecho).length;
+  return html`
+    <button class="card entreno-hoy" onClick=${() => go('entreno')}>
+      <${Icon} name="pesa" size=${20} />
+      <span class="grow"><b>Entreno</b> · ${secs.map(s => s.titulo).join(' · ')}<br />
+        <small class="muted">${hechas}/${secs.length} secciones hechas</small></span>
+      <${Icon} name="right" size=${16} />
+    </button>`;
 }
