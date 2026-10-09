@@ -2,21 +2,35 @@
 
 // Levantamientos con 1RM (los porcentajes del entreno se calculan sobre estos).
 // "puros": nombres que cuentan como ese levantamiento para guardar récords.
+// "padre": de qué levantamiento sacar el % si no tienes RM de este
+// (ej. Hang Power Clean → Power Clean → Clean → Clean & Jerk).
 export const LEVANTAMIENTOS = [
   { id: 'snatch', name: 'Snatch', puros: ['snatch', 'squat snatch', 'full snatch'] },
-  { id: 'power-snatch', name: 'Power Snatch', puros: ['power snatch'] },
+  { id: 'power-snatch', name: 'Power Snatch', puros: ['power snatch'], padre: 'snatch' },
+  { id: 'hang-snatch', name: 'Hang Snatch', puros: ['hang snatch', 'hang squat snatch'], padre: 'snatch' },
+  { id: 'hang-power-snatch', name: 'Hang Power Snatch', puros: ['hang power snatch'], padre: 'power-snatch' },
+  { id: 'snatch-balance', name: 'Snatch Balance', puros: ['snatch balance'], padre: 'snatch' },
+  { id: 'snatch-pull', name: 'Snatch Pull', puros: ['snatch pull', 'snatch high pull'], padre: 'snatch' },
+  { id: 'snatch-deadlift', name: 'Snatch Deadlift', puros: ['snatch deadlift'], padre: 'snatch' },
   { id: 'clean-jerk', name: 'Clean & Jerk', puros: ['clean and jerk', 'clean & jerk', 'clean jerk', 'c&j'] },
-  { id: 'clean', name: 'Clean', puros: ['clean', 'squat clean', 'full clean'] },
-  { id: 'power-clean', name: 'Power Clean', puros: ['power clean'] },
-  { id: 'jerk', name: 'Jerk', puros: ['jerk', 'split jerk', 'push jerk'] },
+  { id: 'clean', name: 'Clean', puros: ['clean', 'squat clean', 'full clean'], padre: 'clean-jerk' },
+  { id: 'power-clean', name: 'Power Clean', puros: ['power clean'], padre: 'clean' },
+  { id: 'hang-clean', name: 'Hang Clean', puros: ['hang clean', 'hang squat clean'], padre: 'clean' },
+  { id: 'hang-power-clean', name: 'Hang Power Clean', puros: ['hang power clean'], padre: 'power-clean' },
+  { id: 'clean-pull', name: 'Clean Pull', puros: ['clean pull', 'clean high pull'], padre: 'clean' },
+  { id: 'clean-deadlift', name: 'Clean Deadlift', puros: ['clean deadlift'], padre: 'clean' },
+  { id: 'jerk', name: 'Split Jerk', puros: ['jerk', 'split jerk'], padre: 'clean-jerk' },
+  { id: 'push-jerk', name: 'Push Jerk', puros: ['push jerk', 'power jerk'], padre: 'jerk' },
+  { id: 'push-press', name: 'Push Press', puros: ['push press'] },
+  { id: 'press', name: 'Strict Press', puros: ['strict press', 'press', 'shoulder press', 'press militar', 'overhead press'] },
   { id: 'back-squat', name: 'Back Squat', puros: ['back squat', 'sentadilla trasera'] },
   { id: 'front-squat', name: 'Front Squat', puros: ['front squat', 'sentadilla frontal'] },
   { id: 'ohs', name: 'Overhead Squat', puros: ['overhead squat', 'ohs'] },
   { id: 'deadlift', name: 'Deadlift', puros: ['deadlift', 'peso muerto'] },
-  { id: 'press', name: 'Strict Press', puros: ['strict press', 'press', 'shoulder press', 'press militar'] },
-  { id: 'push-press', name: 'Push Press', puros: ['push press'] },
+  { id: 'sumo-deadlift', name: 'Sumo Deadlift', puros: ['sumo deadlift'] },
   { id: 'bench', name: 'Bench Press', puros: ['bench press', 'press banca', 'press de banca'] },
-  { id: 'thruster', name: 'Thruster', puros: ['thruster', 'thrusters'] },
+  { id: 'thruster', name: 'Thruster', puros: ['thruster'] },
+  { id: 'hip-thrust', name: 'Hip Thrust', puros: ['hip thrust'] },
 ];
 
 // Abreviaturas típicas de CrossFit → nombre completo

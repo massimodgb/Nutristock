@@ -6,6 +6,7 @@ import { Sheet, Num, Seg, Empty, Icon, toast } from '../ui.js';
 import { parsearEntreno, textoFormato, norm, claveEjercicio, implemento } from '../entreno/parser.js';
 import { LEVANTAMIENTOS, BENCHMARKS } from '../entreno/datos.js';
 import { RelojActivo, Relojes } from './reloj.js';
+import { idRM, nombreRM, mejorRM, rmParaLinea } from '../entreno/rm.js';
 
 const ES_WOD = ['fortime', 'amrap', 'emom', 'intervalos', 'rondas', 'bloques'];
 
@@ -126,20 +127,24 @@ function Seccion({ s, si, r, marcas, onReloj, onGuardar }) {
 }
 
 function Linea({ l, clave, r, marcas, onGuardar }) {
-  const rm = l.base ? mejor1RM(marcas, l.base.id) : null;
+  const rm = l.pct ? rmParaLinea(l, marcas) : null;
   const kgSugerido = i => {
     if (l.kg) return l.kg;
-    if (!rm || !l.pct) return null;
+    if (!rm?.kg || !l.pct) return null;
     const p = l.pct.length === l.series ? l.pct[i] : l.pct[0];
-    return Math.round((rm * p) / 100);
+    return Math.round((rm.kg * p) / 100);
   };
-  const rango = rm && l.pct ? l.pct.map(p => Math.round((rm * p) / 100)) : null;
+  const rango = rm?.kg ? l.pct.map(p => Math.round((rm.kg * p) / 100)) : null;
+  // Si el % se calcula sobre otro levantamiento (no tienes RM del propio), lo decimos
+  const propio = l.ejercicios?.[0];
   return html`
     <div class="linea">
       <div>${l.texto}${l.prescripcion && html` <b>${l.prescripcion}</b>`}</div>
-      ${l.pct && l.base && html`<small class=${rm ? 'pct' : 'muted'}>
-        ${rm ? `${l.pct.join('-')}% de tu ${nombreLev(l.base.id)} (${rm} kg) = ${[...new Set(rango)].join('-')} kg`
-             : `Apunta tu 1RM de ${nombreLev(l.base.id)} en Marcas para calcular los kilos`}</small>`}
+      ${rm && html`<small class=${rm.kg ? 'pct' : 'muted'}>
+        ${rm.kg
+          ? html`${l.pct.join('-')}% de tu ${rm.nombre} (${fmt(rm.kg, 1)} kg${rm.estimado ? `, estimado de ${rm.desde}` : ''}) = <b>${[...new Set(rango)].join('-')} kg</b>
+              ${!rm.esPropio && propio && !l.pctDe ? html`<br /><span class="muted">No tienes RM de ${propio}: uso el de ${rm.nombre}</span>` : ''}`
+          : `Apunta tu RM de ${rm.nombre} en Marcas para calcular los kilos`}</small>`}
       ${l.links?.map(u => html` <a class="video" href=${u} target="_blank" rel="noopener">▶ vídeo</a>`)}
       ${l.series && html`<${Series} l=${l} clave=${clave} r=${r} kgSugerido=${kgSugerido} marcas=${marcas} onGuardar=${onGuardar} />`}
     </div>`;
@@ -166,18 +171,21 @@ function Series({ l, clave, r, kgSugerido, marcas, onGuardar }) {
     const final = filas.map((f, i) => ({ kg: kgDe(f, i), reps: f.reps }));
     await onGuardar({ series: { ...(r.series || {}), [clave]: final } });
     setAbierto(false);
-    const filas_ = final;
-    // ¿Récord? Solo si el ejercicio es el levantamiento "puro" (un Squat Snatch cuenta para Snatch)
-    if (l.base?.puro) {
-      for (const f of filas_) {
-        if (!f.kg || !f.reps) continue;
-        const prev = Math.max(0, ...marcas.filter(m => m.ejercicio === l.base.id && m.reps === f.reps).map(m => m.kg));
-        if (f.kg > prev) {
-          await db.marcas.add({ tipo: 'fuerza', ejercicio: l.base.id, kg: f.kg, reps: f.reps, date: todayStr() });
-          toast(`🏆 ¡Récord! ${nombreLev(l.base.id)} ${f.reps}RM: ${fmt(f.kg, 1)} kg`);
-          return;
+    // Récords: se guarda tu mejor marca de ESTE ejercicio para cada nº de repeticiones
+    // (así los RM de Hang Power Clean, Front Squat… se van llenando solos)
+    const nombre = l.ejercicios?.[0];
+    if (nombre) {
+      const id = idRM(nombre);
+      const records = [];
+      for (const reps of [...new Set(final.filter(f => f.kg && f.reps).map(f => f.reps))]) {
+        const kg = Math.max(...final.filter(f => f.reps === reps && f.kg).map(f => f.kg));
+        const prev = Math.max(0, ...marcas.filter(m => m.ejercicio === id && m.reps === reps).map(m => m.kg));
+        if (kg > prev) {
+          await db.marcas.add({ tipo: 'fuerza', ejercicio: id, nombre: nombreRM(id, marcas) === id.replace(/^x:/, '') ? nombre : nombreRM(id, marcas), kg, reps, date: todayStr() });
+          records.push(`${reps}RM ${fmt(kg, 1)} kg`);
         }
       }
+      if (records.length) { toast(`🏆 ¡Récord en ${nombreRM(id, marcas) === id.replace(/^x:/, '') ? nombre : nombreRM(id, marcas)}! ${records.join(' · ')}`); return; }
     }
     toast('Series guardadas ✓');
   };
@@ -227,46 +235,85 @@ function Resultado({ s, r, esWod, onGuardar }) {
     </div>`;
 }
 
-// ---------- Marcas: 1RM y benchmarks ----------
+// ---------- Marcas: RM de cualquier ejercicio y benchmarks ----------
 function Marcas({ marcas }) {
   const [tab, setTab] = useState('fuerza');
   const [sel, setSel] = useState(null);
-  const lista = tab === 'fuerza' ? LEVANTAMIENTOS : BENCHMARKS;
+  const [q, setQ] = useState('');
+  const [nuevo, setNuevo] = useState(false);
+  // Fuerza: los levantamientos conocidos + cualquier otro ejercicio del que tengas marcas
+  const otros = [...new Set(marcas.filter(m => m.tipo === 'fuerza' && m.ejercicio.startsWith('x:')).map(m => m.ejercicio))]
+    .map(id => ({ id, name: nombreRM(id, marcas) }));
+  const fuerza = [...LEVANTAMIENTOS, ...otros]
+    .filter(x => norm(x.name).includes(norm(q)))
+    // primero los que tienen marca
+    .sort((a, b) => (!!mejorRM(marcas, b.id)) - (!!mejorRM(marcas, a.id)));
+  const lista = tab === 'fuerza' ? fuerza : BENCHMARKS;
   return html`
     <${Seg} value=${tab} onChange=${setTab} options=${[{ value: 'fuerza', label: 'Fuerza (RM)' }, { value: 'bench', label: 'Benchmarks' }]} />
+    ${tab === 'fuerza' && html`
+      <div class="inline">
+        <input class="search" placeholder="Buscar levantamiento…" value=${q} onInput=${e => setQ(e.target.value)} />
+        <button class="btn small" onClick=${() => setNuevo(true)}><${Icon} name="plus" size=${16} /></button>
+      </div>
+      <p class="muted small">Tus RM también se guardan solos cuando apuntas kilos en las series de un entreno. Con + añades el RM de cualquier otro ejercicio.</p>`}
     <section class="card list">
       ${lista.map(x => {
         const mias = marcas.filter(m => m.ejercicio === x.id);
-        const valor = tab === 'fuerza' ? (mejor1RM(marcas, x.id) ? `${fmt(mejor1RM(marcas, x.id), 1)} kg` : mias.length ? 'sin 1RM' : '—')
-          : mejorBench(mias, x.tipo) || '—';
+        const rm = tab === 'fuerza' ? mejorRM(marcas, x.id) : null;
+        const valor = tab === 'fuerza' ? (rm ? `${rm.estimado ? '≈' : ''}${fmt(rm.kg, 1)} kg` : '—') : mejorBench(mias, x.tipo) || '—';
         return html`
           <button class="row" onClick=${() => setSel(x)}>
-            <span class="grow">${x.name}${tab === 'bench' ? html`<br /><small class="muted">${x.desc}</small>` : ''}</span>
+            <span class="grow">${x.name}${tab === 'bench' ? html`<br /><small class="muted">${x.desc}</small>` : ''}
+              ${LEVANTAMIENTOS.find(L => L.id === x.id)?.padre && !rm ? html`<br /><small class="muted">si no lo tienes, uso ${nombreRM(LEVANTAMIENTOS.find(L => L.id === x.id).padre)}</small>` : ''}</span>
             <b>${valor}</b>
           </button>`;
       })}
     </section>
     <${Sheet} open=${!!sel} onClose=${() => setSel(null)} title=${sel?.name}>
       ${sel && html`<${MarcaDetalle} x=${sel} tipo=${tab} marcas=${marcas.filter(m => m.ejercicio === sel.id)} />`}
+    <//>
+    <${Sheet} open=${nuevo} onClose=${() => setNuevo(false)} title="RM de otro ejercicio">
+      ${nuevo && html`<${NuevoRM} onDone=${x => { setNuevo(false); setSel(x); }} />`}
     <//>`;
+}
+
+function NuevoRM({ onDone }) {
+  const [nombre, setNombre] = useState('');
+  const propios = useLive(() => db.ejercicios.toArray(), []);
+  const sugerencias = [...LEVANTAMIENTOS.map(L => L.name), ...(propios || []).map(p => p.nombre)];
+  const id = nombre.trim() ? idRM(nombre) : null;
+  return html`
+    <div class="form">
+      <label>Ejercicio<input list="ejs-rm" value=${nombre} onInput=${e => setNombre(e.target.value)} placeholder="Ej: Front Rack Lunge, DBs Clean…" /></label>
+      <datalist id="ejs-rm">${sugerencias.map(s => html`<option value=${s} />`)}</datalist>
+      ${id && html`<p class="muted small">${id.startsWith('x:') ? 'Ejercicio nuevo: se guardará con este nombre.' : `Es el levantamiento "${nombreRM(id)}".`}</p>`}
+      <button class="btn" disabled=${!id} onClick=${() => onDone({ id, name: id.startsWith('x:') ? nombre.trim() : nombreRM(id) })}>Continuar</button>
+    </div>`;
 }
 
 function MarcaDetalle({ x, tipo, marcas }) {
   const [kg, setKg] = useState(null), [reps, setReps] = useState(1), [resultado, setResultado] = useState(''), [fecha, setFecha] = useState(todayStr());
   const add = async () => {
-    if (tipo === 'fuerza') await db.marcas.add({ tipo: 'fuerza', ejercicio: x.id, kg, reps, date: fecha });
+    if (tipo === 'fuerza') await db.marcas.add({ tipo: 'fuerza', ejercicio: x.id, nombre: x.name, kg, reps, date: fecha });
     else await db.marcas.add({ tipo: 'bench', ejercicio: x.id, resultado, valor: valorBench(resultado, x.tipo), date: fecha });
     setKg(null); setResultado('');
     toast('Marca guardada ✓');
   };
-  const rm = tipo === 'fuerza' ? mejor1RM(marcas, x.id) : null;
+  const rm = tipo === 'fuerza' ? mejorRM(marcas, x.id) : null;
+  // Mejor marca por nº de repeticiones (1RM, 3RM, 5RM…)
+  const porReps = {};
+  for (const m of marcas) if (m.tipo === 'fuerza' && (!porReps[m.reps] || m.kg > porReps[m.reps].kg)) porReps[m.reps] = m;
   return html`
     <div class="form">
       ${x.desc && html`<p class="muted small">${x.desc}</p>`}
       ${rm && html`
-        <div class="preview"><b>Tus porcentajes (1RM ${fmt(rm, 1)} kg)</b>
-          <div class="pct-grid">${[50, 60, 65, 70, 75, 80, 85, 90, 95, 100].map(p => html`<span>${p}%<b>${Math.round((rm * p) / 100)}</b></span>`)}</div>
+        <div class="preview"><b>Tus porcentajes (1RM ${rm.estimado ? '≈' : ''}${fmt(rm.kg, 1)} kg)</b>
+          ${rm.estimado && html`<div class="muted small">1RM estimado a partir de tu ${rm.desde}. Apunta un 1RM real cuando lo hagas.</div>`}
+          <div class="pct-grid">${[50, 55, 60, 65, 70, 75, 80, 85, 90, 95].map(p => html`<span>${p}%<b>${Math.round((rm.kg * p) / 100)}</b></span>`)}</div>
         </div>`}
+      ${tipo === 'fuerza' && Object.keys(porReps).length > 0 && html`
+        <div class="chips wrap">${Object.values(porReps).sort((a, b) => a.reps - b.reps).map(m => html`<span class="tag">${m.reps}RM: <b>${fmt(m.kg, 1)} kg</b></span>`)}</div>`}
       <h4>Nueva marca</h4>
       ${tipo === 'fuerza' ? html`
         <div class="grid2">
@@ -373,11 +420,6 @@ function EjercicioDetalle({ e, onDone }) {
 }
 
 // ---------- utilidades ----------
-export function mejor1RM(marcas, id) {
-  const v = marcas.filter(m => m.tipo === 'fuerza' && m.ejercicio === id && m.reps === 1).map(m => m.kg);
-  return v.length ? Math.max(...v) : null;
-}
-const nombreLev = id => LEVANTAMIENTOS.find(L => L.id === id)?.name || id;
 const mmss = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 function valorBench(txt, tipo) {
   if (tipo === 'amrap') { const [r, e] = txt.split('+').map(x => parseInt(x) || 0); return r * 1000 + e; }

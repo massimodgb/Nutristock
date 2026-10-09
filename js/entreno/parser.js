@@ -104,8 +104,12 @@ function analizarLinea(l) {
   const out = { ...l };
   const sr = (l.prescripcion || l.texto).match(/\b(\d+)\s*x\s*(\d+)\b/i);
   if (sr) { out.series = +sr[1]; out.reps = +sr[2]; }
-  const pct = todo.match(/(\d{2,3}(?:\s*[-–]\s*\d{2,3})*)\s*%/);
-  if (pct) out.pct = pct[1].split(/[-–]/).map(x => +x.trim());
+  // Porcentajes en cualquier forma: "@ 100-110%", "(80-85-90%)", "60%-65%-70%", "con 70%"
+  const pcts = [...todo.matchAll(/(\d{2,3}(?:\s*[-–\/]\s*\d{2,3})*)\s*%/g)].flatMap(m => m[1].split(/[-–\/]/).map(x => +x.trim()));
+  if (pcts.length) out.pct = pcts;
+  // "70% de Hang Power Clean" / "80% del clean" / "75% of snatch": el % es de ESE levantamiento
+  const de = todo.match(/%\s*(?:de|del|of)\s+(?:tu\s+|su\s+|el\s+|la\s+)?(?:1\s*rm\s+(?:del?\s+)?)?([a-záéíóúñ&][a-záéíóúñ&\s-]{1,40}?)\s*(?=$|[,.;:()@]|\s\d)/i);
+  if (de) out.pctDe = de[1].trim();
   const carga = todo.match(/@\s*(\d+(?:[.,]\d+)?)\s*(kg|lb)/i);
   if (carga) out.kg = +carga[1].replace(',', '.') * (carga[2].toLowerCase() === 'lb' ? 0.4536 : 1);
   out.estacion = (l.texto.match(/^(\d+)\)\s*/) || [])[1] ? +l.texto.match(/^(\d+)\)/)[1] : null;
@@ -123,6 +127,8 @@ export function nombresEjercicio(texto) {
     .replace(/^\d+\)\s*/, '')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/@\s*[\d.,]+\s*(kg|lb|%)?/gi, ' ')
+    // "con 70% de" / "al 80%" / "60%-65%-70%": fuera del nombre
+    .replace(/\b(?:con|al|a)?\s*\d{2,3}\s*%(?:\s*[-–\/]\s*\d{2,3}\s*%?)*(?:\s*(?:de|del|of)\s+(?:tu\s+|su\s+)?)?/gi, ' ')
     .replace(/\b\d+(\s*[-–]\s*\d+)+\b/g, ' ')
     .split(/\s\+\s/)
     .map(p => p
@@ -139,18 +145,21 @@ export function nombresEjercicio(texto) {
 }
 
 // ¿Sobre qué 1RM se calcula el %? "Squat Snatch desde déficit" → Snatch
+// puro = es exactamente ese levantamiento ("Squat Snatch" = Snatch, "Overhead Squats" = OHS);
+// si no, el levantamiento más parecido que contenga ("Snatch Deadlift con pausa…" → Snatch Deadlift).
 export function levantamientoBase(nombre) {
-  const t = norm(nombre);
-  const puro = LEVANTAMIENTOS.find(L => L.puros.includes(t));
+  const c = claveEjercicio(nombre);
+  const puro = LEVANTAMIENTOS.find(L => L.puros.some(p => claveEjercicio(p) === c));
   if (puro) return { id: puro.id, puro: true };
-  const orden = [
-    ['power snatch', 'power-snatch'], ['snatch', 'snatch'], ['clean and jerk', 'clean-jerk'], ['clean & jerk', 'clean-jerk'],
-    ['power clean', 'power-clean'], ['clean', 'clean'], ['jerk', 'jerk'], ['front squat', 'front-squat'],
-    ['overhead squat', 'ohs'], ['back squat', 'back-squat'], ['push press', 'push-press'], ['bench', 'bench'],
-    ['deadlift', 'deadlift'], ['peso muerto', 'deadlift'], ['thruster', 'thruster'],
-  ];
-  const hit = orden.find(([k]) => t.includes(k));
-  return hit ? { id: hit[1], puro: false } : null;
+  const t = ` ${c} `;
+  let mejor = null;
+  for (const L of LEVANTAMIENTOS) {
+    for (const p of L.puros) {
+      const k = claveEjercicio(p);
+      if (k.length > 2 && t.includes(` ${k} `) && (!mejor || k.length > mejor.k.length)) mejor = { id: L.id, k };
+    }
+  }
+  return mejor ? { id: mejor.id, puro: false } : null;
 }
 
 export function detectarFormato(texto, lineas = []) {
