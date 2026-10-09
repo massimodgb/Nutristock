@@ -106,6 +106,23 @@ function Seccion({ s, si, r, marcas, hist, date, onReloj, onGuardar }) {
         rondas: x.rondas || r.rondas, hecho: true,
       }),
   };
+  // Al marcar la sección como hecha, se guardan los pesos de la pauta que no hayas apuntado
+  const completar = async () => {
+    const series = { ...(r.series || {}) }, pesos = { ...(r.pesos || {}) };
+    const nuevos = [];
+    s.partes.forEach((p, pi) => p.lineas.forEach((l, li) => {
+      const k = `${pi}-${li}`, nombre = l.ejercicios?.[0];
+      if (!nombre) return;
+      const pa = pautaLinea(l, marcas);
+      if (pa.series && !series[k] && pa.series.every(x => x.kg)) { series[k] = pa.series; nuevos.push([nombre, pa.series]); }
+      else if (!l.series && pa.kg && !pesos[k]) {
+        pesos[k] = { kg: pa.kg, reps: l.repsLinea || null };
+        if (l.repsLinea) nuevos.push([nombre, [pesos[k]]]);
+      }
+    }));
+    await onGuardar({ series, pesos, hecho: true });
+    for (const [n, f] of nuevos) await registrarRecords(n, f, marcas);
+  };
   return html`
     <section class=${'card seccion' + (r.hecho ? ' hecha' : '')}>
       <header class="meal-head">
@@ -124,61 +141,72 @@ function Seccion({ s, si, r, marcas, hist, date, onReloj, onGuardar }) {
             <${Linea} l=${l} clave=${`${pi}-${li}`} r=${r} marcas=${marcas} hist=${hist} date=${date} onGuardar=${onGuardar} />`)}
           ${p.links?.map(u => html`<a class="video" href=${u} target="_blank" rel="noopener">▶ Ver vídeo</a>`)}
         </div>`)}
-      <${Resultado} s=${s} r=${r} esWod=${esWod} onGuardar=${onGuardar} />
+      <${Resultado} s=${s} r=${r} esWod=${esWod} onGuardar=${onGuardar} onHecho=${completar} />
     </section>`;
 }
 
-function Linea({ l, clave, r, marcas, hist, date, onGuardar }) {
+// Lo que te toca levantar en una línea: kilos de cada serie (tu RM × el %) o el peso que pone el texto
+export function pautaLinea(l, marcas) {
   const rm = l.pct ? rmParaLinea(l, marcas) : null;
-  const kgSugerido = i => {
+  const kgSerie = i => {
     if (l.kg) return l.kg;
     if (!rm?.kg || !l.pct) return null;
     const p = l.pct.length === l.series ? l.pct[i] : l.pct[0];
     return Math.round((rm.kg * p) / 100);
   };
-  const rango = rm?.kg ? l.pct.map(p => Math.round((rm.kg * p) / 100)) : null;
-  // Si el % se calcula sobre otro levantamiento (no tienes RM del propio), lo decimos
+  const series = l.series ? Array.from({ length: l.series }, (_, i) => ({ kg: kgSerie(i), reps: l.reps })) : null;
+  return { rm, series, kg: l.series ? null : l.kg || null };
+}
+
+function Linea({ l, clave, r, marcas, hist, date, onGuardar }) {
+  const pauta = pautaLinea(l, marcas);
+  const rm = pauta.rm;
   const propio = l.ejercicios?.[0];
+  const kgs = pauta.series?.every(x => x.kg) ? [...new Set(pauta.series.map(x => fmt(x.kg, 1)))] : null;
+  const carga = kgs ? `${l.series} × ${l.reps}  ·  ${kgs.join(' / ')} kg`
+    : !l.series && pauta.kg ? `${l.repsLinea ? `${l.repsLinea} reps  ·  ` : ''}${fmt(pauta.kg, 1)} kg` : null;
   return html`
     <div class="linea">
       <div>${l.texto}${l.prescripcion && html` <b>${l.prescripcion}</b>`}</div>
-      ${rm && html`<small class=${rm.kg ? 'pct' : 'muted'}>
+      ${carga && html`<div class="carga"><${Icon} name="pesa" size=${16} /> <b>${propio ? `${propio}: ` : ''}${carga}</b></div>`}
+      ${rm && html`<small class=${rm.kg ? 'muted' : 'aviso-rm'}>
         ${rm.kg
-          ? html`${l.pct.join('-')}% de tu ${rm.nombre} (${fmt(rm.kg, 1)} kg${rm.estimado ? `, estimado de ${rm.desde}` : ''}) = <b>${[...new Set(rango)].join('-')} kg</b>
-              ${!rm.esPropio && propio && !l.pctDe ? html`<br /><span class="muted">No tienes RM de ${propio}: uso el de ${rm.nombre}</span>` : ''}`
-          : `Apunta tu RM de ${rm.nombre} en Marcas para calcular los kilos`}</small>`}
+          ? html`${l.pct.join('-')}% de tu ${rm.nombre} (${fmt(rm.kg, 1)} kg${rm.estimado ? `, estimado de ${rm.desde}` : ''})
+              ${!rm.esPropio && propio && !l.pctDe ? html`<br />No tienes RM de ${propio}: uso el de ${rm.nombre}` : ''}`
+          : `Apunta tu RM de ${rm.nombre} en Entreno → Marcas y aquí saldrán los kilos`}</small>`}
       ${l.links?.map(u => html` <a class="video" href=${u} target="_blank" rel="noopener">▶ vídeo</a>`)}
       ${propio && html`<${UltimaVez} lista=${hist[claveEjercicio(propio)]} date=${date} />`}
-      ${l.series && html`<${Series} l=${l} clave=${clave} r=${r} kgSugerido=${kgSugerido} marcas=${marcas} onGuardar=${onGuardar} />`}
+      ${l.series && html`<${Series} l=${l} clave=${clave} r=${r} pauta=${pauta.series} marcas=${marcas} onGuardar=${onGuardar} />`}
       ${!l.series && propio && html`<${PesoLinea} l=${l} clave=${clave} r=${r} marcas=${marcas} ultimo=${hist[claveEjercicio(propio)]?.find(h => h.date < date)} onGuardar=${onGuardar} />`}
     </div>`;
 }
 
 // Apuntar los kilos de cada serie (y detectar récords)
-function Series({ l, clave, r, kgSugerido, marcas, onGuardar }) {
+function Series({ l, clave, r, pauta, marcas, onGuardar }) {
   const guardadas = r.series?.[clave];
   const [abierto, setAbierto] = useState(false);
   // kg: null = usar el sugerido (se recalcula si cambia tu 1RM)
   const [filas, setFilas] = useState(() => guardadas
     || Array.from({ length: l.series }, () => ({ kg: null, reps: l.reps })));
-  const kgDe = (f, i) => f.kg ?? kgSugerido(i);
+  const kgDe = (f, i) => f.kg ?? pauta[i]?.kg;
+  const completa = pauta.every(x => x.kg);
+  const guardarFilas = async final => {
+    await onGuardar({ series: { ...(r.series || {}), [clave]: final } });
+    setAbierto(false);
+    const records = l.ejercicios?.[0] ? await registrarRecords(l.ejercicios[0], final, marcas) : null;
+    if (!records) toast('Series guardadas ✓');
+  };
   const set = (i, k, v) => setFilas(prev => prev.map((f, j) => (j === i ? { ...f, [k]: v } : f)));
 
   if (!abierto) {
     return html`
       <div class="series-resumen">
         ${guardadas ? html`<small class="pct">✓ ${guardadas.filter(f => f.kg).map(f => `${fmt(f.kg, 1)}×${f.reps}`).join(' · ')}</small>` : ''}
-        <button class="chip" onClick=${() => setAbierto(true)}>${guardadas ? 'Editar kilos' : `Apuntar kilos (${l.series} series)`}</button>
+        ${!guardadas && completa && html`<button class="chip on" onClick=${() => guardarFilas(pauta)}>✓ Hecho así</button>`}
+        <button class="chip" onClick=${() => setAbierto(true)}>${guardadas ? 'Editar kilos' : completa ? 'Cambiar kilos' : `Apuntar kilos (${l.series} series)`}</button>
       </div>`;
   }
-  const guardar = async () => {
-    const final = filas.map((f, i) => ({ kg: kgDe(f, i), reps: f.reps }));
-    await onGuardar({ series: { ...(r.series || {}), [clave]: final } });
-    setAbierto(false);
-    const records = l.ejercicios?.[0] ? await registrarRecords(l.ejercicios[0], final, marcas) : null;
-    if (records) return;
-    toast('Series guardadas ✓');
-  };
+  const guardar = () => guardarFilas(filas.map((f, i) => ({ kg: kgDe(f, i), reps: f.reps })));
   return html`
     <div class="series">
       ${filas.map((f, i) => html`
@@ -192,7 +220,7 @@ function Series({ l, clave, r, kgSugerido, marcas, onGuardar }) {
 }
 
 // Resultado de la sección: tiempo / rondas, esfuerzo (RPE) y notas
-function Resultado({ s, r, esWod, onGuardar }) {
+function Resultado({ s, r, esWod, onGuardar, onHecho }) {
   const [abierto, setAbierto] = useState(false);
   if (!abierto) return html`
     <div class="resultado-linea">
@@ -221,7 +249,8 @@ function Resultado({ s, r, esWod, onGuardar }) {
           <button class=${'chip' + (r.rpe === n ? ' on' : '')} onClick=${() => onGuardar({ rpe: n })}>${n}</button>`)}</div>
       </label>
       <label>Notas<textarea rows="2" value=${r.notas || ''} placeholder="Escalado, molestias, sensaciones…" onInput=${e => onGuardar({ notas: e.target.value })}></textarea></label>
-      <button class="btn" onClick=${() => { onGuardar({ hecho: true }); setAbierto(false); toast('¡Hecho! ✓'); }}>Marcar como hecho</button>
+      <button class="btn" onClick=${async () => { setAbierto(false); await onHecho(); toast('¡Hecho! ✓ Pesos de la pauta guardados'); }}>Marcar como hecho</button>
+      <small class="muted">Se guardan solos los pesos de la pauta que no hayas cambiado.</small>
     </div>`;
 }
 
@@ -482,10 +511,17 @@ function PesoLinea({ l, clave, r, marcas, ultimo, onGuardar }) {
   const [abierto, setAbierto] = useState(false);
   const [kg, setKg] = useState(guardado?.kg ?? l.kg ?? (ultimo ? Math.max(...ultimo.sets.map(x => x.kg)) : null));
   const [reps, setReps] = useState(guardado?.reps ?? l.repsLinea ?? null);
+  const rapido = async (kgR, repsR) => {
+    await onGuardar({ pesos: { ...(r.pesos || {}), [clave]: { kg: kgR, reps: repsR } } });
+    if (!(repsR && await registrarRecords(l.ejercicios[0], [{ kg: kgR, reps: repsR }], marcas))) toast('Peso guardado ✓');
+  };
+  const ultimoKg = ultimo ? Math.max(...ultimo.sets.map(x => x.kg)) : null;
   if (!abierto) return html`
     <div class="series-resumen">
       ${guardado && html`<small class="pct">✓ ${fmt(guardado.kg, 1)} kg${guardado.reps ? ` × ${guardado.reps}` : ''}</small>`}
-      <button class="chip" onClick=${() => setAbierto(true)}>${guardado ? 'Editar peso' : '+ kg'}</button>
+      ${!guardado && l.kg && html`<button class="chip on" onClick=${() => rapido(l.kg, l.repsLinea || null)}>✓ Hecho con ${fmt(l.kg, 1)} kg</button>`}
+      ${!guardado && !l.kg && ultimoKg && html`<button class="chip on" onClick=${() => rapido(ultimoKg, l.repsLinea || null)}>✓ Igual que la última (${fmt(ultimoKg, 1)} kg)</button>`}
+      <button class="chip" onClick=${() => setAbierto(true)}>${guardado ? 'Editar peso' : l.kg || ultimoKg ? 'Otro peso' : '+ kg'}</button>
     </div>`;
   return html`
     <div class="serie">

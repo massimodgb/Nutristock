@@ -9,7 +9,7 @@ import {
   fmt, fmtG, todayStr, addDays, fmtDate, daysUntil,
 } from '../nutri.js';
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast } from '../ui.js';
-import { PRESETS_FUERA } from '../data/foods.js';
+import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { leer } from './entreno.js';
 import { estadoCompra, textoStock } from './stock.js';
 
@@ -433,10 +433,10 @@ function LogDetail({ log, byId, foods, onDone }) {
 }
 
 function ExtraSheet({ foods, byId, stock, prefs, date, onDone }) {
-  const [modo, setModo] = useState('biblio');
+  const [modo, setModo] = useState('fuera');
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(null);
-  const [ap, setAp] = useState({ name: '', kcal: null, prot: null, carb: null, fat: null });
+  const [plato, setPlato] = useState(null); // plato de restaurante elegido (o a medida)
 
   if (sel) {
     return html`
@@ -444,12 +444,14 @@ function ExtraSheet({ foods, byId, stock, prefs, date, onDone }) {
       <${AmountForm} food=${sel} defaultG=${null} byId=${byId} stockG=${stock[sel.id]?.g || 0}
         onSave=${async r => { await saveLog({ ...r, date, mealId: 'extra', foods }); toast('Registrado ✓'); onDone(); }} />`;
   }
+  if (plato) return html`<${PlatoFuera} plato=${plato} date=${date} onBack=${() => setPlato(null)} onDone=${onDone} />`;
+
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const res = foods.filter(f => visibleFood(f, prefs) && norm(f.name + ' ' + (f.brand || '')).includes(norm(q))).slice(0, 40);
 
   return html`
     <${Seg} value=${modo} onChange=${setModo}
-      options=${[{ value: 'biblio', label: 'De mi biblioteca' }, { value: 'aprox', label: 'Aproximado' }]} />
+      options=${[{ value: 'fuera', label: 'Restaurante / capricho' }, { value: 'biblio', label: 'De mi biblioteca' }]} />
     ${modo === 'biblio' ? html`
       <input class="search" placeholder="Buscar alimento…" value=${q} onInput=${e => setQ(e.target.value)} />
       <div class="list">
@@ -458,25 +460,74 @@ function ExtraSheet({ foods, byId, stock, prefs, date, onDone }) {
             <${Dot} group=${f.group} /><span class="grow">${f.name}${f.brand ? html` <small class="muted">${f.brand}</small>` : ''}</span>
             <small class="muted">${fmt(f.n.kcal)} kcal/100 g</small>
           </button>`)}
-      </div>` : html`
-      <p class="muted small">Toca algo parecido y ajusta los números si sabes más. Cuanto más preciso, mejor sale tu resumen semanal.</p>
-      <div class="chips wrap">
-        ${PRESETS_FUERA.map(p => html`<button class="chip" onClick=${() => setAp({ ...p })}>${p.name}</button>`)}
+      </div>` : html`<${BuscarFuera} prefs=${prefs} onElegir=${setPlato} />`}`;
+}
+
+// Buscador de comidas fuera del plan: platos generales, cadenas (McDonald's, Burger King…), venezolanos
+// y los que hayas creado tú.
+function BuscarFuera({ prefs, onElegir }) {
+  const [q, setQ] = useState('');
+  const propios = useLive(() => getSetting('fueraPropios', []), []) || [];
+  const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const todos = [...propios.map(p => ({ ...p, propio: true })), ...COMIDAS_FUERA].filter(x => !(prefs.excluirMar && x.mar));
+  const palabras = norm(q).split(/\s+/).filter(Boolean);
+  const res = palabras.length
+    ? todos.filter(x => palabras.every(w => norm(`${x.n} ${x.m || ''}`).includes(w)))
+    : todos.filter(x => x.propio || !x.m).slice(0, 25);
+  return html`
+    <input class="search" placeholder="Busca: hamburguesa, Big Mac, pizza, arepa…" value=${q} onInput=${e => setQ(e.target.value)} />
+    <p class="muted small">${palabras.length ? '' : 'Platos generales. Escribe el nombre o la cadena (McDonald\'s, Burger King, KFC, Five Guys, Telepizza…) para ver los concretos.'}</p>
+    <div class="list">
+      ${res.map(x => html`
+        <button class="row" onClick=${() => onElegir(x)}>
+          <span class="grow">${x.n}${x.m ? html` <span class="tag">${x.m}</span>` : ''}${x.propio ? html` <span class="tag ok">mío</span>` : ''}</span>
+          <small class="muted">${fmt(x.kcal)} kcal</small>
+        </button>`)}
+      ${palabras.length > 0 && res.length === 0 && html`<p class="muted small">No lo tengo. Elige algo parecido o créalo a medida.</p>`}
+    </div>
+    <button class="btn secondary" onClick=${() => onElegir({ n: q.trim(), m: '', kcal: null, prot: null, carb: null, fat: null, nuevo: true })}>
+      <${Icon} name="pen" size=${18} /> ${q.trim() ? `Crear "${q.trim()}" a medida` : 'Crear uno a medida'}</button>`;
+}
+
+// Elegir la ración (½, 1, 2…) y ajustar los números si sabes más
+function PlatoFuera({ plato, date, onBack, onDone }) {
+  const [racion, setRacion] = useState(1);
+  const [v, setV] = useState({ n: plato.n, kcal: plato.kcal, prot: plato.prot, carb: plato.carb, fat: plato.fat });
+  const set = (k, x) => setV(prev => ({ ...prev, [k]: x }));
+  const total = k => (v[k] || 0) * racion;
+  const guardar = async () => {
+    const n = sumN([{ kcal: total('kcal'), prot: total('prot'), carb: total('carb'), fat: total('fat') }]);
+    const nombre = `${v.n}${plato.m ? ` · ${plato.m}` : ''}${racion !== 1 ? ` (×${fmt(racion, 1)})` : ''}`;
+    await db.logs.add({ date, mealId: 'extra', name: nombre, n, aprox: true, deducted: [], ts: Date.now() });
+    // Lo que creas a medida (o cambias) se recuerda para la próxima vez
+    const cambiado = ['kcal', 'prot', 'carb', 'fat'].some(k => v[k] !== plato[k]) || v.n !== plato.n;
+    if (plato.nuevo || plato.propio || cambiado) {
+      const propios = (await getSetting('fueraPropios', [])).filter(p => p.n !== v.n);
+      await setSetting('fueraPropios', [{ n: v.n, m: plato.m || '', kcal: v.kcal, prot: v.prot || 0, carb: v.carb || 0, fat: v.fat || 0 }, ...propios].slice(0, 60));
+    }
+    toast('Registrado ✓');
+    onDone();
+  };
+  return html`
+    <button class="link back" onClick=${onBack}>‹ Buscar otro</button>
+    <div class="form">
+      ${plato.nuevo
+        ? html`<label>¿Qué comiste?<input value=${v.n} onInput=${e => set('n', e.target.value)} placeholder="Ej: Hamburguesa de la Bodega" /></label>`
+        : html`<h4>${v.n}${plato.m ? html` <span class="tag">${plato.m}</span>` : ''}</h4>`}
+      ${!plato.nuevo && html`<p class="muted small">Valores aproximados por ración${plato.m && plato.m !== 'Venezuela' ? ', según la información publicada por la cadena' : ''}. Cámbialos si sabes más.</p>`}
+      <label>¿Cuánto comiste?
+        <div class="chips">${[[0.5, '½'], [1, '1 ración'], [1.5, '1½'], [2, '2'], [3, '3']].map(([x, t]) => html`
+          <button class=${'chip' + (racion === x ? ' on' : '')} onClick=${() => setRacion(x)}>${t}</button>`)}</div>
+      </label>
+      <div class="grid2">
+        <label>Calorías (1 ración)<${Num} value=${v.kcal} onChange=${x => set('kcal', x)} suffix="kcal" /></label>
+        <label>Proteína<${Num} value=${v.prot} onChange=${x => set('prot', x)} suffix="g" /></label>
+        <label>Carbohidratos<${Num} value=${v.carb} onChange=${x => set('carb', x)} suffix="g" /></label>
+        <label>Grasas<${Num} value=${v.fat} onChange=${x => set('fat', x)} suffix="g" /></label>
       </div>
-      <div class="form">
-        <input placeholder="¿Qué comiste?" value=${ap.name} onInput=${e => setAp({ ...ap, name: e.target.value })} />
-        <div class="grid2">
-          <label>Calorías<${Num} value=${ap.kcal} onChange=${v => setAp({ ...ap, kcal: v })} suffix="kcal" /></label>
-          <label>Proteína<${Num} value=${ap.prot} onChange=${v => setAp({ ...ap, prot: v })} suffix="g" /></label>
-          <label>Carbohidratos<${Num} value=${ap.carb} onChange=${v => setAp({ ...ap, carb: v })} suffix="g" /></label>
-          <label>Grasas<${Num} value=${ap.fat} onChange=${v => setAp({ ...ap, fat: v })} suffix="g" /></label>
-        </div>
-        <button class="btn" disabled=${!ap.name || !ap.kcal} onClick=${async () => {
-          const n = sumN([{ kcal: ap.kcal, prot: ap.prot || 0, carb: ap.carb || 0, fat: ap.fat || 0 }]);
-          await db.logs.add({ date, mealId: 'extra', name: ap.name, n, aprox: true, deducted: [], ts: Date.now() });
-          toast('Registrado ✓'); onDone();
-        }}>Guardar</button>
-      </div>`}`;
+      <div class="preview"><${MacroLine} n=${{ kcal: total('kcal'), prot: total('prot'), carb: total('carb'), fat: total('fat') }} /></div>
+      <button class="btn" disabled=${!v.n || !v.kcal} onClick=${guardar}>Registrar ${fmt(total('kcal'))} kcal</button>
+    </div>`;
 }
 
 // Agua del día: se suma por vasos

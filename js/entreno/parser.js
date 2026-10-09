@@ -112,8 +112,9 @@ function analizarLinea(l) {
   // "70% de Hang Power Clean" / "80% del clean" / "75% of snatch": el % es de ESE levantamiento
   const de = todo.match(/%\s*(?:de|del|of)\s+(?:tu\s+|su\s+|el\s+|la\s+)?(?:1\s*rm\s+(?:del?\s+)?)?([a-záéíóúñ&][a-záéíóúñ&\s-]{1,40}?)\s*(?=$|[,.;:()@]|\s\d)/i);
   if (de) out.pctDe = de[1].trim();
-  const carga = todo.match(/@\s*(\d+(?:[.,]\d+)?)\s*(kg|lb)/i);
-  if (carga) out.kg = +carga[1].replace(',', '.') * (carga[2].toLowerCase() === 'lb' ? 0.4536 : 1);
+  // Kilos escritos de cualquier forma: "@60kg", "con 70 kg", "a 70 kilos", "60/40kg" (hombre/mujer: el primero)
+  const carga = todo.match(/(\d+(?:[.,]\d+)?)(?:\s*\/\s*\d+(?:[.,]\d+)?)?\s*(kg|kgs|kilos?|lbs?)\b/i);
+  if (carga) out.kg = Math.round(+carga[1].replace(',', '.') * (/^lb/i.test(carga[2]) ? 0.4536 : 1) * 10) / 10;
   out.estacion = (l.texto.match(/^(\d+)\)\s*/) || [])[1] ? +l.texto.match(/^(\d+)\)/)[1] : null;
   // Las líneas que solo dicen el formato ("EMOM x 18min", "3 Rondas:", "Rest: 3 min") no son ejercicios
   const sinFormato = l.texto.replace(/\([^)]*\)|\d+|emom|amraps?|rondas?|rounds?|min|for time|bloques?|trabajo|rest|descanso|cada uno|time cap|\b(con|de|y|entre)\b|[x:+'’,.]/gi, '').trim();
@@ -129,6 +130,8 @@ export function nombresEjercicio(texto) {
     .replace(/^\d+\)\s*/, '')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/@\s*[\d.,]+\s*(kg|lb|%)?/gi, ' ')
+    // "con 70kg", "a 70 kilos", "60/40kg": la carga no es parte del nombre
+    .replace(/\b(?:con|a|al)?\s*\d+(?:[.,]\d+)?(?:\s*\/\s*\d+(?:[.,]\d+)?)?\s*(?:kg|kgs|kilos?|lbs?)\b/gi, ' ')
     // "con 70% de" / "al 80%" / "60%-65%-70%": fuera del nombre
     .replace(/\b(?:con|al|a)?\s*\d{2,3}\s*%(?:\s*[-–\/]\s*\d{2,3}\s*%?)*(?:\s*(?:de|del|of)\s+(?:tu\s+|su\s+)?)?/gi, ' ')
     .replace(/\b\d+(\s*[-–]\s*\d+)+\b/g, ' ')
