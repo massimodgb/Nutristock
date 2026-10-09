@@ -8,7 +8,7 @@ import {
   NUTRS, GROUPS, sumN, planRef, blockRef, mealBlocks, blockFoods, visibleFood, cookFactor, toRaw, nutrFor,
   fmt, fmtG, todayStr, addDays, fmtDate, daysUntil,
 } from '../nutri.js';
-import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast } from '../ui.js';
+import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast, hojaRecienCerrada } from '../ui.js';
 import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
 import { leer } from './entreno.js';
@@ -24,7 +24,9 @@ export function Hoy({ go }) {
   const logs = useLive(() => db.logs.where('date').equals(date).toArray(), [date]);
   const elecciones = useLive(() => getSetting('opciones:' + date, {}), [date]);
   const ayer = useLive(() => db.logs.where('date').equals(addDays(date, -1)).toArray(), [date]);
-  const [sheet, setSheet] = useState(null);
+  const [sheet, setSheetRaw] = useState(null);
+  // En el iPhone, el toque que cierra una hoja puede "atravesarla" y abrir otra: lo ignoramos
+  const setSheet = v => { if (v && hojaRecienCerrada()) return; setSheetRaw(v); };
 
   if ([plan, foods, lots, basicos, prefs, logs, elecciones, ayer].includes(undefined)) {
     return html`<div class="loading">Cargando…</div>`;
@@ -106,7 +108,7 @@ export function Hoy({ go }) {
         ${sheet?.type === 'desglose' && html`<${Desglose} ...${ctx} logs=${logs} choice=${choice} total=${total} objetivo=${ref} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'block'} onClose=${() => setSheet(null)} title=${sheet?.block?.nombre}>
-        ${sheet?.type === 'block' && html`<${BlockSheet} ...${ctx} ...${sheet} onDone=${() => setSheet(null)} />`}
+        ${sheet?.type === 'block' && html`<${BlockSheet} ...${ctx} ...${sheet} logs=${logs} onDone=${() => setSheetRaw(null)} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'log'} onClose=${() => setSheet(null)} title="Registro">
         ${sheet?.type === 'log' && html`<${LogDetail} log=${sheet.log} byId=${byId} foods=${foods} onDone=${() => setSheet(null)} />`}
@@ -324,61 +326,104 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
     </section>`;
 }
 
-// Elegir alimento y cantidad para un bloque del plan
-function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, date, onDone }) {
+// Elegir alimento(s) para un bloque del plan. Se pueden COMBINAR varios (200 g de carne picada + ricotta):
+// la hoja enseña cuánto llevas del bloque y sugiere cuánto poner del siguiente para completarlo.
+function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, date, logs, onDone }) {
+  const [sel, setSel] = useState(null);
+  const [verOtros, setVerOtros] = useState(false);
+  const permitidos = blockFoods(block, plan);
+  const ref = blockRef(block, plan, byId, prefs);
+  const esProteina = block.grupo === 'proteina';
+  // Cantidad del plan para un alimento (o para el alimento base al que equivale)
+  const gPlan = f => (permitidos.find(x => x.id === f.id) || permitidos.find(x => x.id === f.genericId))?.g || null;
+  // Qué parte del bloque cubre un registro: por gramos si está en el plan; si no, por proteína (o calorías)
+  const fraccion = l => {
+    const f = byId[l.foodId];
+    const gp = f && gPlan(f);
+    if (gp && l.g) return l.g / gp;
+    return esProteina ? (l.n.prot || 0) / (ref.prot || 1) : (l.n.kcal || 0) / (ref.kcal || 1);
+  };
+  const enBloque = logs.filter(l => l.mealId === meal.id && l.blockId === block.id);
+  const llevas = Math.min(1.5, enBloque.reduce((s, l) => s + fraccion(l), 0));
+  const queda = Math.max(0, 1 - llevas);
+  // Gramos (en cocido) que harían falta de un alimento para completar lo que queda
+  const sugerir = f => {
+    const gp = gPlan(f);
+    if (!enBloque.length) return gp || null;
+    if (gp) return Math.max(5, Math.round((queda * gp) / 5) * 5);
+    const factor = cookFactor(f, byId) || 1;
+    const porGramo = esProteina ? (f.n.prot || 0) / 100 / factor : (f.n.kcal || 0) / 100 / factor;
+    if (!porGramo) return null;
+    return Math.max(5, Math.round((queda * (esProteina ? ref.prot : ref.kcal)) / porGramo / 5) * 5);
+  };
+
   const opciones = useMemo(() => {
     const list = [];
-    for (const { id, g } of blockFoods(block, plan)) {
+    for (const { id, g } of permitidos) {
       const base = byId[id];
       if (!visibleFood(base, prefs)) continue;
-      list.push({ food: base, g, st: stock[id]?.g || 0 });
-      for (const p of foods) if (p.genericId === id) list.push({ food: p, g, st: stock[p.id]?.g || 0, branded: true });
+      list.push({ food: base, st: stock[id]?.g || 0 });
+      for (const p of foods) if (p.genericId === id) list.push({ food: p, st: stock[p.id]?.g || 0, branded: true });
     }
-    return list.sort((a, b) => (b.st > 0) - (a.st > 0));
+    // Productos tuyos en casa del mismo tipo aunque no estén clasificados como este bloque
+    const ya = new Set(list.map(o => o.food.id));
+    for (const f of foods) {
+      if (ya.has(f.id) || !visibleFood(f, prefs) || !(stock[f.id]?.g > 0)) continue;
+      if (f.group === block.grupo) list.push({ food: f, st: stock[f.id].g, otro: true });
+    }
+    return list;
   }, [block.id]);
-  // Lo demás que tienes en casa (por si un producto no está clasificado como este bloque)
-  const otros = useMemo(() => {
+  const enCasa = opciones.filter(o => o.st > 0);
+  const resto = opciones.filter(o => !(o.st > 0));
+  const otrosGrupos = useMemo(() => {
     const ya = new Set(opciones.map(o => o.food.id));
     return foods.filter(f => !ya.has(f.id) && visibleFood(f, prefs) && (stock[f.id]?.g || 0) > 0)
-      .map(f => ({ food: f, g: blockFoods(block, plan)[0]?.g || 100, st: stock[f.id].g, otro: true }))
-      .sort((a, b) => (b.food.group === block.grupo) - (a.food.group === block.grupo) || a.food.name.localeCompare(b.food.name));
+      .map(f => ({ food: f, st: stock[f.id].g, otro: true }))
+      .sort((a, b) => a.food.name.localeCompare(b.food.name));
   }, [block.id]);
-  const [verOtros, setVerOtros] = useState(false);
-  const [sel, setSel] = useState(null);
 
   if (sel) {
     return html`
       <button class="link back" onClick=${() => setSel(null)}>‹ Elegir otro</button>
-      <${AmountForm} food=${sel.food} defaultG=${sel.g} byId=${byId} foods=${foods} stockG=${sel.st}
+      ${enBloque.length > 0 && html`<p class="notice">Llevas el ${fmt(llevas * 100)}% del bloque. Te sugiero ${fmt(sugerir(sel.food) || 0)} g para completarlo.</p>`}
+      <${AmountForm} food=${sel.food} defaultG=${sugerir(sel.food)} byId=${byId} foods=${foods} stockG=${sel.st}
         onSave=${async r => {
           await saveLog({ ...r, date, mealId: meal.id, optionId, blockId: block.id, foods });
           // Si era un producto sin clasificar, lo clasificamos con el grupo de este bloque
           if (sel.otro && (!sel.food.group || sel.food.group === 'otro')) await db.foods.update(sel.food.id, { group: block.grupo });
-          toast('Registrado ✓');
-          onDone();
+          toast('Añadido ✓ Puedes añadir otra cosa a este bloque o pulsar Listo');
+          setSel(null);
         }} />`;
   }
+
+  const fila = o => {
+    const sug = sugerir(o.food);
+    return html`
+      <button class="row" onClick=${() => setSel(o)}>
+        <${Dot} group=${o.food.group} />
+        <span class="grow">${o.food.name}${o.food.brand ? html` <small class="muted">${o.food.brand}</small>` : ''}
+          ${o.st > 0 ? html`<br /><small class="muted">en casa ${fmtG(o.st, o.food)}</small>` : ''}</span>
+        ${sug ? html`<small class="muted">${enBloque.length ? '≈' : ''}${fmt(sug)} g</small>` : ''}
+      </button>`;
+  };
+
   return html`
-    <p class="muted small">${block.texto}${block.nota ? ` · ${block.nota}` : ''}. Pesa en cocido.</p>
-    <div class="list">
-      ${opciones.map(o => html`
-        <button class="row" onClick=${() => setSel(o)}>
-          <${Dot} group=${o.food.group} />
-          <span class="grow">${o.food.name}${o.food.brand ? html` <small class="muted">${o.food.brand}</small>` : ''}</span>
-          ${o.st > 0 && html`<span class="tag ok">en casa ${fmtG(o.st, o.food)}</span>`}
-          <small class="muted">${o.g} g</small>
-        </button>`)}
-    </div>
-    ${otros.length > 0 && html`
-      <button class="link" onClick=${() => setVerOtros(!verOtros)}>${verOtros ? 'Ocultar' : `Otros productos de tu despensa (${otros.length})`}</button>
-      ${verOtros && html`<div class="list">
-        ${otros.map(o => html`
-          <button class="row" onClick=${() => setSel(o)}>
-            <${Dot} group=${o.food.group} />
-            <span class="grow">${o.food.name}${o.food.brand ? html` <small class="muted">${o.food.brand}</small>` : ''}</span>
-            <span class="tag ok">en casa ${fmtG(o.st, o.food)}</span>
-          </button>`)}
-      </div>`}`}`;
+    <p class="muted small">${block.texto}${block.nota ? ` · ${block.nota}` : ''}. Pesa en cocido. Puedes combinar varias cosas.</p>
+    ${enBloque.length > 0 && html`
+      <div class="progreso-bloque">
+        <div class="bar-top"><span>Llevas del bloque</span><b>${fmt(llevas * 100)}%</b></div>
+        <div class="bar-track"><div class="bar-fill" style=${{ width: Math.min(100, llevas * 100) + '%', background: llevas > 1.1 ? 'var(--danger)' : 'var(--accent)' }}></div></div>
+        <small class="muted">${enBloque.map(l => `${l.name.split(' · ')[0]} ${fmt(l.g || 0)} g`).join(' + ')}</small>
+        <button class="btn" onClick=${onDone}><${Icon} name="check" size=${18} /> Listo</button>
+      </div>`}
+    ${enCasa.length > 0 && html`
+      <h4 class="group-title">En tu despensa</h4>
+      <div class="list">${enCasa.map(fila)}</div>`}
+    <h4 class="group-title">${enCasa.length ? 'Otras opciones de tu plan' : 'Opciones de tu plan'}</h4>
+    <div class="list">${resto.map(fila)}</div>
+    ${otrosGrupos.length > 0 && html`
+      <button class="link" onClick=${() => setVerOtros(!verOtros)}>${verOtros ? 'Ocultar' : `Otras cosas de tu despensa (${otrosGrupos.length})`}</button>
+      ${verOtros && html`<div class="list">${otrosGrupos.map(fila)}</div>`}`}`;
 }
 
 // Cantidad + vista previa de lo que aporta. Común a plan y "fuera del plan".

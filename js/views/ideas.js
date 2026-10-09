@@ -1,8 +1,8 @@
 // Ideas y recetas: qué puedes cocinar para cada comida de tu plan con lo que tienes en casa.
 import { html, useState } from '../lib.js';
 import { db, useLive, getPrefs, activePlan, getSetting, setSetting, stockMap } from '../db.js';
-import { mealBlocks, blockFoods, visibleFood, toRaw, nutrFor, sumN, fmt, todayStr } from '../nutri.js';
-import { Sheet, MacroLine, Dot, Empty, Icon, toast } from '../ui.js';
+import { mealBlocks, blockFoods, blockRef, visibleFood, toRaw, nutrFor, sumN, fmt, todayStr } from '../nutri.js';
+import { Sheet, MacroLine, Dot, Empty, Icon, Seg, toast } from '../ui.js';
 import { RECETAS } from '../data/recetas.js';
 import { saveLog } from './hoy.js';
 
@@ -41,6 +41,8 @@ export function evaluarReceta(r, meal, plan, byId, prefs, stock, basicos) {
   if (!mejor) return null;
   mejor.extrasFaltan = r.extras.filter(e => basicos.some(b => norm(b.name) === norm(e) && b.status === 'no'));
   mejor.n = sumN(mejor.items.map(i => nutrFor(i.food, toRaw(i.food, i.g, false, byId))));
+  // Lo que pide tu plan para esta comida (con la misma opción), para enseñar que la receta lo cumple
+  mejor.plan = sumN(mealBlocks(meal, mejor.optionId).map(b => blockRef(b, plan, byId, prefs)));
   return mejor;
 }
 
@@ -52,6 +54,7 @@ export function Ideas({ go }) {
   const prefs = useLive(getPrefs, []);
   const [comidaId, setComidaId] = useState(null);
   const [sel, setSel] = useState(null);
+  const [vista, setVista] = useState('tengo');
 
   if ([plan, foods, lots, basicos, prefs].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
   if (!plan) return html`<div class="page"><button class="link back" onClick=${() => go('hoy')}>‹ Hoy</button>
@@ -62,9 +65,22 @@ export function Ideas({ go }) {
   // Por defecto, la próxima comida según la hora
   const ahora = new Date().toTimeString().slice(0, 5);
   const meal = plan.comidas.find(m => m.id === comidaId) || plan.comidas.find(m => m.hora >= ahora) || plan.comidas[0];
-  const ideas = RECETAS.map(r => ({ r, e: evaluarReceta(r, meal, plan, byId, prefs, stock, basicos) }))
+  const todas = RECETAS.map(r => ({ r, e: evaluarReceta(r, meal, plan, byId, prefs, stock, basicos) }))
     .filter(x => x.e)
-    .sort((a, b) => a.e.faltan.length - b.e.faltan.length);
+    .sort((a, b) => a.e.faltan.length - b.e.faltan.length || a.r.nombre.localeCompare(b.r.nombre));
+  // "Con lo que tengo": todo en casa, o solo falta 1 cosa. "Para comprar": las que necesitan compra.
+  const tengo = todas.filter(x => x.e.faltan.length === 0);
+  const casi = todas.filter(x => x.e.faltan.length === 1);
+  const comprar = todas.filter(x => x.e.faltan.length >= 1);
+  const filaReceta = ({ r, e }) => html`
+    <button class="row" onClick=${() => setSel({ r, e })}>
+      <span class="grow"><b>${r.nombre}</b>
+        <br /><small class="muted">${r.tiempo} · ≈${fmt(e.n.kcal)} kcal · P ${fmt(e.n.prot)} g</small>
+        <br />${e.faltan.length === 0
+          ? html`<span class="tag ok">Tienes todo ✓</span>`
+          : html`<span class="tag warn">${e.faltan.length === 1 ? 'Solo te falta' : 'Te falta'}: ${e.faltan.map(i => i.food.name.toLowerCase()).join(', ')}</span>`}</span>
+      <${Icon} name="right" size=${16} />
+    </button>`;
 
   return html`
     <div class="page">
@@ -74,19 +90,17 @@ export function Ideas({ go }) {
         ${plan.comidas.map(m => html`
           <button class=${'chip' + (m.id === meal.id ? ' on' : '')} onClick=${() => setComidaId(m.id)}>${m.nombre} · ${m.hora}</button>`)}
       </div>
-      <p class="muted small">Recetas que encajan en tu plan para ${meal.nombre.toLowerCase()}, con las cantidades de tu plan (en cocido). Primero las que puedes hacer con lo que tienes.</p>
-      ${ideas.length === 0 && html`<${Empty}>No tengo recetas para esta comida todavía. Pídele a Claude ideas nuevas y las añade.<//>`}
-      <section class="card list">
-        ${ideas.map(({ r, e }) => html`
-          <button class="row" onClick=${() => setSel({ r, e })}>
-            <span class="grow"><b>${r.nombre}</b>
-              <br /><small class="muted">${r.tiempo} · ≈${fmt(e.n.kcal)} kcal · P ${fmt(e.n.prot)} g</small>
-              <br />${e.faltan.length === 0
-                ? html`<span class="tag ok">Tienes todo ✓</span>`
-                : html`<span class="tag warn">Te falta: ${e.faltan.map(i => i.ing.nombre.toLowerCase()).join(', ')}</span>`}</span>
-            <${Icon} name="right" size=${16} />
-          </button>`)}
-      </section>
+      <${Seg} value=${vista} onChange=${setVista} options=${[
+        { value: 'tengo', label: `Con lo que tengo (${tengo.length})` }, { value: 'comprar', label: `Para comprar (${comprar.length})` }]} />
+      <p class="muted small">Recetas para tu ${meal.nombre.toLowerCase()} que cumplen tu plan: usan los alimentos y las cantidades que te marca el nutricionista (en cocido).</p>
+      ${vista === 'tengo' ? html`
+        ${tengo.length === 0 && html`<p class="muted small">Con lo que hay ahora en tu despensa no sale ninguna completa. Mira abajo las que solo necesitan una cosa, o la pestaña "Para comprar".</p>`}
+        ${tengo.length > 0 && html`<section class="card list">${tengo.map(filaReceta)}</section>`}
+        ${casi.length > 0 && html`
+          <h4 class="group-title">Casi: solo te falta una cosa</h4>
+          <section class="card list">${casi.map(filaReceta)}</section>`}` : html`
+        <p class="muted small">Otras recetas de tu plan. Dentro de cada una puedes añadir lo que falta a la lista de la compra.</p>
+        <section class="card list">${comprar.map(filaReceta)}</section>`}
       <${Sheet} open=${!!sel} onClose=${() => setSel(null)} title=${sel?.r.nombre}>
         ${sel && html`<${Receta} r=${sel.r} e=${sel.e} meal=${meal} foods=${foods} stock=${stock} onDone=${() => setSel(null)} />`}
       <//>
@@ -118,7 +132,8 @@ function Receta({ r, e, meal, foods, stock, onDone }) {
   return html`
     <div class="form">
       <p class="muted small">${r.tiempo} · para tu ${meal.nombre.toLowerCase()} · cantidades de tu plan, pesadas en cocido</p>
-      <div class="preview"><${MacroLine} n=${e.n} /></div>
+      <div class="preview"><${MacroLine} n=${e.n} />
+        <div class="muted small">✓ Cumple tu plan: tu ${meal.nombre.toLowerCase()} pide ≈${fmt(e.plan.kcal)} kcal y ${fmt(e.plan.prot)} g de proteína de media; esta receta da ${fmt(e.n.kcal)} kcal y ${fmt(e.n.prot)} g.</div></div>
       <h4>Ingredientes</h4>
       <div class="list">
         ${e.items.map(it => html`

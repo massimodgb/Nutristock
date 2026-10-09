@@ -23,6 +23,17 @@
     window.__errores = [];
     addEventListener('error', e => window.__errores.push(e.message || String(e)));
     addEventListener('unhandledrejection', e => window.__errores.push(String(e.reason && e.reason.message || e.reason)));
+    // Si algo falla ya con la app abierta, lo enseñamos abajo unos segundos (para poder mandar una captura)
+    function avisoError(msg) {
+      if (!window.__arrancada) return;
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;left:12px;right:12px;bottom:90px;z-index:99;background:#7f1d1d;color:#fff;padding:10px 12px;border-radius:12px;font:13px -apple-system,sans-serif';
+      d.textContent = 'Error: ' + msg + ' (haz captura para Claude)';
+      document.body.appendChild(d);
+      setTimeout(function () { d.remove(); }, 8000);
+    }
+    addEventListener('error', function (e) { avisoError(e.message || String(e)); });
+    addEventListener('unhandledrejection', function (e) { avisoError(String(e.reason && e.reason.message || e.reason)); });
     setTimeout(function () {
       var app = document.getElementById('app');
       if (!app || window.__arrancada) return;

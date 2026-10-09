@@ -3,24 +3,37 @@ import { html, useEffect, useState } from './lib.js';
 import { GROUPS, fmt, parseNum } from './nutri.js';
 
 // Hoja que sube desde abajo (estilo iOS)
+// Hoja que sube desde abajo (estilo iOS).
+// Para que en el iPhone SIEMPRE se cierre: se cierra al levantar el dedo (pointerup), sin esperar al "clic",
+// y se apunta la hora del cierre para que el toque no "atraviese" y vuelva a abrir lo que había debajo.
+export const hojaRecienCerrada = () => Date.now() - (window.__hojaCerrada || 0) < 700;
+
 export function Sheet({ open, onClose, title, children, actions }) {
   useEffect(() => {
     if (!open) return;
     document.body.classList.add('no-scroll');
-    return () => document.body.classList.remove('no-scroll');
+    const esc = e => e.key === 'Escape' && onClose();
+    addEventListener('keydown', esc);
+    return () => { document.body.classList.remove('no-scroll'); removeEventListener('keydown', esc); };
   }, [open]);
   if (!open) return null;
+  const cerrar = e => {
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
+    window.__hojaCerrada = Date.now();
+    onClose();
+  };
   return html`
-    <div class="sheet-bg" onClick=${onClose}>
+    <div class="sheet-bg" onPointerUp=${e => e.target === e.currentTarget && cerrar(e)}>
       <div class="sheet" onClick=${e => e.stopPropagation()}>
         <div class="sheet-head">
-          <button class="link" onClick=${onClose}>Cerrar</button>
+          <button class="link" onPointerUp=${cerrar} onClick=${cerrar}>Cerrar</button>
           <strong>${title}</strong>
           <span class="sheet-actions">${actions || ''}</span>
         </div>
         <div class="sheet-body">
           ${children}
-          <button class="btn secondary cerrar-abajo" onClick=${onClose}>Cerrar</button>
+          <button class="btn secondary cerrar-abajo" onPointerUp=${cerrar} onClick=${cerrar}>Cerrar</button>
         </div>
       </div>
     </div>`;
