@@ -3,7 +3,7 @@ import { html, useState, useMemo } from '../lib.js';
 import { db, useLive } from '../db.js';
 import { fmt, todayStr, addDays, fmtDate } from '../nutri.js';
 import { Sheet, Num, Seg, Empty, Icon, toast } from '../ui.js';
-import { parsearEntreno, textoFormato, norm, claveEjercicio } from '../entreno/parser.js';
+import { parsearEntreno, textoFormato, norm, claveEjercicio, implemento } from '../entreno/parser.js';
 import { LEVANTAMIENTOS, BENCHMARKS } from '../entreno/datos.js';
 import { RelojActivo, Relojes } from './reloj.js';
 
@@ -153,7 +153,7 @@ function Series({ l, clave, r, kgSugerido, marcas, onGuardar }) {
   const [filas, setFilas] = useState(() => guardadas
     || Array.from({ length: l.series }, () => ({ kg: null, reps: l.reps })));
   const kgDe = (f, i) => f.kg ?? kgSugerido(i);
-  const set = (i, k, v) => setFilas(filas.map((f, j) => (j === i ? { ...f, [k]: v } : f)));
+  const set = (i, k, v) => setFilas(prev => prev.map((f, j) => (j === i ? { ...f, [k]: v } : f)));
 
   if (!abierto) {
     return html`
@@ -331,7 +331,7 @@ function Ejercicios() {
     <section class="card list">
       ${lista.map(e => html`
         <button class="row" onClick=${() => setSel(e)}>
-          <span class="grow">${e.nombre}${e.links.size ? html` <span class="tag">vídeo</span>` : ''}</span>
+          <span class="grow">${e.nombre}${implemento(e.nombre) ? html` <span class="tag">${implemento(e.nombre)}</span>` : ''}${e.links.size ? html` <span class="tag">vídeo</span>` : ''}</span>
           <small class="muted">${e.veces ? `${e.veces}× · ${fmtDate(e.ultima, { day: 'numeric', month: 'short' })}` : 'añadido a mano'}</small>
         </button>`)}
     </section>

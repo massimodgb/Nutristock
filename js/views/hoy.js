@@ -57,7 +57,11 @@ export function Hoy({ go }) {
       </header>
 
       <${Resumen} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
+      <${Rapido} date=${date} logs=${logs} ayer=${ayer}
+        onCopiar=${(titulo, entradas) => setSheet({ type: 'copiar', titulo, entradas })}
+        onOtroDia=${() => setSheet({ type: 'otrodia' })} />
       <${Agua} date=${date} prefs=${prefs} />
+      ${isToday && html`<${PesoHoy} date=${date} />`}
       <${EntrenoHoy} date=${date} go=${go} />
       ${isToday && html`<${Avisos} ...${ctx} basicos=${basicos} choice=${choice} logs=${logs} go=${go} />`}
 
@@ -70,18 +74,7 @@ export function Hoy({ go }) {
       ${plan?.comidas.map(m => html`
         <${MealCard} key=${m.id} meal=${m} ...${ctx} logs=${logs} option=${choice[m.id]}
           ayer=${ayer.filter(l => l.mealId === m.id && l.foodId)}
-          onRepetir=${async ayerLogs => {
-            const opt = ayerLogs.find(l => l.optionId)?.optionId;
-            if (opt) await setChoice(m.id, opt);
-            for (const l of ayerLogs) {
-              const food = byId[l.foodId];
-              if (!food) continue;
-              const rawG = toRaw(food, l.g, l.crudo, byId);
-              await saveLog({ date, mealId: m.id, optionId: l.optionId, blockId: l.blockId, food, g: l.g, crudo: l.crudo,
-                rawG, n: nutrFor(food, rawG), deduct: (stock[food.id]?.g || 0) > 0, foods });
-            }
-            toast(`${m.nombre}: repetido de ayer ✓`);
-          }}
+          onRepetir=${ayerLogs => setSheet({ type: 'copiar', titulo: `${m.nombre} de ayer`, entradas: ayerLogs.map(plantilla) })}
           onOption=${o => setChoice(m.id, o)}
           onBlock=${(block, optionId) => setSheet({ type: 'block', meal: m, block, optionId })}
           onLog=${log => setSheet({ type: 'log', log })} />
@@ -111,6 +104,12 @@ export function Hoy({ go }) {
       <//>
       <${Sheet} open=${sheet?.type === 'log'} onClose=${() => setSheet(null)} title="Registro">
         ${sheet?.type === 'log' && html`<${LogDetail} log=${sheet.log} byId=${byId} foods=${foods} onDone=${() => setSheet(null)} />`}
+      <//>
+      <${Sheet} open=${sheet?.type === 'copiar'} onClose=${() => setSheet(null)} title=${sheet?.titulo}>
+        ${sheet?.type === 'copiar' && html`<${CopiarSheet} ...${ctx} entradas=${sheet.entradas} elecciones=${elecciones} onDone=${() => setSheet(null)} />`}
+      <//>
+      <${Sheet} open=${sheet?.type === 'otrodia'} onClose=${() => setSheet(null)} title="Copiar otro día">
+        ${sheet?.type === 'otrodia' && html`<${OtroDia} ...${ctx} elecciones=${elecciones} onDone=${() => setSheet(null)} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'extra'} onClose=${() => setSheet(null)} title="Fuera del plan">
         ${sheet?.type === 'extra' && html`<${ExtraSheet} ...${ctx} onDone=${() => setSheet(null)} />`}
@@ -509,4 +508,117 @@ function EntrenoHoy({ date, go }) {
         <small class="muted">${hechas}/${secs.length} secciones hechas</small></span>
       <${Icon} name="right" size=${16} />
     </button>`;
+}
+
+// ---------- Registro rápido: copiar ayer, tu día habitual u otro día ----------
+// Guarda solo lo necesario para poder repetir un registro otro día
+const plantilla = l => ({
+  mealId: l.mealId, optionId: l.optionId || null, blockId: l.blockId || null, foodId: l.foodId || null,
+  name: l.name, g: l.g || null, crudo: !!l.crudo, aprox: !!l.aprox, n: l.n,
+});
+
+function Rapido({ date, logs, ayer, onCopiar, onOtroDia }) {
+  const habitual = useLive(() => getSetting('diaHabitual', null), []);
+  if (habitual === undefined) return null;
+  return html`
+    <section class="card rapido">
+      <div class="chips wrap">
+        ${ayer.length > 0 && html`<button class="chip" onClick=${() => onCopiar('Copiar ayer', ayer.map(plantilla))}>
+          <${Icon} name="repeat" size=${14} /> Copiar ayer (${ayer.length})</button>`}
+        ${habitual?.length > 0 && html`<button class="chip" onClick=${() => onCopiar('Mi día habitual', habitual)}>
+          <${Icon} name="check" size=${14} /> Mi día habitual (${habitual.length})</button>`}
+        <button class="chip" onClick=${onOtroDia}>Otro día…</button>
+      </div>
+      ${logs.length > 0 && html`
+        <button class="link small" onClick=${async () => {
+          await setSetting('diaHabitual', logs.map(plantilla));
+          toast('Guardado como tu día habitual ✓');
+        }}>Guardar ${date === todayStr() ? 'hoy' : 'este día'} como mi día habitual</button>`}
+    </section>`;
+}
+
+function OtroDia({ date, onDone, ...ctx }) {
+  const [origen, setOrigen] = useState(addDays(date, -2));
+  const ls = useLive(() => db.logs.where('date').equals(origen).toArray(), [origen]);
+  return html`
+    <label class="form">Copiar lo que comí el día<input type="date" max=${todayStr()} value=${origen} onInput=${e => e.target.value && setOrigen(e.target.value)} /></label>
+    ${ls && (ls.length
+      ? html`<${CopiarSheet} key=${origen} ...${ctx} date=${date} entradas=${ls.map(plantilla)} onDone=${onDone} />`
+      : html`<p class="muted">Ese día no tiene nada registrado.</p>`)}`;
+}
+
+// Lista editable: cambias gramos o quitas algo y lo añades todo de una vez
+function CopiarSheet({ entradas, plan, foods, byId, stock, date, elecciones, onDone }) {
+  const [filas, setFilas] = useState(() => entradas.map(e => ({ ...e, incluir: true })));
+  const set = (i, k, v) => setFilas(prev => prev.map((f, j) => (j === i ? { ...f, [k]: v } : f)));
+  const calcular = f => {
+    const food = f.foodId && byId[f.foodId];
+    if (!food || !f.g) return { food: null, n: f.n, rawG: 0 };
+    const rawG = toRaw(food, f.g, f.crudo, byId);
+    return { food, rawG, n: nutrFor(food, rawG) };
+  };
+  const elegidas = filas.filter(f => f.incluir);
+  const total = sumN(elegidas.map(f => calcular(f).n));
+  const nombreComida = id => (id === 'extra' ? 'Fuera del plan' : plan?.comidas.find(m => m.id === id)?.nombre || id);
+  const orden = id => (id === 'extra' ? 99 : plan?.comidas.findIndex(m => m.id === id) ?? 50);
+  const indices = filas.map((f, i) => i).sort((a, b) => orden(filas[a].mealId) - orden(filas[b].mealId));
+
+  const anadir = async () => {
+    const opciones = { ...(elecciones || {}) };
+    for (const f of elegidas) {
+      const { food, rawG, n } = calcular(f);
+      if (f.optionId) opciones[f.mealId] = f.optionId;
+      if (food) {
+        await saveLog({ date, mealId: f.mealId, optionId: f.optionId, blockId: f.blockId, food, g: f.g, crudo: f.crudo,
+          rawG, n, deduct: (stock[food.id]?.g || 0) > 0, foods });
+      } else {
+        await db.logs.add({ date, mealId: f.mealId, name: f.name, n: f.n, aprox: f.aprox, deducted: [], ts: Date.now() });
+      }
+    }
+    await setSetting('opciones:' + date, opciones);
+    toast(`Añadidos ${elegidas.length} alimentos ✓`);
+    onDone();
+  };
+
+  let comidaPrevia = null;
+  return html`
+    <p class="muted small">Cambia los gramos si hoy fue distinto, o quita lo que no comiste.</p>
+    <div class="copiar-lista">
+      ${indices.map(i => {
+        const f = filas[i], cab = f.mealId !== comidaPrevia;
+        comidaPrevia = f.mealId;
+        return html`
+          ${cab && html`<h4 class="group-title">${nombreComida(f.mealId)}</h4>`}
+          <div class=${'copiar-fila' + (f.incluir ? '' : ' fuera')}>
+            <input type="checkbox" class="caja" checked=${f.incluir} onChange=${e => set(i, 'incluir', e.target.checked)} />
+            <span class="grow">${f.name}${f.aprox ? html` <span class="tag">aprox.</span>` : ''}
+              <small class="muted"> · ${fmt(calcular(f).n.kcal)} kcal</small></span>
+            ${f.foodId && f.g ? html`<div class="copiar-g"><${Num} value=${f.g} onChange=${v => set(i, 'g', v)} suffix=${f.crudo ? 'g cr.' : 'g'} /></div>` : ''}
+          </div>`;
+      })}
+    </div>
+    <div class="preview"><${MacroLine} n=${total} /></div>
+    <button class="btn" disabled=${!elegidas.length} onClick=${anadir}>Añadir ${elegidas.length} alimento${elegidas.length === 1 ? '' : 's'}</button>`;
+}
+
+// Peso de hoy, a mano (hasta que lo traigamos de Whoop)
+function PesoHoy({ date }) {
+  const w = useLive(() => db.weights.get(date).then(x => x || null), [date]);
+  const [kg, setKg] = useState(null);
+  const [editando, setEditando] = useState(false);
+  if (w === undefined) return null;
+  if (w && !editando) return html`
+    <button class="card peso-hoy" onClick=${() => { setKg(w.kg); setEditando(true); }}>
+      <span class="grow">Peso de hoy</span><b>${fmt(w.kg, 1)} kg</b><small class="muted">editar</small>
+    </button>`;
+  return html`
+    <section class="card peso-hoy">
+      <span class="grow">Peso de hoy</span>
+      <div class="copiar-g"><${Num} value=${kg} onChange=${setKg} suffix="kg" /></div>
+      <button class="btn small" disabled=${!kg} onClick=${async () => {
+        await db.weights.put({ date, kg });
+        setEditando(false);
+        toast('Peso guardado ✓');
+      }}>Guardar</button>
+    </section>`;
 }

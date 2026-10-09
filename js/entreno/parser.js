@@ -2,14 +2,30 @@
 //   secciones (Calentamiento, FUERZA, WOD, Opcional…) → partes (separadas por líneas en blanco) → líneas.
 // Detecta formatos (EMOM, AMRAP, For Time, rondas, bloques con descanso, Tabata), series x reps,
 // porcentajes, cargas (@60kg), esquemas 15-12-9 y enlaces de YouTube.
-import { LEVANTAMIENTOS, ABREV, PALABRAS } from './datos.js';
+import { LEVANTAMIENTOS, ABREV, PALABRAS, IMPLEMENTO } from './datos.js';
 
 export const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 // Clave para juntar el mismo ejercicio escrito distinto: "Cal Row" = "cal row", "Lunges" = "Lunge"
-export const claveEjercicio = nombre => norm(nombre).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
-  .map(w => norm(PALABRAS[w] || w))
-  .map(w => (w.length > 3 ? w.replace(/s$/, '') : w)).join(' ');
+// "DB Clean" (1 mancuerna) y "DBs Clean" (2 mancuernas) son ejercicios DISTINTOS.
+export function claveEjercicio(nombre) {
+  const t = norm(nombre).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  const out = [];
+  for (let i = 0; i < t.length; i++) {
+    const w = t[i], sig = IMPLEMENTO[t[i + 1]];
+    if (/^(single|una|un|1)$/.test(w) && sig) continue; // "single DB" = DB
+    if (/^(double|dual|doble|dos|2)$/.test(w) && sig) { out.push(sig.replace('1', '2')); i++; continue; }
+    out.push(IMPLEMENTO[w] || (w.length > 3 ? w.replace(/s$/, '') : w));
+  }
+  return out.join(' ');
+}
+
+// Etiqueta legible del implemento, para la biblioteca de ejercicios
+export function implemento(nombre) {
+  const c = claveEjercicio(nombre);
+  return /\bdb2\b/.test(c) ? '2 mancuernas' : /\bdb1\b/.test(c) ? '1 mancuerna'
+    : /\bkb2\b/.test(c) ? '2 kettlebells' : /\bkb1\b/.test(c) ? '1 kettlebell' : '';
+}
 
 const CABECERAS = /^(calentamiento|warm[\s-]?up|movilidad|activacion|fuerza|strength|tecnica|skill|wod|metcon|accesorios?|opcional|core|cool[\s-]?down|vuelta a la calma|gimnastic[oa]s?|halterofilia|cardio|engine|finisher|bonus|extra)\s*:?$/;
 

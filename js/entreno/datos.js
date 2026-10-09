@@ -27,9 +27,21 @@ export const ABREV = {
   sdhp: 'Sumo Deadlift High Pull', hsw: 'Handstand Walk', ghd: 'GHD Sit-up', pu: 'Pull-up', 'c&j': 'Clean & Jerk',
 };
 
-// Abreviaturas que van DENTRO de un nombre ("Power DBs Clean" → "Power Dumbbell Clean")
+// Palabras dentro de un nombre que se escriben siempre igual.
+// OJO: DB = UNA mancuerna y DBs = DOS mancuernas (la entrenadora lo usa para diferenciarlos);
+// lo mismo con KB / KBs. Por eso NO se juntan.
 export const PALABRAS = {
-  db: 'Dumbbell', dbs: 'Dumbbell', kb: 'Kettlebell', kbs: 'Kettlebell', bb: 'Barbell',
+  db: 'DB', dumbbell: 'DB', mancuerna: 'DB',
+  dbs: 'DBs', dumbbells: 'DBs', mancuernas: 'DBs',
+  kb: 'KB', kettlebell: 'KB', kbs: 'KBs', kettlebells: 'KBs',
+  bb: 'Barbell',
+};
+
+// Para la clave interna: una o dos mancuernas / kettlebells
+export const IMPLEMENTO = {
+  db: 'db1', dumbbell: 'db1', mancuerna: 'db1',
+  dbs: 'db2', dumbbells: 'db2', mancuernas: 'db2',
+  kb: 'kb1', kettlebell: 'kb1', kbs: 'kb2', kettlebells: 'kb2',
 };
 
 // Benchmarks clásicos de CrossFit

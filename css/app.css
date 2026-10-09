@@ -339,3 +339,14 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 .reloj-botones .btn.ronda { background: #fff; color: #000; }
 .series-resumen { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
 .reloj-resumen { display: flex; flex-direction: column; gap: 8px; font-size: 22px; }
+
+/* Registro rápido y peso de hoy */
+.rapido { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; }
+.rapido .link.small { font-size: 13px; padding: 0; align-self: flex-start; }
+.copiar-lista { display: flex; flex-direction: column; }
+.copiar-fila { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 15px; }
+.copiar-fila.fuera { opacity: 0.4; }
+.copiar-g { width: 110px; flex-shrink: 0; }
+.copiar-g .num input { font-size: 16px; padding: 8px 40px 8px 10px; }
+.caja { width: 22px; height: 22px; padding: 0; flex-shrink: 0; accent-color: var(--accent); -webkit-appearance: checkbox; appearance: auto; }
+.peso-hoy { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 14px; color: var(--text); }
