@@ -1,6 +1,6 @@
 // Service worker: permite abrir la app sin conexión (en el súper sin cobertura, por ejemplo).
 // Cambia VERSION cada vez que publiques cambios para que el iPhone descargue lo nuevo.
-const VERSION = 'v10';
+const VERSION = 'v11';
 const CACHE = 'nutristock-' + VERSION;
 const LOCAL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
@@ -10,7 +10,10 @@ const LOCAL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(LOCAL)).then(() => self.skipWaiting()));
+  // cache: 'reload' = descargar SIEMPRE la versión nueva (nunca una copia vieja guardada por el navegador)
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(LOCAL.map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -30,7 +33,8 @@ self.addEventListener('fetch', e => {
   // Librerías (versión fija): caché primero. Archivos propios: red primero, caché si no hay conexión.
   e.respondWith(esLib
     ? caches.match(e.request).then(r => r || fetch(e.request).then(res => guardar(e.request, res)))
-    : fetch(e.request).then(res => guardar(e.request, res)).catch(() => caches.match(e.request, { ignoreSearch: true })));
+    // 'no-cache': pregunta siempre a internet si hay versión nueva (si no la hay, es rapidísimo)
+    : fetch(e.request, { cache: 'no-cache' }).then(res => guardar(e.request, res)).catch(() => caches.match(e.request, { ignoreSearch: true })));
 });
 
 function guardar(req, res) {
