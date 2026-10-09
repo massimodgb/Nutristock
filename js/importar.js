@@ -75,62 +75,69 @@ export function parseEtiqueta(texto) {
 }
 
 // ---------- Escáner de código de barras ----------
-let libPromise;
-function cargarLib() {
-  libPromise ||= new Promise((ok, fail) => {
-    const s = document.createElement('script');
-    s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
-    s.onload = () => ok(window.Html5Qrcode);
-    s.onerror = () => fail(new Error('No se pudo cargar el escáner (¿sin conexión?)'));
-    document.head.appendChild(s);
-  });
-  return libPromise;
+// Motor ZXing (zxing-cpp en WebAssembly): gratis, muy fiable y funciona en el iPhone,
+// donde Safari no trae lector de códigos propio. Se descarga la primera vez y queda guardado.
+const ZXING = 'https://cdn.jsdelivr.net/npm/zxing-wasm@2.2.4/dist/es/reader/index.js';
+const OPCIONES = { formats: ['EAN-13', 'EAN-8', 'UPC-A', 'UPC-E', 'Code128'], tryHarder: true, maxNumberOfSymbols: 1 };
+let motor;
+const cargarMotor = () => (motor ||= import(ZXING));
+
+async function leerImagen(imageData) {
+  const { readBarcodes } = await cargarMotor();
+  const r = await readBarcodes(imageData, OPCIONES);
+  return r.find(x => x.isValid && x.text)?.text || null;
 }
 
-function crearLector(Html5Qrcode, elementId) {
-  const F = window.Html5QrcodeSupportedFormats;
-  return new Html5Qrcode(elementId, {
-    formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128],
-    experimentalFeatures: { useBarCodeDetectorIfSupported: true },
-    verbose: false,
+// Cámara en vivo: analiza la franja central varias veces por segundo (y de vez en cuando la imagen entera)
+export async function iniciarEscaner(video, onCode) {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
   });
-}
-
-export async function iniciarEscaner(elementId, onCode) {
-  const Html5Qrcode = await cargarLib();
-  const scanner = crearLector(Html5Qrcode, elementId);
-  let done = false;
-  await scanner.start(
-    { facingMode: 'environment' },
-    {
-      fps: 15,
-      // Recuadro grande (casi toda la imagen) y vídeo cuadrado: el código se encuentra mucho más fácil
-      aspectRatio: 1,
-      qrbox: (w, h) => ({ width: Math.floor(w * 0.92), height: Math.floor(Math.min(h * 0.7, w * 0.62)) }),
-      // Más resolución = lee mejor códigos pequeños o en bolsas arrugadas (como el muesli)
-      videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
-    },
-    code => { if (!done) { done = true; avisarLectura(); onCode(code); } },
-    () => {},
-  );
-  return async () => { try { await scanner.stop(); scanner.clear(); } catch {} };
+  video.setAttribute('playsinline', '');
+  video.muted = true;
+  video.srcObject = stream;
+  await video.play();
+  await cargarMotor();
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let vivo = true, vuelta = 0;
+  const parar = () => { vivo = false; stream.getTracks().forEach(t => t.stop()); };
+  const tick = async () => {
+    if (!vivo) return;
+    if (video.readyState >= 2 && video.videoWidth) {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      // 3 de cada 4 veces, la franja central (más rápido); 1 de cada 4, la imagen entera
+      const entera = vuelta++ % 4 === 3;
+      const cw = entera ? vw : Math.round(vw * 0.9), ch = entera ? vh : Math.round(vh * 0.45);
+      const escala = Math.min(1, 1280 / Math.max(cw, ch));
+      canvas.width = Math.round(cw * escala); canvas.height = Math.round(ch * escala);
+      ctx.drawImage(video, (vw - cw) / 2, (vh - ch) / 2, cw, ch, 0, 0, canvas.width, canvas.height);
+      try {
+        const code = await leerImagen(ctx.getImageData(0, 0, canvas.width, canvas.height));
+        if (code && vivo) { parar(); avisarLectura(); onCode(code); return; }
+      } catch {}
+    }
+    setTimeout(tick, 80);
+  };
+  tick();
+  return parar;
 }
 
 // Lee el código desde una foto (la cámara normal del iPhone enfoca mejor de cerca)
 export async function leerCodigoDeFoto(file) {
-  const Html5Qrcode = await cargarLib();
-  const div = document.createElement('div');
-  div.id = 'lector-foto';
-  div.style.display = 'none';
-  document.body.appendChild(div);
   try {
-    const code = await crearLector(Html5Qrcode, div.id).scanFile(file, false);
-    avisarLectura();
+    const bmp = await createImageBitmap(file);
+    const escala = Math.min(1, 2400 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * escala); c.height = Math.round(bmp.height * escala);
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(bmp, 0, 0, c.width, c.height);
+    const code = await leerImagen(x.getImageData(0, 0, c.width, c.height));
+    if (code) avisarLectura();
     return code;
   } catch {
-    return null; // no se encontró ningún código en la foto
-  } finally {
-    div.remove();
+    return null;
   }
 }
 

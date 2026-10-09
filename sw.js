@@ -1,6 +1,6 @@
 // Service worker: permite abrir la app sin conexión (en el súper sin cobertura, por ejemplo).
 // Cambia VERSION cada vez que publiques cambios para que el iPhone descargue lo nuevo.
-const VERSION = 'v12';
+const VERSION = 'v13';
 const CACHE = 'nutristock-' + VERSION;
 const LOCAL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
@@ -27,7 +27,8 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   // Las búsquedas de productos siempre van a internet
   if (url.hostname.includes('openfoodfacts')) return;
-  const esLib = url.hostname === 'unpkg.com';
+  // Librerías con versión fija (también el motor del escáner): se guardan para usarlas sin conexión
+  const esLib = url.hostname === 'unpkg.com' || url.hostname === 'cdn.jsdelivr.net';
   if (url.origin !== location.origin && !esLib) return;
 
   // Librerías (versión fija): caché primero. Archivos propios: red primero, caché si no hay conexión.

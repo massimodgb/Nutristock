@@ -375,3 +375,11 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 .estimacion b { font-size: 24px; }
 .estimacion small { color: var(--muted); font-size: 13px; }
 .tamanos { padding: 10px 14px; background: var(--fill); }
+
+/* Escáner: vista grande con recuadro guía */
+.scan-vista { position: relative; width: 100%; aspect-ratio: 3 / 4; max-height: 62vh; border-radius: 14px; overflow: hidden; background: #000; }
+.scan-vista video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scan-guia { position: absolute; left: 5%; right: 5%; top: 30%; height: 40%; border: 3px solid #fff; border-radius: 14px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35); pointer-events: none; }
+.scan-guia::after { content: ''; position: absolute; left: 8%; right: 8%; top: 50%; height: 2px; background: #ef4444; opacity: .8; }
+.scan-texto { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; color: #fff; font-size: 14px; text-shadow: 0 1px 3px #000; }

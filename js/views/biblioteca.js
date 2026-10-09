@@ -1,5 +1,5 @@
 // Biblioteca de alimentos y productos: escanear, pegar etiqueta (Live Text) o crear a mano.
-import { html, useState, useEffect, useMemo } from '../lib.js';
+import { html, useState, useEffect, useMemo, useRef } from '../lib.js';
 import { db, useLive, getPrefs, round1 } from '../db.js';
 import { NUTRS, GROUPS, fmt, parseNum, todayStr } from '../nutri.js';
 import { Sheet, Num, Toggle, Dot, Empty, Icon, toast } from '../ui.js';
@@ -132,9 +132,10 @@ export function Escaner({ onCode }) {
   const [manual, setManual] = useState('');
   const [lento, setLento] = useState(false);
   const [leyendoFoto, setLeyendoFoto] = useState(false);
+  const video = useRef(null);
   useEffect(() => {
     let stop, vivo = true;
-    iniciarEscaner('reader', code => { stop?.(); onCode(code); })
+    iniciarEscaner(video.current, code => { stop?.(); onCode(code); })
       .then(s => { stop = s; if (!vivo) s(); })
       .catch(e => setErr(e?.message || String(e)));
     // Si en 8 segundos no lee nada, damos consejos
@@ -154,9 +155,13 @@ export function Escaner({ onCode }) {
   };
 
   return html`
-    <div id="reader" class="reader"></div>
-    ${err && html`<p class="error">No se pudo abrir la cámara: ${err}. Revisa los permisos de cámara de Safari, o usa la foto o el número de abajo.</p>`}
-    ${!err && html`<p class="muted small">Apunta al código de barras. Cuando lo lea, sonará un pitido.</p>`}
+    <div class="scan-vista">
+      <video ref=${video} playsinline muted></video>
+      <div class="scan-guia"></div>
+      <div class="scan-texto">Pon el código dentro del recuadro</div>
+    </div>
+    ${err && html`<p class="error">No se pudo abrir la cámara: ${err}. Revisa los permisos de cámara (Ajustes → Safari → Cámara), o usa la foto o el número de abajo.</p>`}
+    ${!err && html`<p class="muted small">A unos 15-20 cm, que se vean todas las barras. Cuando lo lea, sonará un pitido.</p>`}
     ${(lento || err) && html`
       <div class="notice">
         <b>¿No lo lee?</b>
