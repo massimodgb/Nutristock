@@ -369,3 +369,9 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 .carga { display: flex; align-items: center; gap: 6px; background: var(--accent-soft); color: var(--accent); border-radius: 10px; padding: 8px 10px; font-size: 16px; }
 .carga b { color: var(--text); }
 .aviso-rm { color: var(--warn); font-size: 13px; }
+
+/* Comidas libres: estimación */
+.estimacion { background: var(--fill); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 4px; }
+.estimacion b { font-size: 24px; }
+.estimacion small { color: var(--muted); font-size: 13px; }
+.tamanos { padding: 10px 14px; background: var(--fill); }

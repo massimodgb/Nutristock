@@ -19,7 +19,7 @@ const GUIAS = [
       'Toca un bloque de tu plan (por ejemplo "Proteína" en Comida), elige el alimento y pon los gramos.',
       'Si comes casi siempre lo mismo: registra un día bien y pulsa "Guardar hoy como mi día habitual". Desde entonces, cada día: "Mi día habitual" → cambia los gramos que hayan variado → Añadir.',
       '"Copiar ayer" y "Repetir lo de ayer" (en cada comida) funcionan igual: puedes editar antes de añadir.',
-      'Comidas libres: "Fuera del plan" → busca "hamburguesa", "Big Mac", "pizza", "arepa"… Hay platos generales y de cadenas (McDonald's, Burger King, KFC, Five Guys, Telepizza, Subway, Starbucks) y venezolanos. Elige la ración (½, 1, 2…).',
+      'Comidas libres: "Fuera del plan" → busca "hamburguesa", "Big Mac", "pizza", "arepa"… Hay platos generales y de cadenas (McDonald’s, Burger King, KFC, Five Guys, Telepizza, Subway, Starbucks) y venezolanos. Elige la ración (½, 1, 2…).',
       'Si no está, "Crear a medida": pon las calorías aproximadas y la app lo recuerda para la próxima vez.',
       'Para corregir algo, toca el registro: puedes cambiar los gramos o borrarlo (el stock se devuelve solo).',
     ],

@@ -17,6 +17,31 @@
 </head>
 <body>
   <div id="app"><div class="loading">Cargando…</div></div>
+  <script>
+    // Red de seguridad: si la app no arranca, en vez de quedarse en "Cargando…" enseña el error
+    // y un botón para reintentar (borra la copia guardada sin conexión, NO tus datos).
+    window.__errores = [];
+    addEventListener('error', e => window.__errores.push(e.message || String(e)));
+    addEventListener('unhandledrejection', e => window.__errores.push(String(e.reason && e.reason.message || e.reason)));
+    setTimeout(function () {
+      var app = document.getElementById('app');
+      if (!app || window.__arrancada) return;
+      app.innerHTML = '<div style="padding:32px 20px;font:16px -apple-system,sans-serif;text-align:center">' +
+        '<p><b>La app no ha podido arrancar.</b></p>' +
+        '<p style="color:#888;font-size:13px">' + (window.__errores.join('<br>') || 'Sin conexión o carga lenta.') + '</p>' +
+        '<button id="reintentar" style="margin-top:12px;padding:12px 20px;border:0;border-radius:12px;background:#16a34a;color:#fff;font-size:16px">Reintentar</button>' +
+        '<p style="color:#888;font-size:12px;margin-top:16px">Tus datos no se borran. Si sigue igual, haz una captura y pásasela a Claude.</p></div>';
+      document.getElementById('reintentar').onclick = async function () {
+        try {
+          var regs = await navigator.serviceWorker.getRegistrations();
+          for (var r of regs) await r.unregister();
+          var ks = await caches.keys();
+          for (var k of ks) await caches.delete(k);
+        } catch (e) {}
+        location.reload();
+      };
+    }, 8000);
+  </script>
   <script type="module" src="js/app.js"></script>
 </body>
 </html>

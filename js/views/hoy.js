@@ -463,47 +463,93 @@ function ExtraSheet({ foods, byId, stock, prefs, date, onDone }) {
       </div>` : html`<${BuscarFuera} prefs=${prefs} onElegir=${setPlato} />`}`;
 }
 
-// Buscador de comidas fuera del plan: platos generales, cadenas (McDonald's, Burger King…), venezolanos
-// y los que hayas creado tú.
+// Buscador de comidas fuera del plan. Escribes lo que comiste como te salga ("hamburguesa del bar de mi casa")
+// y te propone lo más parecido con un PROMEDIO y su rango. Si no reconoce nada, eliges el tamaño.
+const PALABRAS_VACIAS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'con', 'y', 'en', 'un', 'una', 'unos', 'unas', 'mi', 'su',
+  'bar', 'restaurante', 'casa', 'sitio', 'local', 'tipo', 'algo', 'como', 'muy', 'grande', 'pequena', 'mediana', 'normal', 'cerca', 'al', 'a', 'por']);
+const raiz = w => w.replace(/(es|s)$/, '');
+
+// Si no sabes ni qué ponerle: elige el tamaño de la comida
+const TAMANOS = [
+  { n: 'Comida ligera (ensalada, sándwich, bowl…)', kcal: 450, prot: 20, carb: 45, fat: 20, rango: [300, 600] },
+  { n: 'Comida normal de restaurante', kcal: 800, prot: 35, carb: 80, fat: 35, rango: [600, 1000] },
+  { n: 'Comida copiosa / menú completo', kcal: 1200, prot: 45, carb: 120, fat: 55, rango: [1000, 1600] },
+  { n: 'Tapeo / picoteo para compartir', kcal: 600, prot: 20, carb: 45, fat: 35, rango: [400, 900] },
+  { n: 'Postre o dulce', kcal: 350, prot: 5, carb: 45, fat: 16, rango: [200, 500] },
+  { n: 'Copa / bebida con alcohol', kcal: 180, prot: 0, carb: 15, fat: 0, rango: [100, 250] },
+];
+
+// Rango orientativo: los platos generales varían mucho según el sitio; los de cadena, poco
+export const rangoPlato = x => x.rango || (x.m && x.m !== 'Venezuela'
+  ? [Math.round(x.kcal * 0.95), Math.round(x.kcal * 1.05)]
+  : [Math.round((x.kcal * 0.75) / 10) * 10, Math.round((x.kcal * 1.3) / 10) * 10]);
+
 function BuscarFuera({ prefs, onElegir }) {
   const [q, setQ] = useState('');
   const propios = useLive(() => getSetting('fueraPropios', []), []) || [];
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const todos = [...propios.map(p => ({ ...p, propio: true })), ...COMIDAS_FUERA].filter(x => !(prefs.excluirMar && x.mar));
-  const palabras = norm(q).split(/\s+/).filter(Boolean);
+  // Palabras que importan de lo que escribiste (sin "del bar de mi casa")
+  const palabras = norm(q).split(/[^a-z0-9ñ]+/).filter(w => w.length > 2 && !PALABRAS_VACIAS.has(w)).map(raiz);
+  const puntuar = x => {
+    const t = norm(`${x.n} ${x.m || ''}`);
+    return palabras.filter(w => t.includes(w)).length;
+  };
   const res = palabras.length
-    ? todos.filter(x => palabras.every(w => norm(`${x.n} ${x.m || ''}`).includes(w)))
-    : todos.filter(x => x.propio || !x.m).slice(0, 25);
+    ? todos.map(x => ({ x, p: puntuar(x) })).filter(r => r.p > 0)
+      // más palabras coincidentes primero; a igualdad, los tuyos y los generales antes que las cadenas
+      .sort((a, b) => b.p - a.p || (!!b.x.propio - !!a.x.propio) || (!!a.x.m - !!b.x.m)).slice(0, 30).map(r => r.x)
+    : todos.filter(x => x.propio || !x.m).slice(0, 20);
+  const texto = q.trim();
+  const elegir = x => onElegir({ ...x, comoLoLlamo: texto && palabras.length ? texto : '' });
+
   return html`
-    <input class="search" placeholder="Busca: hamburguesa, Big Mac, pizza, arepa…" value=${q} onInput=${e => setQ(e.target.value)} />
-    <p class="muted small">${palabras.length ? '' : 'Platos generales. Escribe el nombre o la cadena (McDonald\'s, Burger King, KFC, Five Guys, Telepizza…) para ver los concretos.'}</p>
+    <input class="search" placeholder="¿Qué comiste? Ej: hamburguesa del bar, pizza, arepa…" value=${q} onInput=${e => setQ(e.target.value)} />
+    ${!texto && html`<p class="muted small">Escríbelo como te salga. No hace falta saber las calorías: la app te da un promedio.</p>`}
     <div class="list">
-      ${res.map(x => html`
-        <button class="row" onClick=${() => onElegir(x)}>
-          <span class="grow">${x.n}${x.m ? html` <span class="tag">${x.m}</span>` : ''}${x.propio ? html` <span class="tag ok">mío</span>` : ''}</span>
-          <small class="muted">${fmt(x.kcal)} kcal</small>
-        </button>`)}
-      ${palabras.length > 0 && res.length === 0 && html`<p class="muted small">No lo tengo. Elige algo parecido o créalo a medida.</p>`}
+      ${res.map(x => {
+        const [a, b] = rangoPlato(x);
+        return html`
+          <button class="row" onClick=${() => elegir(x)}>
+            <span class="grow">${x.n}${x.m ? html` <span class="tag">${x.m}</span>` : ''}${x.propio ? html` <span class="tag ok">mío</span>` : ''}
+              <br /><small class="muted">entre ${fmt(a)} y ${fmt(b)} kcal</small></span>
+            <b>≈${fmt(x.kcal)}</b>
+          </button>`;
+      })}
     </div>
-    <button class="btn secondary" onClick=${() => onElegir({ n: q.trim(), m: '', kcal: null, prot: null, carb: null, fat: null, nuevo: true })}>
-      <${Icon} name="pen" size=${18} /> ${q.trim() ? `Crear "${q.trim()}" a medida` : 'Crear uno a medida'}</button>`;
+    ${texto && html`
+      <div class="card tamanos">
+        <p class="small"><b>${res.length ? '¿No es ninguno?' : 'No lo reconozco.'}</b> Elige el tamaño y te pongo un promedio:</p>
+        <div class="list">
+          ${TAMANOS.map(t => html`
+            <button class="row" onClick=${() => onElegir({ ...t, m: '', comoLoLlamo: texto, tamano: true })}>
+              <span class="grow">${t.n}<br /><small class="muted">entre ${fmt(t.rango[0])} y ${fmt(t.rango[1])} kcal</small></span>
+              <b>≈${fmt(t.kcal)}</b>
+            </button>`)}
+        </div>
+      </div>`}
+    <button class="link" onClick=${() => onElegir({ n: texto, m: '', kcal: null, prot: null, carb: null, fat: null, nuevo: true })}>
+      Sé las calorías exactas: ponerlas a mano</button>`;
 }
 
-// Elegir la ración (½, 1, 2…) y ajustar los números si sabes más
+// Confirmar: ración y "Registrar". Los números solo si quieres ajustarlos.
 function PlatoFuera({ plato, date, onBack, onDone }) {
   const [racion, setRacion] = useState(1);
-  const [v, setV] = useState({ n: plato.n, kcal: plato.kcal, prot: plato.prot, carb: plato.carb, fat: plato.fat });
+  const [ajustar, setAjustar] = useState(!!plato.nuevo);
+  const [v, setV] = useState({ n: plato.comoLoLlamo || plato.n, kcal: plato.kcal, prot: plato.prot, carb: plato.carb, fat: plato.fat });
   const set = (k, x) => setV(prev => ({ ...prev, [k]: x }));
   const total = k => (v[k] || 0) * racion;
+  const [a, b] = plato.nuevo ? [null, null] : rangoPlato(plato);
   const guardar = async () => {
     const n = sumN([{ kcal: total('kcal'), prot: total('prot'), carb: total('carb'), fat: total('fat') }]);
-    const nombre = `${v.n}${plato.m ? ` · ${plato.m}` : ''}${racion !== 1 ? ` (×${fmt(racion, 1)})` : ''}`;
+    const base = plato.comoLoLlamo ? `${v.n} (≈ ${plato.tamano ? plato.n.split(' (')[0].toLowerCase() : plato.n})` : v.n;
+    const nombre = `${base}${plato.m && !plato.comoLoLlamo ? ` · ${plato.m}` : ''}${racion !== 1 ? ` ×${fmt(racion, 1)}` : ''}`;
     await db.logs.add({ date, mealId: 'extra', name: nombre, n, aprox: true, deducted: [], ts: Date.now() });
-    // Lo que creas a medida (o cambias) se recuerda para la próxima vez
-    const cambiado = ['kcal', 'prot', 'carb', 'fat'].some(k => v[k] !== plato[k]) || v.n !== plato.n;
-    if (plato.nuevo || plato.propio || cambiado) {
+    // Lo que creas a mano (o ajustas) se recuerda para la próxima vez
+    const cambiado = ['kcal', 'prot', 'carb', 'fat'].some(k => v[k] !== plato[k]);
+    if (plato.nuevo || (ajustar && cambiado)) {
       const propios = (await getSetting('fueraPropios', [])).filter(p => p.n !== v.n);
-      await setSetting('fueraPropios', [{ n: v.n, m: plato.m || '', kcal: v.kcal, prot: v.prot || 0, carb: v.carb || 0, fat: v.fat || 0 }, ...propios].slice(0, 60));
+      await setSetting('fueraPropios', [{ n: v.n, m: '', kcal: v.kcal, prot: v.prot || 0, carb: v.carb || 0, fat: v.fat || 0 }, ...propios].slice(0, 60));
     }
     toast('Registrado ✓');
     onDone();
@@ -512,21 +558,28 @@ function PlatoFuera({ plato, date, onBack, onDone }) {
     <button class="link back" onClick=${onBack}>‹ Buscar otro</button>
     <div class="form">
       ${plato.nuevo
-        ? html`<label>¿Qué comiste?<input value=${v.n} onInput=${e => set('n', e.target.value)} placeholder="Ej: Hamburguesa de la Bodega" /></label>`
-        : html`<h4>${v.n}${plato.m ? html` <span class="tag">${plato.m}</span>` : ''}</h4>`}
-      ${!plato.nuevo && html`<p class="muted small">Valores aproximados por ración${plato.m && plato.m !== 'Venezuela' ? ', según la información publicada por la cadena' : ''}. Cámbialos si sabes más.</p>`}
+        ? html`<label>¿Qué comiste?<input value=${v.n} onInput=${e => set('n', e.target.value)} placeholder="Ej: Hamburguesa del bar Pepe" /></label>`
+        : html`
+          <h4>${v.n}</h4>
+          ${plato.comoLoLlamo && html`<p class="muted small">Calculado como: ${plato.n}${plato.m ? ` (${plato.m})` : ''}</p>`}
+          <div class="estimacion">
+            <b>≈ ${fmt(total('kcal'))} kcal</b>
+            <small>entre ${fmt(a * racion)} y ${fmt(b * racion)} kcal · P ${fmt(total('prot'))} · C ${fmt(total('carb'))} · G ${fmt(total('fat'))}</small>
+          </div>
+          <p class="muted small">Es un promedio: cada sitio lo hace distinto, pero para ver cómo va tu semana es suficiente.</p>`}
       <label>¿Cuánto comiste?
-        <div class="chips">${[[0.5, '½'], [1, '1 ración'], [1.5, '1½'], [2, '2'], [3, '3']].map(([x, t]) => html`
+        <div class="chips">${[[0.5, 'La mitad'], [1, '1 ración'], [1.5, 'Ración y media'], [2, '2'], [3, '3']].map(([x, t]) => html`
           <button class=${'chip' + (racion === x ? ' on' : '')} onClick=${() => setRacion(x)}>${t}</button>`)}</div>
       </label>
-      <div class="grid2">
-        <label>Calorías (1 ración)<${Num} value=${v.kcal} onChange=${x => set('kcal', x)} suffix="kcal" /></label>
-        <label>Proteína<${Num} value=${v.prot} onChange=${x => set('prot', x)} suffix="g" /></label>
-        <label>Carbohidratos<${Num} value=${v.carb} onChange=${x => set('carb', x)} suffix="g" /></label>
-        <label>Grasas<${Num} value=${v.fat} onChange=${x => set('fat', x)} suffix="g" /></label>
-      </div>
-      <div class="preview"><${MacroLine} n=${{ kcal: total('kcal'), prot: total('prot'), carb: total('carb'), fat: total('fat') }} /></div>
-      <button class="btn" disabled=${!v.n || !v.kcal} onClick=${guardar}>Registrar ${fmt(total('kcal'))} kcal</button>
+      ${!plato.nuevo && !ajustar && html`<button class="link" onClick=${() => setAjustar(true)}>Ajustar los números (opcional)</button>`}
+      ${ajustar && html`
+        <div class="grid2">
+          <label>Calorías (1 ración)<${Num} value=${v.kcal} onChange=${x => set('kcal', x)} suffix="kcal" /></label>
+          <label>Proteína<${Num} value=${v.prot} onChange=${x => set('prot', x)} suffix="g" /></label>
+          <label>Carbohidratos<${Num} value=${v.carb} onChange=${x => set('carb', x)} suffix="g" /></label>
+          <label>Grasas<${Num} value=${v.fat} onChange=${x => set('fat', x)} suffix="g" /></label>
+        </div>`}
+      <button class="btn" disabled=${!v.n || !v.kcal} onClick=${guardar}>Registrar ${v.kcal ? `≈ ${fmt(total('kcal'))} kcal` : ''}</button>
     </div>`;
 }
 

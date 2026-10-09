@@ -53,6 +53,7 @@ seed()
     const raiz = document.getElementById('app');
     raiz.textContent = '';
     render(html`<${App} />`, raiz);
+    window.__arrancada = true;
   })
   .catch(e => {
     document.getElementById('app').innerHTML = `<p class="error" style="padding:24px">Error al iniciar: ${e.message}</p>`;
