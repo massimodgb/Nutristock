@@ -1,7 +1,7 @@
 // Plan del nutricionista: verlo y cargar uno nuevo cada mes.
 import { html, useState } from '../lib.js';
 import { db, useLive, getPrefs, activePlan, setSetting } from '../db.js';
-import { GROUPS, blockFoods, blockRef, visibleFood, sumN, planRef, fmt, fmtDate } from '../nutri.js';
+import { GROUPS, blockFoods, blockRef, visibleFood, sumN, planRef, planRango, fmt, fmtDate } from '../nutri.js';
 import { Sheet, Dot, MacroLine, Icon, toast } from '../ui.js';
 
 export function Plan({ go }) {
@@ -30,7 +30,9 @@ export function Plan({ go }) {
           <h3>${plan.nombre}</h3>
           <p class="muted small">${plan.nutricionista} · desde ${fmtDate(plan.fecha, { day: 'numeric', month: 'long', year: 'numeric' })}</p>
           ${plan.nota && html`<p class="notice">${plan.nota}</p>`}
-          <div class="preview"><span class="muted small">Estimación diaria:</span> <${MacroLine} n=${planRef(plan, byId, prefs)} /></div>
+          <div class="preview"><span class="muted small">Estimación diaria (media):</span> <${MacroLine} n=${planRef(plan, byId, prefs)} />
+            <div class="muted small">Según lo que elijas, un día va de <b>${fmt(planRango(plan, byId, prefs).min)}</b> a <b>${fmt(planRango(plan, byId, prefs).max)} kcal</b>.
+              Por ejemplo, 240 g de carne picada de ternera tiene casi el doble de calorías que 240 g de pollo.</div></div>
         </section>
         ${plan.comidas.map(m => html`
           <section class="card meal">

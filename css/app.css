@@ -338,3 +338,4 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 .reloj-botones .btn.secondary { background: rgba(255,255,255,.15); color: #fff; }
 .reloj-botones .btn.ronda { background: #fff; color: #000; }
 .series-resumen { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 2px; }
+.reloj-resumen { display: flex; flex-direction: column; gap: 8px; font-size: 22px; }

@@ -21,6 +21,7 @@ const TABS = [
   { id: 'biblioteca', label: 'Productos', icon: 'biblio', View: Biblioteca, oculta: true, padre: 'despensa' },
   { id: 'plan', label: 'Plan', icon: 'plan', View: Plan, oculta: true, padre: 'mas' },
   { id: 'perfil', label: 'Perfil', icon: 'mas', View: Perfil, oculta: true, padre: 'mas' },
+  { id: 'ejercicios', label: 'Ejercicios', icon: 'pesa', View: p => html`<${Entreno} ...${p} inicial="ejercicios" />`, oculta: true, padre: 'entreno' },
 ];
 
 function App() {

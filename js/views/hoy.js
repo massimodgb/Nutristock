@@ -10,6 +10,7 @@ import {
 } from '../nutri.js';
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast } from '../ui.js';
 import { PRESETS_FUERA } from '../data/foods.js';
+import { leer } from './entreno.js';
 
 export function Hoy({ go }) {
   const [date, setDate] = useState(todayStr());
@@ -205,7 +206,8 @@ function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
     <div class="explica">
       <p>No es una fórmula de "quiero bajar X kilos" como en MyFitnessPal. <b>Es lo que suma el plan de tu nutricionista</b>:
         la app coge cada bloque de cada comida (por ejemplo, 240 g de pollo cocido o 200 g de arroz integral cocido)
-        y calcula sus calorías. Por eso pone "≈": si eliges ternera en vez de pollo, o la opción dulce del desayuno, el número cambia un poco.</p>
+        y calcula sus calorías. Como cada bloque te deja elegir, usa la <b>media</b> de todas las opciones. Por eso pone "≈":
+        un día con carne picada de ternera, aguacate y frutos secos de macadamia sale bastante más alto que uno con pollo y aceite.</p>
       <p>Si tu nutricionista pensó el plan para mantenerte, para ganar músculo o para definir, eso lo decide él con tus datos;
         la app te dice si lo estás cumpliendo.</p>
       <p><b>¿Estoy en déficit o en mantenimiento?</b> Para saberlo hay que comparar lo que comes con lo que gastas.
@@ -499,7 +501,7 @@ function EntrenoHoy({ date, go }) {
         <${Icon} name="pesa" size=${20} /><span class="grow">¿Entrenas hoy? Pega el entreno de tu entrenadora</span><${Icon} name="right" size=${16} />
       </button>` : null;
   }
-  const w = ws[0], secs = w.parsed.secciones, hechas = secs.filter((s, i) => w.resultados?.[i]?.hecho).length;
+  const w = ws[0], secs = leer(w).secciones, hechas = secs.filter((s, i) => w.resultados?.[i]?.hecho).length;
   return html`
     <button class="card entreno-hoy" onClick=${() => go('entreno')}>
       <${Icon} name="pesa" size=${20} />

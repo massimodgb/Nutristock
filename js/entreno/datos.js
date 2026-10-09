@@ -27,6 +27,11 @@ export const ABREV = {
   sdhp: 'Sumo Deadlift High Pull', hsw: 'Handstand Walk', ghd: 'GHD Sit-up', pu: 'Pull-up', 'c&j': 'Clean & Jerk',
 };
 
+// Abreviaturas que van DENTRO de un nombre ("Power DBs Clean" → "Power Dumbbell Clean")
+export const PALABRAS = {
+  db: 'Dumbbell', dbs: 'Dumbbell', kb: 'Kettlebell', kbs: 'Kettlebell', bb: 'Barbell',
+};
+
 // Benchmarks clásicos de CrossFit
 export const BENCHMARKS = [
   { id: 'fran', name: 'Fran', tipo: 'fortime', desc: '21-15-9: Thrusters 43/30 kg + Pull-ups' },

@@ -9,7 +9,8 @@ const VACIO = { sexo: 'h', edad: null, altura: null, actividad: 1.725, objetivo:
 
 export function Perfil({ go }) {
   const guardado = useLive(() => getSetting('perfil', null), []);
-  const ultimo = useLive(() => db.weights.orderBy('date').last(), []);
+  // Si aún no hay ningún peso, devolvemos null (si no, la pantalla se quedaba en "Cargando…")
+  const ultimo = useLive(() => db.weights.orderBy('date').last().then(w => w || null), []);
   if (guardado === undefined || ultimo === undefined) return html`<div class="loading">Cargando…</div>`;
   const p = { ...VACIO, ...(guardado || {}) };
   const set = (k, v) => setSetting('perfil', { ...p, [k]: v });

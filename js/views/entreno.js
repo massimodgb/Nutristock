@@ -3,14 +3,14 @@ import { html, useState, useMemo } from '../lib.js';
 import { db, useLive } from '../db.js';
 import { fmt, todayStr, addDays, fmtDate } from '../nutri.js';
 import { Sheet, Num, Seg, Empty, Icon, toast } from '../ui.js';
-import { parsearEntreno, textoFormato, norm } from '../entreno/parser.js';
+import { parsearEntreno, textoFormato, norm, claveEjercicio } from '../entreno/parser.js';
 import { LEVANTAMIENTOS, BENCHMARKS } from '../entreno/datos.js';
 import { RelojActivo, Relojes } from './reloj.js';
 
-const ES_WOD = ['fortime', 'amrap', 'emom', 'intervalos', 'rondas'];
+const ES_WOD = ['fortime', 'amrap', 'emom', 'intervalos', 'rondas', 'bloques'];
 
-export function Entreno({ go }) {
-  const [vista, setVista] = useState('dia');
+export function Entreno({ go, inicial }) {
+  const [vista, setVista] = useState(inicial || 'dia');
   const [date, setDate] = useState(todayStr());
   const [reloj, setReloj] = useState(null); // { cfg, onResultado }
   const workouts = useLive(() => db.workouts.where('date').equals(date).toArray(), [date]);
@@ -73,11 +73,11 @@ function Workout({ w, marcas, onReloj }) {
     const actual = (await db.workouts.get(w.id)).resultados || {};
     await db.workouts.update(w.id, { resultados: { ...actual, [si]: { ...(actual[si] || {}), ...cambios } } });
   };
-  const hechas = w.parsed.secciones.filter((s, i) => res[i]?.hecho).length;
+  const hechas = leer(w).secciones.filter((s, i) => res[i]?.hecho).length;
 
   return html`
-    <p class="muted small center">${hechas}/${w.parsed.secciones.length} secciones hechas</p>
-    ${w.parsed.secciones.map((s, si) => html`
+    <p class="muted small center">${hechas}/${leer(w).secciones.length} secciones hechas</p>
+    ${leer(w).secciones.map((s, si) => html`
       <${Seccion} key=${si} s=${s} si=${si} r=${res[si] || {}} marcas=${marcas} onReloj=${onReloj}
         onGuardar=${c => guardarRes(si, c)} />`)}
     <div class="inline">
@@ -90,10 +90,18 @@ function Seccion({ s, si, r, marcas, onReloj, onGuardar }) {
   const esWod = s.formato && ES_WOD.includes(s.formato.tipo);
   const relojSeccion = s.formato && {
     cfg: s.formato,
-    onResultado: esWod ? x => onGuardar({
-      tiempo: s.formato.tipo === 'fortime' || s.formato.tipo === 'rondas' ? mmss(x.segundos) : r.tiempo,
-      rondas: x.rondas || r.rondas, hecho: true,
-    }) : null,
+    onResultado: !esWod ? null : s.formato.tipo === 'bloques'
+      // Varios bloques: guardamos el resultado de cada uno ("9:41 · 11:02" o "5 · 4 · 4 rondas")
+      ? x => onGuardar({
+        porBloque: s.formato.sub === 'fortime'
+          ? x.bloques.map(b => (b.tiempo != null ? mmss(b.tiempo) : 'cap')).join(' · ')
+          : x.bloques.map(b => b.rondas).join(' · ') + ' rondas',
+        hecho: true,
+      })
+      : x => onGuardar({
+        tiempo: s.formato.tipo === 'fortime' || s.formato.tipo === 'rondas' ? mmss(x.segundos) : r.tiempo,
+        rondas: x.rondas || r.rondas, hecho: true,
+      }),
   };
   return html`
     <section class=${'card seccion' + (r.hecho ? ' hecha' : '')}>
@@ -192,6 +200,7 @@ function Resultado({ s, r, esWod, onGuardar }) {
     <div class="resultado-linea">
       ${r.hecho ? html`<span class="tag ok">✓ Hecho</span>` : ''}
       ${r.tiempo && html`<span class="tag">${r.tiempo}</span>`}
+      ${r.porBloque && html`<span class="tag">${r.porBloque}</span>`}
       ${r.rondas ? html`<span class="tag">${r.rondas} rondas${r.reps ? ` + ${r.reps}` : ''}</span>` : ''}
       ${r.rpe && html`<span class="tag">RPE ${r.rpe}</span>`}
       <button class="link" onClick=${() => setAbierto(true)}>${r.hecho ? 'Editar resultado' : 'Apuntar resultado'}</button>
@@ -201,6 +210,9 @@ function Resultado({ s, r, esWod, onGuardar }) {
     <div class="form resultado">
       ${esWod && (tipo === 'fortime' || tipo === 'rondas' || tipo === 'intervalos') && html`
         <label>Tiempo (mm:ss)<input value=${r.tiempo || ''} placeholder="12:34" inputmode="numeric" onInput=${e => onGuardar({ tiempo: e.target.value })} /></label>`}
+      ${esWod && tipo === 'bloques' && html`
+        <label>Resultado de cada bloque<input value=${r.porBloque || ''} placeholder=${s.formato.sub === 'fortime' ? '9:41 · 11:02' : '5 · 4 · 4 rondas'}
+          onInput=${e => onGuardar({ porBloque: e.target.value })} /></label>`}
       ${esWod && tipo === 'amrap' && html`
         <div class="grid2">
           <label>Rondas<${Num} value=${r.rondas} onChange=${v => onGuardar({ rondas: v })} /></label>
@@ -275,18 +287,21 @@ function MarcaDetalle({ x, tipo, marcas }) {
     </div>`;
 }
 
-// ---------- Ejercicios: todo lo que has hecho, con vídeos y pesos ----------
+// ---------- Ejercicios: todo lo que has hecho (se añaden solos al pegar entrenos) + los que añadas a mano ----------
 function Ejercicios() {
   const workouts = useLive(() => db.workouts.toArray(), []);
+  const propios = useLive(() => db.ejercicios.toArray(), []);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState(null);
-  if (!workouts) return html`<div class="loading">Cargando…</div>`;
+  const [nuevo, setNuevo] = useState(false);
+  if (!workouts || !propios) return html`<div class="loading">Cargando…</div>`;
+
   const mapa = {};
+  const entrada = (clave, nombre) => (mapa[clave] ||= { clave, nombre, veces: 0, ultima: '', links: new Set(), historial: [] });
   for (const w of workouts) {
-    w.parsed.secciones.forEach((s, si) => s.partes.forEach((p, pi) => p.lineas.forEach((l, li) => {
+    leer(w).secciones.forEach((s, si) => s.partes.forEach((p, pi) => p.lineas.forEach((l, li) => {
       for (const nombre of l.ejercicios || []) {
-        const k = norm(nombre);
-        const e = mapa[k] ||= { nombre, veces: 0, ultima: '', links: new Set(), historial: [] };
+        const e = entrada(claveEjercicio(nombre), nombre);
         e.veces++;
         if (w.date > e.ultima) e.ultima = w.date;
         (l.links || []).forEach(u => e.links.add(u));
@@ -295,29 +310,66 @@ function Ejercicios() {
       }
     })));
   }
-  const lista = Object.values(mapa).filter(e => norm(e.nombre).includes(norm(q))).sort((a, b) => b.veces - a.veces);
-  if (!workouts.length) return html`<${Empty}>Cuando pegues entrenos, aquí aparecerán todos tus ejercicios con sus vídeos y los kilos que usaste.<//>`;
+  // Lo que has añadido o editado a mano (nombre, vídeo, notas) manda sobre lo automático
+  for (const p of propios) {
+    const e = entrada(p.id, p.nombre);
+    e.nombre = p.nombre || e.nombre;
+    e.notas = p.notas;
+    (p.videos || []).forEach(u => e.links.add(u));
+    e.propio = true;
+  }
+  const lista = Object.values(mapa).filter(e => norm(e.nombre).includes(norm(q)))
+    .sort((a, b) => b.veces - a.veces || a.nombre.localeCompare(b.nombre));
+
   return html`
-    <input class="search" placeholder="Buscar ejercicio…" value=${q} onInput=${e => setQ(e.target.value)} />
+    <div class="inline">
+      <input class="search" placeholder="Buscar ejercicio…" value=${q} onInput=${e => setQ(e.target.value)} />
+      <button class="btn small" onClick=${() => setNuevo(true)}><${Icon} name="plus" size=${16} /></button>
+    </div>
+    <p class="muted small">Se añaden solos cada vez que pegas un entreno. También puedes añadirlos a mano con su vídeo.</p>
+    ${lista.length === 0 && html`<${Empty}>Aún no hay ejercicios. Pega un entreno o añade uno con +.<//>`}
     <section class="card list">
       ${lista.map(e => html`
         <button class="row" onClick=${() => setSel(e)}>
           <span class="grow">${e.nombre}${e.links.size ? html` <span class="tag">vídeo</span>` : ''}</span>
-          <small class="muted">${e.veces}× · ${fmtDate(e.ultima, { day: 'numeric', month: 'short' })}</small>
+          <small class="muted">${e.veces ? `${e.veces}× · ${fmtDate(e.ultima, { day: 'numeric', month: 'short' })}` : 'añadido a mano'}</small>
         </button>`)}
     </section>
     <${Sheet} open=${!!sel} onClose=${() => setSel(null)} title=${sel?.nombre}>
-      ${sel && html`
-        <div class="form">
-          ${[...sel.links].map(u => html`<a class="btn secondary" href=${u} target="_blank" rel="noopener">▶ Ver vídeo</a>`)}
-          <h4>Historial</h4>
-          <table class="ntable">
-            ${[...sel.historial].sort((a, b) => b.date.localeCompare(a.date)).map(h => html`
-              <tr><td>${fmtDate(h.date, { day: 'numeric', month: 'short' })}</td>
-                <td>${h.texto}${h.series ? html`<br /><small class="pct">${h.series.filter(x => x.kg).map(x => `${fmt(x.kg, 1)}×${x.reps}`).join(' · ')}</small>` : ''}</td></tr>`)}
-          </table>
-        </div>`}
+      ${sel && html`<${EjercicioDetalle} e=${sel} onDone=${() => setSel(null)} />`}
+    <//>
+    <${Sheet} open=${nuevo} onClose=${() => setNuevo(false)} title="Nuevo ejercicio">
+      ${nuevo && html`<${EjercicioDetalle} e=${{ clave: '', nombre: '', links: new Set(), historial: [] }} onDone=${() => setNuevo(false)} />`}
     <//>`;
+}
+
+function EjercicioDetalle({ e, onDone }) {
+  const [nombre, setNombre] = useState(e.nombre);
+  const [video, setVideo] = useState('');
+  const [notas, setNotas] = useState(e.notas || '');
+  const guardar = async () => {
+    const id = e.clave || claveEjercicio(nombre);
+    const prev = (await db.ejercicios.get(id)) || {};
+    const videos = [...new Set([...(prev.videos || []), ...(video.trim() ? [video.trim()] : [])])];
+    await db.ejercicios.put({ ...prev, id, nombre: nombre.trim(), notas, videos });
+    toast('Ejercicio guardado ✓');
+    onDone();
+  };
+  return html`
+    <div class="form">
+      <label>Nombre<input value=${nombre} onInput=${ev => setNombre(ev.target.value)} placeholder="Ej: Cat Dog" /></label>
+      ${[...e.links].map(u => html`<a class="btn secondary" href=${u} target="_blank" rel="noopener">▶ Ver vídeo</a>`)}
+      <label>Añadir vídeo (enlace de YouTube, Instagram…)<input value=${video} onInput=${ev => setVideo(ev.target.value)} placeholder="https://youtube.com/…" /></label>
+      <label>Notas (técnica, escalado, molestias…)<textarea rows="3" value=${notas} onInput=${ev => setNotas(ev.target.value)}></textarea></label>
+      <button class="btn" disabled=${!nombre.trim()} onClick=${guardar}>Guardar</button>
+      ${e.historial.length > 0 && html`
+        <h4>Historial</h4>
+        <table class="ntable">
+          ${[...e.historial].sort((a, b) => b.date.localeCompare(a.date)).map(h => html`
+            <tr><td>${fmtDate(h.date, { day: 'numeric', month: 'short' })}</td>
+              <td>${h.texto}${h.series ? html`<br /><small class="pct">${h.series.filter(x => x.kg).map(x => `${fmt(x.kg, 1)}×${x.reps}`).join(' · ')}</small>` : ''}</td></tr>`)}
+        </table>`}
+    </div>`;
 }
 
 // ---------- utilidades ----------
@@ -336,4 +388,13 @@ function mejorBench(mias, tipo) {
   if (!mias.length) return null;
   const best = [...mias].sort((a, b) => (tipo === 'amrap' ? b.valor - a.valor : a.valor - b.valor))[0];
   return best.resultado;
+}
+
+// Siempre se relee el texto original con la última versión del lector:
+// así, cuando el lector mejora, los entrenos antiguos también se ven bien.
+const cacheLectura = new Map();
+export function leer(w) {
+  const k = w.id + ':' + w.texto;
+  if (!cacheLectura.has(k)) cacheLectura.set(k, parsearEntreno(w.texto));
+  return cacheLectura.get(k);
 }

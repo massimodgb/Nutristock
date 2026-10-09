@@ -68,17 +68,42 @@ export function mealBlocks(meal, optionId) {
   return [...(meal.bloques || []), ...(opt?.bloques || [])];
 }
 
-// Estimación de lo que aporta el plan (usa el primer alimento visible de cada bloque)
+// Lo que aporta cada alimento permitido en un bloque (con su cantidad del plan)
+function opcionesBloque(block, plan, byId, prefs) {
+  return blockFoods(block, plan).filter(x => visibleFood(byId[x.id], prefs))
+    .map(x => nutrFor(byId[x.id], toRaw(byId[x.id], x.g, false, byId)));
+}
+
+// Estimación de un bloque: la MEDIA de todo lo que permite (pollo, ternera, picada…).
+// Antes se usaba solo el primero (el más ligero) y el objetivo salía demasiado bajo.
 export function blockRef(block, plan, byId, prefs) {
-  const first = blockFoods(block, plan).find(x => visibleFood(byId[x.id], prefs));
-  if (!first) return sumN([]);
-  const food = byId[first.id];
-  return nutrFor(food, toRaw(food, first.g, false, byId));
+  const ops = opcionesBloque(block, plan, byId, prefs);
+  if (!ops.length) return sumN([]);
+  const s = sumN(ops);
+  return Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v / ops.length]));
 }
 
 export function planRef(plan, byId, prefs, choices = {}) {
   return sumN(plan.comidas.map(m =>
     sumN(mealBlocks(m, choices[m.id]).map(b => blockRef(b, plan, byId, prefs)))));
+}
+
+// Calorías mínimas y máximas que permite el plan según lo que elijas
+export function planRango(plan, byId, prefs) {
+  let min = 0, max = 0;
+  for (const m of plan.comidas) {
+    const variantes = (m.opciones?.length ? m.opciones : [null]).map(o => {
+      let a = 0, b = 0;
+      for (const bl of [...(m.bloques || []), ...(o?.bloques || [])]) {
+        const k = opcionesBloque(bl, plan, byId, prefs).map(n => n.kcal);
+        if (k.length) { a += Math.min(...k); b += Math.max(...k); }
+      }
+      return [a, b];
+    });
+    min += Math.min(...variantes.map(v => v[0]));
+    max += Math.max(...variantes.map(v => v[1]));
+  }
+  return { min, max };
 }
 
 // ---------- formato ----------

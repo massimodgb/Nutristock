@@ -2,9 +2,14 @@
 //   secciones (Calentamiento, FUERZA, WOD, Opcional…) → partes (separadas por líneas en blanco) → líneas.
 // Detecta formatos (EMOM, AMRAP, For Time, rondas, bloques con descanso, Tabata), series x reps,
 // porcentajes, cargas (@60kg), esquemas 15-12-9 y enlaces de YouTube.
-import { LEVANTAMIENTOS, ABREV } from './datos.js';
+import { LEVANTAMIENTOS, ABREV, PALABRAS } from './datos.js';
 
 export const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+// Clave para juntar el mismo ejercicio escrito distinto: "Cal Row" = "cal row", "Lunges" = "Lunge"
+export const claveEjercicio = nombre => norm(nombre).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean)
+  .map(w => norm(PALABRAS[w] || w))
+  .map(w => (w.length > 3 ? w.replace(/s$/, '') : w)).join(' ');
 
 const CABECERAS = /^(calentamiento|warm[\s-]?up|movilidad|activacion|fuerza|strength|tecnica|skill|wod|metcon|accesorios?|opcional|core|cool[\s-]?down|vuelta a la calma|gimnastic[oa]s?|halterofilia|cardio|engine|finisher|bonus|extra)\s*:?$/;
 
@@ -89,7 +94,7 @@ function analizarLinea(l) {
   if (carga) out.kg = +carga[1].replace(',', '.') * (carga[2].toLowerCase() === 'lb' ? 0.4536 : 1);
   out.estacion = (l.texto.match(/^(\d+)\)\s*/) || [])[1] ? +l.texto.match(/^(\d+)\)/)[1] : null;
   // Las líneas que solo dicen el formato ("EMOM x 18min", "3 Rondas:", "Rest: 3 min") no son ejercicios
-  const sinFormato = l.texto.replace(/\([^)]*\)|\d+|emom|amrap|rondas?|rounds?|min|for time|bloques?|trabajo|rest|cada uno|time cap|[x:+]/gi, '').trim();
+  const sinFormato = l.texto.replace(/\([^)]*\)|\d+|emom|amraps?|rondas?|rounds?|min|for time|bloques?|trabajo|rest|descanso|cada uno|time cap|\b(con|de|y|entre)\b|[x:+'’,.]/gi, '').trim();
   out.esFormato = /^(rest|descanso)\b/i.test(l.texto) || (!!detectarFormato(l.texto) && sinFormato.length < 3);
   out.ejercicios = out.esFormato ? [] : nombresEjercicio(l.texto);
   out.base = out.ejercicios.length ? levantamientoBase(out.ejercicios[0]) : null;
@@ -107,12 +112,13 @@ export function nombresEjercicio(texto) {
     .map(p => p
       .replace(/^\s*\d+(?:[.,]\d+)?\s*[’'"]?(?:\s*\/\s*\d+\s*[’'"]?)?\s*(?:m|km|cal|seg|s|min)?(?=\s|$)\s*/i, m => (/cal/i.test(m) ? 'Cal ' : ''))
       .replace(/^\s*x\s*lado\s*/i, '')
+      .replace(/^\s*(?:reps?|repes|repeticiones)\s+(?:de\s+)?/i, '')
       .replace(/\s+(?:por|x)\s+lado$/i, '')
       .replace(/\b\d+\s*x\s*\d+\b.*$/i, '')
       .replace(/[:]+$/, '')
       .replace(/\s+/g, ' ')
       .trim())
-    .map(p => ABREV[norm(p)] || p.split(' ').map(w => ABREV[norm(w)] || w).join(' '))
+    .map(p => ABREV[norm(p)] || p.split(' ').map(w => PALABRAS[norm(w)] || ABREV[norm(w)] || w).join(' '))
     .filter(p => p && /[a-záéíóúñ]{2}/i.test(p) && !/^(rest|descanso|rondas?|rounds?|bloques?)\b/i.test(p));
 }
 
@@ -137,10 +143,20 @@ export function detectarFormato(texto, lineas = []) {
   const estaciones = lineas.filter(l => l.estacion).map(l => l.texto.replace(/^\d+\)\s*/, ''));
   if ((m = t.match(/e(\d+)mom\s*(?:x\s*)?(\d+)/))) return { tipo: 'emom', intervalo: +m[1] * 60, total: +m[2] * 60, estaciones };
   if ((m = t.match(/emom\s*(?:x\s*)?(\d+)/))) return { tipo: 'emom', intervalo: 60, total: +m[1] * 60, estaciones };
+  // Varios AMRAP seguidos: "3 x AMRAP 5 min", "3 AMRAPs de 5'", "AMRAP 5 min x 3" (+ "2 min descanso")
+  const desc = t.match(/(\d+(?:[.,]\d+)?)\s*(?:min|')\s*(?:de\s*)?(?:rest|descanso)|(?:rest|descanso)\s*:?\s*(\d+(?:[.,]\d+)?)/);
+  const minDesc = desc ? parseFloat((desc[1] || desc[2]).replace(',', '.')) : 0;
+  if ((m = t.match(/(\d+)\s*(?:x\s*)?amraps?\s*(?:de\s*)?(\d+(?:[.,]\d+)?)/)) && +m[1] > 1) {
+    return { tipo: 'bloques', sub: 'amrap', rondas: +m[1], trabajo: parseFloat(m[2].replace(',', '.')) * 60, descanso: minDesc * 60 };
+  }
+  if ((m = t.match(/amrap\s*(\d+(?:[.,]\d+)?)\s*(?:min|')?\s*x\s*(\d+)/))) {
+    return { tipo: 'bloques', sub: 'amrap', rondas: +m[2], trabajo: parseFloat(m[1].replace(',', '.')) * 60, descanso: minDesc * 60 };
+  }
   if ((m = t.match(/amrap\s*(?:x\s*)?(\d+)/))) return { tipo: 'amrap', total: +m[1] * 60 };
   if (/tabata/.test(t)) return { tipo: 'intervalos', rondas: 8, trabajo: 20, descanso: 10 };
+  // "2 Bloques (12 min de trabajo + 3 min rest cada uno)": cada bloque es un For Time con límite
   if ((m = t.match(/(\d+)\s*bloques?\s*\(\s*(\d+)\s*min[^+]*\+\s*(\d+)\s*min/))) {
-    return { tipo: 'intervalos', rondas: +m[1], trabajo: +m[2] * 60, descanso: +m[3] * 60 };
+    return { tipo: 'bloques', sub: 'fortime', rondas: +m[1], trabajo: +m[2] * 60, descanso: +m[3] * 60 };
   }
   if (/for time|por tiempo/.test(t)) {
     const cap = t.match(/(?:time cap|cap|tc)\s*:?\s*(\d+)/);
@@ -153,8 +169,9 @@ export function detectarFormato(texto, lineas = []) {
 
 export function textoFormato(f) {
   if (!f) return '';
-  const min = s => `${Math.round(s / 60)} min`;
+  const min = s => (s % 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} min` : `${s / 60} min`);
   switch (f.tipo) {
+    case 'bloques': return `${f.rondas} × ${f.sub === 'fortime' ? 'For Time' : 'AMRAP'} ${min(f.trabajo)}${f.descanso ? ` (${min(f.descanso)} descanso)` : ''}`;
     case 'emom': return f.intervalo === 60 ? `EMOM ${min(f.total)}` : `E${f.intervalo / 60}MOM ${min(f.total)}`;
     case 'amrap': return `AMRAP ${min(f.total)}`;
     case 'intervalos': return f.trabajo === 20 && f.descanso === 10 ? 'Tabata' : `${f.rondas} × (${min(f.trabajo)} + ${min(f.descanso)} descanso)`;
