@@ -2,6 +2,7 @@
 import { html, render, useState, useEffect } from './lib.js';
 import { seed } from './db.js';
 import { copiaDiaria } from './copias.js';
+import { iniciarNube } from './nube.js';
 import { Icon } from './ui.js';
 import { Hoy } from './views/hoy.js';
 import { Despensa } from './views/despensa.js';
@@ -52,6 +53,9 @@ function App() {
     </nav>`;
 }
 
+// Al confirmar el correo de la nube, Supabase vuelve a la app con datos en la dirección: los quitamos
+if (/access_token|error_description/.test(location.hash)) history.replaceState(null, '', location.pathname);
+
 seed()
   .then(() => {
     // Quitamos el "Cargando…" inicial: si no, se queda pegado al final de cada pantalla
@@ -60,6 +64,7 @@ seed()
     render(html`<${App} />`, raiz);
     window.__arrancada = true;
     copiaDiaria(); // copia interna automática, una al día
+    iniciarNube(); // si has entrado con tu cuenta, sincroniza con la nube
   })
   .catch(e => {
     document.getElementById('app').innerHTML = `<p class="error" style="padding:24px">Error al iniciar: ${e.message}</p>`;

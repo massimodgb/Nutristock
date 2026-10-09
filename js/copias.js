@@ -8,6 +8,7 @@
 import { Dexie } from './lib.js';
 import { db, getSetting, setSetting, exportAll, importAll } from './db.js';
 import { todayStr } from './nutri.js';
+import { permitirBorradoMasivo } from './nube.js';
 
 // Base de datos aparte para las copias internas
 const respaldos = new Dexie('nutristock-respaldos');
@@ -97,6 +98,7 @@ export async function restaurarCopia(d) {
   const v = validarCopia(d);
   if (!v.ok) throw new Error('No se ha cambiado nada. ' + v.errores.join(' '));
   await copiaInterna('antes de restaurar');
+  permitirBorradoMasivo(); // lo que desaparezca al restaurar es a propósito: la nube también debe quitarlo
   await importAll(d);
   return v.resumen;
 }

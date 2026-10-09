@@ -86,6 +86,10 @@
     await prueba('Una copia con partes rotas se rechaza sin fallar', () => C.validarCopia({ app: 'nutristock', foods: [], logs: 'roto' }).ok === false);
     await prueba('Una copia buena se acepta', () => C.validarCopia({ app: 'nutristock', foods: [{ id: 'a', name: 'A' }], logs: [{ date: '2026-10-10', n: { kcal: 1 } }], weights: [] }).ok === true);
 
+    const Nb = await import('/js/nube.js');
+    await prueba('Nube: la huella no depende del orden de los datos', () => Nb.huella({ a: 1, b: { c: 2, d: [1, 2] } }) === Nb.huella({ b: { d: [1, 2], c: 2 }, a: 1 }));
+    await prueba('Nube: un cambio cambia la huella', () => Nb.huella({ g: 240 }) !== Nb.huella({ g: 241 }));
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;

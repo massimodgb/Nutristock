@@ -1,6 +1,7 @@
 // "Más": peso corporal, preferencias y copias de seguridad.
 import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getPrefs, setSetting } from '../db.js';
+import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar } from '../nube.js';
 import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
 import { Num, Toggle, Icon, Sheet, toast } from '../ui.js';
@@ -83,10 +84,58 @@ export function Mas({ go }) {
         </div>
       </section>
 
+      <${Nube} />
       <${TusDatos} persist=${persist} />
 
       <p class="muted small center">NutriStock · Fase 1</p>
     </div>`;
+}
+
+// ---------- Nube: tu cuenta y la sincronización ----------
+function Nube() {
+  const [e, setE] = useState(estadoNube());
+  const [email, setEmail] = useState('');
+  const [clave, setClave] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [trabajando, setTrabajando] = useState(false);
+  useEffect(() => escucharNube(setE), []);
+  const hace = e.ultima ? Math.round((Date.now() - new Date(e.ultima)) / 60000) : null;
+  const accion = async fn => {
+    setMsg(null); setTrabajando(true);
+    try { await fn(); } catch (err) { setMsg({ error: true, texto: err.message }); }
+    setTrabajando(false);
+  };
+
+  if (e.conectado) return html`
+    <section class="card form">
+      <h3>Nube</h3>
+      <div class=${'aviso ' + (e.error ? 'warn' : 'ok')}>
+        <span>${e.ocupado ? 'Sincronizando…' : e.error ? html`<b>No se pudo sincronizar.</b> ${e.error}`
+          : html`<b>Tus datos están guardados en la nube ✓</b> Última vez: ${hace == null ? '—' : hace < 1 ? 'ahora mismo' : hace < 60 ? `hace ${hace} min` : new Date(e.ultima).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.`}</span>
+      </div>
+      ${e.aviso && html`<p class="aviso warn small">${e.aviso}</p>`}
+      <p class="small muted">Cuenta: ${e.email}. Cada cambio se sube solo a los pocos segundos. Si cambias de móvil o se borra la app, entra con tu cuenta y se recupera todo.</p>
+      <button class="btn secondary" disabled=${e.ocupado} onClick=${() => sincronizar().then(r => r && toast('Sincronizado ✓'))}>Sincronizar ahora</button>
+      <button class="link small" onClick=${() => confirm('¿Salir de tu cuenta en este iPhone? Tus datos siguen aquí y en la nube.') && accion(salir)}>Salir de la cuenta</button>
+    </section>`;
+
+  return html`
+    <section class="card form">
+      <h3>Nube</h3>
+      <p class="small">Guarda una copia de todo en internet, sola y al momento. Así no pierdes nada aunque se borre la app o cambies de móvil.</p>
+      <label>Correo<input type="email" autocomplete="email" value=${email} onInput=${ev => setEmail(ev.target.value.trim())} /></label>
+      <label>Contraseña<input type="password" autocomplete="current-password" value=${clave} onInput=${ev => setClave(ev.target.value)} /></label>
+      ${msg && html`<p class=${msg.error ? 'error small' : 'aviso ok small'}>${msg.texto}</p>`}
+      <div class="grid2">
+        <button class="btn" disabled=${trabajando || !email || !clave} onClick=${() => accion(async () => { await entrar(email, clave); setClave(''); toast('Conectado ✓'); })}>Entrar</button>
+        <button class="btn secondary" disabled=${trabajando || !email || clave.length < 6} onClick=${() => accion(async () => {
+          const r = await crearCuenta(email, clave);
+          if (r === 'confirmar') setMsg({ texto: 'Cuenta creada. Te ha llegado un correo de Supabase: toca el enlace para confirmarlo y luego vuelve aquí y pulsa "Entrar".' });
+          else { setClave(''); toast('Conectado ✓'); }
+        })}>Crear cuenta</button>
+      </div>
+      <small class="muted">La primera vez pulsa "Crear cuenta" (contraseña de 6 caracteres o más). Después, siempre "Entrar".</small>
+    </section>`;
 }
 
 // ---------- Tus datos: copias y restauración ----------
