@@ -102,7 +102,7 @@ function unirLineas(lineas) {
 function analizarLinea(l) {
   const todo = `${l.texto} ${l.prescripcion || ''}`;
   const out = { ...l };
-  const sr = (l.prescripcion || l.texto).match(/\b(\d+)\s*x\s*(\d+)\b/i);
+  const sr = (l.prescripcion || l.texto).match(/\b(\d+)\s*(?:x|series?\s+de)\s*(\d+)\b/i);
   if (sr) { out.series = +sr[1]; out.reps = +sr[2]; }
   const rl = l.texto.match(/^\s*(?:\d+\)\s*)?(\d+)\s*(?:reps?|repes|x)?\s+[a-záéíóúñ]/i);
   if (rl && !sr) out.repsLinea = +rl[1];
@@ -128,6 +128,8 @@ function analizarLinea(l) {
 export function nombresEjercicio(texto) {
   return texto
     .replace(/^\d+\)\s*/, '')
+    // "5x3 Clean 75%" / "5 series de 3 clean": las series DELANTE del nombre se quitan sin borrar el nombre
+    .replace(/^\s*\d+\s*(?:x|series?\s+de)\s*\d+\s*/i, ' ')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/@\s*[\d.,]+\s*(kg|lb|%)?/gi, ' ')
     // "con 70kg", "a 70 kilos", "60/40kg": la carga no es parte del nombre
@@ -142,7 +144,7 @@ export function nombresEjercicio(texto) {
       .replace(/^\s*(?:reps?|repes|repeticiones)\s+(?:de\s+)?/i, '')
       .replace(/\s+(?:por|x)\s+lado$/i, '')
       .replace(/\b\d+\s*x\s*\d+\b.*$/i, '')
-      .replace(/[:]+$/, '')
+      .replace(/[:\s]+$/, '')
       .replace(/\s+/g, ' ')
       .trim())
     .map(p => ABREV[norm(p)] || p.split(' ').map(w => PALABRAS[norm(w)] || ABREV[norm(w)] || w).join(' '))

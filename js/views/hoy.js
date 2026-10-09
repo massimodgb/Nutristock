@@ -1,5 +1,5 @@
 // Pantalla "Hoy": resumen del día, avisos y registro de comidas según tu plan.
-import { html, useState, useMemo } from '../lib.js';
+import { html, useState, useMemo, useEffect } from '../lib.js';
 import {
   db, useLive, getSetting, setSetting, getPrefs, activePlan, stockMap, candidateIds,
   deductStock, restoreStock, deleteLog, round1,
@@ -10,6 +10,7 @@ import {
 } from '../nutri.js';
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast } from '../ui.js';
 import { COMIDAS_FUERA } from '../data/restaurantes.js';
+import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
 import { leer } from './entreno.js';
 import { estadoCompra, textoStock } from './stock.js';
 
@@ -444,7 +445,7 @@ function ExtraSheet({ foods, byId, stock, prefs, date, onDone }) {
       <${AmountForm} food=${sel} defaultG=${null} byId=${byId} stockG=${stock[sel.id]?.g || 0}
         onSave=${async r => { await saveLog({ ...r, date, mealId: 'extra', foods }); toast('Registrado ✓'); onDone(); }} />`;
   }
-  if (plato) return html`<${PlatoFuera} plato=${plato} date=${date} onBack=${() => setPlato(null)} onDone=${onDone} />`;
+  if (plato) return html`<${plato.por100 ? ProductoFuera : PlatoFuera} plato=${plato} date=${date} onBack=${() => setPlato(null)} onDone=${onDone} />`;
 
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const res = foods.filter(f => visibleFood(f, prefs) && norm(f.name + ' ' + (f.brand || '')).includes(norm(q))).slice(0, 40);
@@ -488,13 +489,20 @@ function BuscarFuera({ prefs, onElegir }) {
   const [q, setQ] = useState('');
   const propios = useLive(() => getSetting('fueraPropios', []), []) || [];
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const todos = [...propios.map(p => ({ ...p, propio: true })), ...COMIDAS_FUERA].filter(x => !(prefs.excluirMar && x.mar));
-  // Palabras que importan de lo que escribiste (sin "del bar de mi casa")
-  const palabras = norm(q).split(/[^a-z0-9ñ]+/).filter(w => w.length > 2 && !PALABRAS_VACIAS.has(w)).map(raiz);
+  const todos = [...propios.map(p => ({ ...p, propio: true })), ...COMIDAS_FUERA, ...COMIDAS_FUERA_2].filter(x => !(prefs.excluirMar && x.mar));
+  // Palabras que importan de lo que escribiste (sin "del bar de mi casa"), con sus sinónimos ("donas" = donut)
+  const originales = norm(q).split(/[^a-z0-9ñ]+/).filter(w => w.length > 2 && !PALABRAS_VACIAS.has(w));
+  const palabras = originales.map(raiz);
+  const variantes = originales.map(o => {
+    const w = raiz(o);
+    const sin = SINONIMOS[w] || SINONIMOS[o] || SINONIMOS[o.replace(/s$/, '')] || [];
+    return [w, ...sin.map(x => norm(x))];
+  });
   const puntuar = x => {
     const t = norm(`${x.n} ${x.m || ''}`);
-    return palabras.filter(w => t.includes(w)).length;
+    return variantes.filter(vs => vs.some(v => t.includes(v))).length;
   };
+  const enInternet = useInternet(q);
   const res = palabras.length
     ? todos.map(x => ({ x, p: puntuar(x) })).filter(r => r.p > 0)
       // más palabras coincidentes primero; a igualdad, los tuyos y los generales antes que las cadenas
@@ -517,6 +525,16 @@ function BuscarFuera({ prefs, onElegir }) {
           </button>`;
       })}
     </div>
+    ${enInternet.length > 0 && html`
+      <h4 class="group-title">Productos de supermercado (internet)</h4>
+      <div class="list">
+        ${enInternet.map(x => html`
+          <button class="row" onClick=${() => onElegir(x)}>
+            <span class="grow">${x.n}${x.m ? html` <span class="tag">${x.m}</span>` : ''}
+              <br /><small class="muted">${fmt(x.n100.kcal)} kcal por 100 g</small></span>
+            <${Icon} name="right" size=${16} />
+          </button>`)}
+      </div>`}
     ${texto && html`
       <div class="card tamanos">
         <p class="small"><b>${res.length ? '¿No es ninguno?' : 'No lo reconozco.'}</b> Elige el tamaño y te pongo un promedio:</p>
@@ -731,4 +749,59 @@ function PesoHoy({ date }) {
         toast('Peso guardado ✓');
       }}>Guardar</button>
     </section>`;
+}
+
+// Productos de supermercado de Open Food Facts (gratis): para lo que no está en la lista
+function useInternet(q) {
+  const [res, setRes] = useState([]);
+  useEffect(() => {
+    const t = q.trim();
+    if (t.length < 3 || !navigator.onLine) { setRes([]); return; }
+    let vivo = true;
+    const id = setTimeout(async () => {
+      try {
+        const url = 'https://world.openfoodfacts.org/cgi/search.pl?search_simple=1&action=process&json=1&page_size=12&lc=es'
+          + '&fields=product_name,product_name_es,brands,nutriments,serving_quantity&search_terms=' + encodeURIComponent(t);
+        const d = await (await fetch(url)).json();
+        const lista = (d.products || []).map(p => {
+          const nu = p.nutriments || {};
+          const kcal = nu['energy-kcal_100g'];
+          const nombre = (p.product_name_es || p.product_name || '').trim();
+          if (!nombre || kcal == null) return null;
+          return {
+            n: nombre, m: (p.brands || '').split(',')[0].trim(), por100: true,
+            n100: { kcal: +kcal, prot: +(nu.proteins_100g || 0), carb: +(nu.carbohydrates_100g || 0), fat: +(nu.fat_100g || 0) },
+            gramos: p.serving_quantity >= 10 ? Math.round(p.serving_quantity) : 100,
+          };
+        }).filter(Boolean).slice(0, 8);
+        if (vivo) setRes(lista);
+      } catch { if (vivo) setRes([]); }
+    }, 600);
+    return () => { vivo = false; clearTimeout(id); };
+  }, [q]);
+  return res;
+}
+
+// Producto con valores por 100 g: eliges cuántos gramos
+function ProductoFuera({ plato, date, onBack, onDone }) {
+  const [g, setG] = useState(plato.gramos || 100);
+  const t = k => ((plato.n100[k] || 0) * (g || 0)) / 100;
+  const n = { kcal: t('kcal'), prot: t('prot'), carb: t('carb'), fat: t('fat') };
+  return html`
+    <button class="link back" onClick=${onBack}>‹ Buscar otro</button>
+    <div class="form">
+      <h4>${plato.n}${plato.m ? html` <span class="tag">${plato.m}</span>` : ''}</h4>
+      <p class="muted small">Datos de la etiqueta (Open Food Facts): ${fmt(plato.n100.kcal)} kcal por 100 g.</p>
+      <label>¿Cuántos gramos?
+        <div class="chips">${[25, 50, 100, 150, 200].map(x => html`
+          <button class=${'chip' + (g === x ? ' on' : '')} onClick=${() => setG(x)}>${x} g</button>`)}</div>
+      </label>
+      <${Num} value=${g} onChange=${setG} suffix="g" />
+      <div class="estimacion"><b>≈ ${fmt(n.kcal)} kcal</b><small>P ${fmt(n.prot)} · C ${fmt(n.carb)} · G ${fmt(n.fat)}</small></div>
+      <button class="btn" disabled=${!g} onClick=${async () => {
+        await db.logs.add({ date, mealId: 'extra', name: `${plato.n}${plato.m ? ` · ${plato.m}` : ''} (${fmt(g)} g)`, g, n: sumN([n]), aprox: true, deducted: [], ts: Date.now() });
+        toast('Registrado ✓');
+        onDone();
+      }}>Registrar ≈ ${fmt(n.kcal)} kcal</button>
+    </div>`;
 }
