@@ -912,8 +912,9 @@ function WhoopHoy({ date, comido, isToday, go }) {
   if (!filas.length) return isToday ? html`<section class="card whoop"><small class="muted">Whoop: aún no hay datos de hoy.</small></section>` : null;
   const w = resumenWhoop(filas);
   const dato = (valor, texto, clase = '') => html`<div class=${'whoop-dato ' + clase}><b>${valor}</b><small>${texto}</small></div>`;
+  const verCruces = () => { try { sessionStorage.setItem('irA', 'cruces'); } catch {} go('progreso'); };
   return html`
-    <section class="card whoop">
+    <button class="card whoop" onClick=${verCruces}>
       <div class="whoop-fila">
         ${dato(w.recuperacion != null ? `${fmt(w.recuperacion)} %` : '—', 'recuperación', colorRecuperacion(w.recuperacion))}
         ${dato(w.horas != null ? `${fmt(w.horas, 1)} h` : '—', w.sueno != null ? `sueño ${fmt(w.sueno)} %` : 'sueño')}
@@ -922,5 +923,6 @@ function WhoopHoy({ date, comido, isToday, go }) {
       </div>
       ${w.kcal != null && comido > 0 && html`<small class="muted">Comido ${fmt(comido)} kcal frente a ${fmt(w.kcal)} gastadas según Whoop${w.enCurso ? ' (el día aún no ha terminado)' : ''}.</small>`}
       ${w.hrv != null && html`<small class="muted">VFC ${fmt(w.hrv)} ms · pulso en reposo ${fmt(w.fcReposo)}${w.entrenos.length ? ` · ${w.entrenos.map(e => `${e.deporte || 'entreno'} ${fmt(e.strain, 1)}`).join(', ')}` : ''}</small>`}
-    </section>`;
+      <small class="whoop-ver">Ver cómo se cruza con lo que comes ›</small>
+    </button>`;
 }

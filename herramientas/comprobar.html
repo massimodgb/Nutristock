@@ -109,6 +109,18 @@
       return r.recuperacion === 71 && r.horas === 7.5 && Math.round(r.kcal) === 3000 && r.enCurso === true || r;
     });
 
+    const Cr = await import('/js/cruces.js');
+    await prueba('Cruces: con menos de 8 días no saca conclusiones', () => Cr.compararMitades([{ x: 1, y: 50 }, { x: 2, y: 60 }]) === null);
+    await prueba('Cruces: separa días con más y menos carbos y compara la recuperación', () => {
+      const fechas = Array.from({ length: 10 }, (_, i) => `2026-10-${String(i + 2).padStart(2, '0')}`);
+      const comida = {}, whoop = {};
+      fechas.forEach((f, i) => { comida[`2026-10-${String(i + 1).padStart(2, '0')}`] = { n: { carb: i < 5 ? 100 : 250 } }; whoop[f] = { recuperacion: i < 5 ? 50 : 75 }; });
+      const pares = Cr.paresCruce({ fechas, comida, whoop, factor: Cr.FACTORES.find(f => f.id === 'carb') });
+      const c = Cr.compararMitades(pares);
+      return pares.length === 10 && c.umbral === 175 && c.alto.media === 75 && c.bajo.media === 50 || { pares, c };
+    });
+    await prueba('Cruces: la hora de la cena se escribe como hora', () => Cr.textoHora(22.5) === '22:30');
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;
