@@ -506,3 +506,8 @@ button.card.whoop { width: 100%; text-align: left; color: var(--text); }
 .supl-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; }
 .supl-chip small { opacity: .75; font-size: 12px; }
 .supl-dosis { max-width: 90px; }
+
+/* Mi lista: marcar y borrar cada cosa */
+.row.lista-item { gap: 6px; }
+.lista-marcar { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-align: left; color: var(--text); padding: 2px 0; }
+.btn.danger-text { color: var(--danger); }

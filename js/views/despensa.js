@@ -1,9 +1,9 @@
 // Despensa: stock por envases (comida y cosas de casa), básicos y lista de la compra.
 import { html, useState } from '../lib.js';
-import { db, useLive, getPrefs, resumenStock, slug, activePlan } from '../db.js';
-import { GROUPS, daysUntil, fmt, fmtG, todayStr, addDays } from '../nutri.js';
+import { db, useLive, getPrefs, getSetting, setSetting, resumenStock, slug, activePlan } from '../db.js';
+import { GROUPS, daysUntil, fmt, fmtG, todayStr, addDays, fmtDate } from '../nutri.js';
 import { necesidadesPlan, DIAS_HISTORIAL } from '../compra-plan.js';
-import { Sheet, Seg, Dot, Empty, Icon, toast } from '../ui.js';
+import { Sheet, Seg, Dot, Empty, Icon, Num, toast } from '../ui.js';
 import { Escaner, resolverCodigo, FoodForm, NoEncontrado, PegarEtiqueta } from './biblioteca.js';
 import { CantidadStock, FichaStock, textoStock, estadoCompra, plural, nombreEnvase } from './stock.js';
 
@@ -37,7 +37,13 @@ export function Despensa({ go }) {
       ${tab === 'compra' && html`<${Compra} ...${ctx} />`}
 
       <${Sheet} open=${sheet?.type === 'add'} onClose=${() => setSheet(null)} title="Añadir a la despensa">
-        ${sheet?.type === 'add' && html`<${AddStock} ...${ctx} food=${sheet.food} onDone=${() => setSheet(null)} />`}
+        ${sheet?.type === 'add' && html`<${AddStock} ...${ctx} food=${sheet.food} buscar=${sheet.buscar} sugerido=${sheet.sugerido} onDone=${async () => {
+          if (sheet.clave) await db.shopping.filter(s => s.clave === sheet.clave && !s.done).modify({ done: 1 });
+          setSheet(null);
+        }} />`}
+      <//>
+      <${Sheet} open=${sheet?.type === 'plan'} onClose=${() => setSheet(null)} title=${sheet?.item?.nombre}>
+        ${sheet?.type === 'plan' && html`<${SugerenciaPlan} item=${sheet.item} dias=${sheet.dias} shopping=${shopping} setSheet=${setSheet} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'food'} onClose=${() => setSheet(null)} title=${sheet?.food?.name}>
         ${sheet?.type === 'food' && html`<${FichaStock} food=${byId[sheet.food.id] || sheet.food} lots=${lots} onAdd=${() => setSheet({ type: 'add', food: byId[sheet.food.id] || sheet.food })} onQuitar=${() => setSheet(null)} />`}
@@ -85,11 +91,11 @@ function Stock({ foods, lots, setSheet }) {
       </details>`}`;
 }
 
-function AddStock({ foods, prefs, food: inicial, onDone }) {
+function AddStock({ foods, prefs, food: inicial, buscar: qInicial, sugerido, onDone }) {
   const [food, setFood] = useState(inicial || null);
   const [modo, setModo] = useState(inicial ? 'cantidad' : 'buscar'); // buscar | escanear | cargando | noencontrado | pegar | nuevo | cantidad
   const [nuevo, setNuevo] = useState(null);
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(qInicial || '');
 
   const buscar = async code => {
     setNuevo({ code });
@@ -119,7 +125,7 @@ function AddStock({ foods, prefs, food: inicial, onDone }) {
     return html`<${FoodForm} initial=${nuevo?.draft || { n: {} }} aviso=${nuevo?.aviso} foods=${foods}
       onSaved=${f => { setFood(f); setModo('cantidad'); }} onDone=${() => {}} />`;
   }
-  if (modo === 'cantidad' && food) return html`<${CantidadStock} food=${food} onDone=${onDone} />`;
+  if (modo === 'cantidad' && food) return html`<${CantidadStock} food=${food} sugerido=${food.id === inicial?.id ? sugerido : null} onDone=${onDone} />`;
 
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const res = foods.filter(f => (f.group === 'hogar' || !(prefs.excluirMar && f.mar)) && norm(`${f.name} ${f.brand || ''}`).includes(norm(q)))
@@ -165,37 +171,49 @@ function Basicos({ basicos }) {
 }
 
 // Compra para los próximos días según tu plan, menos lo que ya tienes
-function CompraPlan({ foods, lots, prefs, shopping }) {
+export const textoCompra = (x, g = x.falta) => fmtG(Math.round(g), x.food)
+  + (x.producto?.packG ? ` (≈ ${Math.max(1, Math.ceil(g / x.producto.packG))} ${plural(nombreEnvase(x.producto), Math.max(1, Math.ceil(g / x.producto.packG)))} de ${fmt(x.producto.packG)} g)` : '');
+
+function CompraPlan({ foods, lots, prefs, shopping, setSheet }) {
   const [dias, setDias] = useState(7);
   const [verTodo, setVerTodo] = useState(false);
+  const [verQuitados, setVerQuitados] = useState(false);
+  const ocultos = useLive(() => getSetting('compraOculta', {}), []);
   const desde = addDays(todayStr(), -DIAS_HISTORIAL);
   const plan = useLive(() => activePlan().then(p => p || null), []);
   const logs = useLive(() => db.logs.where('date').aboveOrEqual(desde).toArray(), [desde]);
   const elecciones = useLive(() => db.settings.where('key').startsWith('opciones:').toArray()
     .then(r => r.filter(x => x.key.slice(9) >= desde).map(x => ({ date: x.key.slice(9), v: x.value }))), [desde]);
-  if ([plan, logs, elecciones].includes(undefined)) return null;
+  if ([plan, logs, elecciones, ocultos].includes(undefined)) return null;
   if (!plan) return html`<section class="card"><h3>Para tu plan</h3><p class="muted small">Carga tu plan en Más → Mi plan y aquí verás qué comprar para la semana.</p></section>`;
 
+  const hoy = todayStr();
+  const quitado = x => ocultos[x.clave] && ocultos[x.clave] >= hoy; // quitado hasta esa fecha
   const lista = necesidadesPlan({ plan, foods, lots, logs, elecciones, prefs, dias });
-  const faltan = lista.filter(x => x.falta >= 1);
+  const quitados = lista.filter(x => x.falta >= 1 && quitado(x));
+  const faltan = lista.filter(x => x.falta >= 1 && !quitado(x));
   const tienes = lista.filter(x => x.falta < 1);
   const cantidad = (g, food) => fmtG(Math.round(g), food);
-  const textoFalta = x => cantidad(x.falta, x.food) + (x.envases ? ` (≈ ${x.envases} ${x.envases === 1 ? nombreEnvase(x.producto) : plural(nombreEnvase(x.producto), x.envases)} de ${fmt(x.producto.packG)} g)` : '');
+  const enLista = x => shopping.some(s => s.clave === x.clave && !s.done);
   const anadir = async () => {
-    // Quita lo que se añadió antes desde aquí (sin marcar) para no repetir
-    await db.transaction('rw', db.shopping, async () => {
-      await db.shopping.filter(s => s.dePlan && !s.done).delete();
-      await db.shopping.bulkAdd(faltan.map(x => ({ name: `${x.nombre}: ${textoFalta(x)}`, done: 0, dePlan: 1 })));
-    });
-    toast(`${faltan.length} cosas añadidas a Mi lista ✓`);
+    // Solo lo que aún no está en tu lista (sin repetir)
+    const nuevos = faltan.filter(x => !enLista(x));
+    await db.shopping.bulkAdd(nuevos.map(x => ({ name: `${x.nombre}: ${textoCompra(x)}`, done: 0, dePlan: 1, clave: x.clave })));
+    toast(nuevos.length ? `${nuevos.length} cosas añadidas a Mi lista ✓` : 'Ya estaba todo en Mi lista');
+  };
+  const volver = async x => {
+    const o = { ...ocultos };
+    delete o[x.clave];
+    await setSetting('compraOculta', o);
   };
   const fila = x => html`
-    <div class="row" key=${x.clave}>
+    <button class="row" key=${x.clave} onClick=${() => setSheet({ type: 'plan', item: x, dias })}>
       <${Dot} group=${x.group} />
       <span class="grow">${x.nombre}<br />
         <small class="muted">tu plan pide ${cantidad(x.necesita, x.food)} · tienes ${x.hay ? cantidad(x.hay, x.food) : 'nada'}</small></span>
-      ${x.falta >= 1 ? html`<span class="tag warn">comprar ${textoFalta(x)}</span>` : html`<span class="tag ok">tienes ✓</span>`}
-    </div>`;
+      ${x.falta >= 1 ? html`<span class=${'tag ' + (enLista(x) ? 'ok' : 'warn')}>${enLista(x) ? 'en tu lista' : `comprar ${textoCompra(x)}`}</span>` : html`<span class="tag ok">tienes ✓</span>`}
+      <${Icon} name="right" size=${14} />
+    </button>`;
 
   return html`
     <section class="card list">
@@ -204,7 +222,16 @@ function CompraPlan({ foods, lots, prefs, shopping }) {
       <p class="muted small">Lo que pide tu plan para los próximos ${dias} días menos lo que ya tienes en casa. Usa lo que sueles comer de verdad (últimas 4 semanas). Cantidades en crudo, como se compran.</p>
       ${!faltan.length && html`<p class="aviso ok small">Tienes todo lo que pide tu plan para estos días ✓</p>`}
       ${faltan.map(fila)}
-      ${faltan.length > 0 && html`<button class="btn" onClick=${anadir}>Añadir lo que falta a Mi lista</button>`}
+      ${faltan.length > 0 && html`
+        <p class="muted small">Toca uno para decir que ya lo compraste, cambiar la cantidad o quitarlo.</p>
+        <button class="btn" onClick=${anadir}>Añadir todo lo que falta a Mi lista</button>`}
+      ${quitados.length > 0 && html`
+        <button class="link small" onClick=${() => setVerQuitados(!verQuitados)}>${verQuitados ? 'Ocultar' : 'Ver'} lo que quitaste (${quitados.length})</button>
+        ${verQuitados && quitados.map(x => html`
+          <div class="row" key=${x.clave}>
+            <${Dot} group=${x.group} /><span class="grow muted">${x.nombre}<br /><small>quitado hasta el ${fmtDate(ocultos[x.clave], { day: 'numeric', month: 'short' })}</small></span>
+            <button class="btn small secondary" onClick=${() => volver(x)}>Volver a sugerir</button>
+          </div>`)}`}
       ${tienes.length > 0 && html`
         <button class="link small" onClick=${() => setVerTodo(!verTodo)}>${verTodo ? 'Ocultar' : 'Ver'} lo que ya tienes (${tienes.length})</button>
         ${verTodo && tienes.map(fila)}`}
@@ -221,7 +248,7 @@ function Compra({ foods, lots, basicos, shopping, prefs, setSheet }) {
     setNuevo('');
   };
   return html`
-    <${CompraPlan} foods=${foods} lots=${lots} prefs=${prefs} shopping=${shopping} />
+    <${CompraPlan} foods=${foods} lots=${lots} prefs=${prefs} shopping=${shopping} setSheet=${setSheet} />
     <section class="card list">
       <h3 class="group-title">Automático</h3>
       ${!auto.length && !faltan.length && html`<p class="muted small">Nada por ahora. En cada producto de tu despensa puedes elegir "Avisar cuando queden X" y "comprar Y": cuando baje, aparecerá aquí solo.</p>`}
@@ -245,10 +272,50 @@ function Compra({ foods, lots, basicos, shopping, prefs, setSheet }) {
         <button class="btn small" onClick=${add}>Añadir</button>
       </div>
       ${shopping.map(s => html`
-        <button class=${'row' + (s.done ? ' done' : '')} key=${s.id} onClick=${() => db.shopping.update(s.id, { done: s.done ? 0 : 1 })}>
-          <span class=${'check' + (s.done ? ' on' : '')}></span><span class="grow">${s.name}</span>
-        </button>`)}
+        <div class=${'row lista-item' + (s.done ? ' done' : '')} key=${s.id}>
+          <button class="lista-marcar" aria-pressed=${!!s.done} onClick=${() => db.shopping.update(s.id, { done: s.done ? 0 : 1 })}>
+            <span class=${'check' + (s.done ? ' on' : '')}></span><span class="grow">${s.name}</span>
+          </button>
+          <button class="icon-btn" aria-label=${'Borrar ' + s.name} onClick=${() => db.shopping.delete(s.id)}><${Icon} name="trash" size=${15} /></button>
+        </div>`)}
       ${shopping.some(s => s.done) && html`
         <button class="link" onClick=${() => db.shopping.where('done').equals(1).delete()}>Borrar comprados</button>`}
     </section>`;
+}
+
+// Una sugerencia del plan: qué quieres hacer con ella
+function SugerenciaPlan({ item: x, dias, shopping, setSheet }) {
+  const [g, setG] = useState(Math.round(x.falta));
+  const enLista = shopping.find(s => s.clave === x.clave && !s.done);
+  const comprado = () => {
+    // Si ya sabemos qué producto compras (con su envase), vamos directos a cuántos; si no, a elegirlo o escanearlo
+    const p = x.producto;
+    if (p) setSheet({ type: 'add', food: p, sugerido: Math.max(1, Math.ceil(g / p.packG)), clave: x.clave });
+    else setSheet({ type: 'add', buscar: x.lista ? '' : x.nombre, clave: x.clave });
+  };
+  const aLista = async () => {
+    const name = `${x.nombre}: ${textoCompra(x, g)}`;
+    if (enLista) await db.shopping.update(enLista.id, { name });
+    else await db.shopping.add({ name, done: 0, dePlan: 1, clave: x.clave });
+    toast(enLista ? 'Cantidad cambiada en Mi lista ✓' : 'Añadido a Mi lista ✓');
+    setSheet(null);
+  };
+  const quitar = async () => {
+    const o = { ...(await getSetting('compraOculta', {})), [x.clave]: addDays(todayStr(), dias - 1) };
+    await setSetting('compraOculta', o);
+    if (enLista) await db.shopping.delete(enLista.id);
+    toast(`${x.nombre}: quitado de las sugerencias`);
+    setSheet(null);
+  };
+  return html`
+    <div class="form">
+      <p class="small">Tu plan pide <b>${fmtG(Math.round(x.necesita), x.food)}</b> para los próximos ${dias} días. Tienes ${x.hay ? fmtG(Math.round(x.hay), x.food) : 'nada'}, así que faltan <b>${fmtG(Math.round(x.falta), x.food)}</b> (en crudo).</p>
+      <button class="btn" onClick=${comprado}><${Icon} name="check" size=${18} /> Ya lo he comprado: añadir a la despensa</button>
+      <small class="muted">${x.producto ? `Se añade como ${x.producto.name}. Puedes cambiar cuántos ${plural(nombreEnvase(x.producto), 2)}.` : x.lista ? 'Elige qué compraste (por ejemplo, brócoli o calabacín) o escanéalo.' : 'Elige tu producto o escanéalo.'}</small>
+      <label>¿Cuánto vas a comprar?<${Num} value=${g} onChange=${v => setG(v || 0)} suffix="g" /></label>
+      <div class="chips">${[0.5, 1, 1.5].map(f => html`<button class=${'chip' + (g === Math.round(x.falta * f) ? ' on' : '')} onClick=${() => setG(Math.round(x.falta * f))}>${f === 1 ? 'Lo que falta' : f === 0.5 ? 'La mitad' : '50 % más'}</button>`)}</div>
+      <button class="btn secondary" disabled=${!g} onClick=${aLista}>${enLista ? 'Cambiar la cantidad en Mi lista' : 'Añadir a Mi lista'}${g ? ` (${textoCompra(x, g)})` : ''}</button>
+      <button class="btn secondary danger-text" onClick=${quitar}>No lo voy a comprar: quitar de las sugerencias</button>
+      <small class="muted">Lo quita durante estos ${dias} días. Puedes volver a verlo en "Lo que quitaste".</small>
+    </div>`;
 }

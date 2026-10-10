@@ -62,11 +62,11 @@ export async function anadirStock(food, { envases = 0, abiertoG = null, g = null
 
 // Formulario para añadir stock de un producto: todo en una pantalla.
 // 1) peso de cada envase (si el escáner lo sabe, ya viene puesto)  2) cuántos sin abrir  3) uno ya abierto
-export function CantidadStock({ food, onDone }) {
+export function CantidadStock({ food, onDone, sugerido }) {
   const hogar = esHogar(food);
   const [packG, setPackG] = useState(food.packG || null);
   const [envNombre, setEnvNombre] = useState(food.envase || '');
-  const [envases, setEnvases] = useState(food.comprar || 1);
+  const [envases, setEnvases] = useState(sugerido || food.comprar || 1);
   const [hayAbierto, setHayAbierto] = useState(false);
   const [abiertoG, setAbiertoG] = useState(null);
   const [expiry, setExpiry] = useState('');
