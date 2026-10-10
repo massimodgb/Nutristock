@@ -14,8 +14,9 @@ const APP = 'https://massimodgb.github.io/Nutristock/';
 const SCOPES = 'offline read:recovery read:cycles read:sleep read:workout read:profile read:body_measurement';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const REDIRECT = `${SUPABASE_URL}/functions/v1/whoop`;
-const CLIENT_ID = Deno.env.get('WHOOP_CLIENT_ID') || '';
-const CLIENT_SECRET = Deno.env.get('WHOOP_CLIENT_SECRET') || '';
+// .trim(): por si al pegar los secretos se coló un espacio o un salto de línea
+const CLIENT_ID = (Deno.env.get('WHOOP_CLIENT_ID') || '').trim();
+const CLIENT_SECRET = (Deno.env.get('WHOOP_CLIENT_SECRET') || '').trim();
 // Llave del servidor: la nueva (SUPABASE_SECRET_KEYS, un diccionario) o la antigua (service_role)
 function llaveServidor() {
   try {
@@ -34,15 +35,28 @@ const CORS = {
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
-const volver = (estado: string) => Response.redirect(`${APP}whoop.html?estado=${estado}`, 302);
+const volver = (estado: string, detalle = '') =>
+  Response.redirect(`${APP}whoop.html?estado=${estado}${detalle ? '&detalle=' + encodeURIComponent(detalle) : ''}`, 302);
 
+// Whoop admite dos formas de presentar la app: en el cuerpo o en una cabecera "Basic". Probamos las dos.
 async function pedirLlaves(params: Record<string, string>) {
-  const r = await fetch(`${WHOOP}/oauth/oauth2/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, ...params }),
-  });
-  if (!r.ok) throw new Error(`Whoop no dio las llaves (${r.status}): ${await r.text()}`);
+  const url = `${WHOOP}/oauth/oauth2/token`;
+  const form = { 'Content-Type': 'application/x-www-form-urlencoded' };
+  let r = await fetch(url, { method: 'POST', headers: form,
+    body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, ...params }) });
+  if (r.status === 401) {
+    r = await fetch(url, { method: 'POST',
+      headers: { ...form, Authorization: 'Basic ' + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`) },
+      body: new URLSearchParams({ client_id: CLIENT_ID, ...params }) });
+  }
+  if (!r.ok) {
+    const txt = await r.text();
+    let codigo = String(r.status);
+    try { codigo = JSON.parse(txt).error || codigo; } catch { /* no era JSON */ }
+    const e = new Error(`Whoop no dio las llaves (${r.status}): ${txt}`);
+    (e as any).codigo = codigo;
+    throw e;
+  }
   return await r.json();
 }
 
@@ -113,8 +127,8 @@ Deno.serve(async req => {
       await guardarLlaves(st.user_id, t);
       return volver('ok');
     } catch (e) {
-      console.error(e);
-      return volver('error');
+      console.error(e, `client_id: ${CLIENT_ID.length} caracteres, secret: ${CLIENT_SECRET.length} caracteres`);
+      return volver('error', (e as any).codigo || '');
     }
   }
 

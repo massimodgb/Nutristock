@@ -24,7 +24,8 @@
       error: ['Algo falló', 'Whoop no aceptó la conexión. Vuelve a intentarlo; si se repite, haz una captura para Claude.'],
     }[e] || ['Whoop', ''];
     document.getElementById('t').textContent = txt[0];
-    document.getElementById('m').textContent = txt[1];
+    const det = new URLSearchParams(location.search).get('detalle');
+    document.getElementById('m').textContent = txt[1] + (det ? ` (motivo: ${det})` : '');
   </script>
 </body>
 </html>
