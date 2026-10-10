@@ -7,6 +7,11 @@ import { GROUPS, fmt, parseNum } from './nutri.js';
 // Para que en el iPhone SIEMPRE se cierre: se cierra al levantar el dedo (pointerup), sin esperar al "clic",
 // y se apunta la hora del cierre para que el toque no "atraviese" y vuelva a abrir lo que había debajo.
 export const hojaRecienCerrada = () => Date.now() - (window.__hojaCerrada || 0) < 700;
+// En el iPhone, el "clic" que sigue al levantar el dedo cae sobre lo que había debajo de la hoja ya cerrada
+// (otro producto de la lista, una pestaña de abajo…). Lo anulamos en TODA la app.
+document.addEventListener('click', e => {
+  if (hojaRecienCerrada()) { e.preventDefault(); e.stopPropagation(); }
+}, true);
 
 export function Sheet({ open, onClose, title, children, actions }) {
   useEffect(() => {
