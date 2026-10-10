@@ -90,6 +90,13 @@
     await prueba('Nube: la huella no depende del orden de los datos', () => Nb.huella({ a: 1, b: { c: 2, d: [1, 2] } }) === Nb.huella({ b: { d: [1, 2], c: 2 }, a: 1 }));
     await prueba('Nube: un cambio cambia la huella', () => Nb.huella({ g: 240 }) !== Nb.huella({ g: 241 }));
 
+    const CP = await import('/js/compra-plan.js');
+    const planMini = { comidas: [{ id: 'comida', bloques: [{ id: 'proteina', alimentos: [{ f: 'pollo-pechuga', g: 240 }] }] }], listas: {} };
+    await prueba('Compra del plan: 240 g de pollo cocido × 7 días = 2,24 kg crudo; con 1 kg en casa faltan 1,24 kg', () => {
+      const r = CP.necesidadesPlan({ plan: planMini, foods: FOODS, lots: [{ foodId: 'pollo-pechuga', g: 1000 }], dias: 7 })[0];
+      return Math.round(r.necesita) === 2240 && Math.round(r.falta) === 1240 || r;
+    });
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;

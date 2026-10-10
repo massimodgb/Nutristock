@@ -1,7 +1,8 @@
 // Despensa: stock por envases (comida y cosas de casa), básicos y lista de la compra.
 import { html, useState } from '../lib.js';
-import { db, useLive, getPrefs, resumenStock, slug } from '../db.js';
-import { GROUPS, daysUntil } from '../nutri.js';
+import { db, useLive, getPrefs, resumenStock, slug, activePlan } from '../db.js';
+import { GROUPS, daysUntil, fmt, fmtG, todayStr, addDays } from '../nutri.js';
+import { necesidadesPlan, DIAS_HISTORIAL } from '../compra-plan.js';
 import { Sheet, Seg, Dot, Empty, Icon, toast } from '../ui.js';
 import { Escaner, resolverCodigo, FoodForm, NoEncontrado, PegarEtiqueta } from './biblioteca.js';
 import { CantidadStock, FichaStock, textoStock, estadoCompra, plural, nombreEnvase } from './stock.js';
@@ -163,7 +164,54 @@ function Basicos({ basicos }) {
     </section>`;
 }
 
-function Compra({ foods, lots, basicos, shopping, setSheet }) {
+// Compra para los próximos días según tu plan, menos lo que ya tienes
+function CompraPlan({ foods, lots, prefs, shopping }) {
+  const [dias, setDias] = useState(7);
+  const [verTodo, setVerTodo] = useState(false);
+  const desde = addDays(todayStr(), -DIAS_HISTORIAL);
+  const plan = useLive(() => activePlan().then(p => p || null), []);
+  const logs = useLive(() => db.logs.where('date').aboveOrEqual(desde).toArray(), [desde]);
+  const elecciones = useLive(() => db.settings.where('key').startsWith('opciones:').toArray()
+    .then(r => r.filter(x => x.key.slice(9) >= desde).map(x => ({ date: x.key.slice(9), v: x.value }))), [desde]);
+  if ([plan, logs, elecciones].includes(undefined)) return null;
+  if (!plan) return html`<section class="card"><h3>Para tu plan</h3><p class="muted small">Carga tu plan en Más → Mi plan y aquí verás qué comprar para la semana.</p></section>`;
+
+  const lista = necesidadesPlan({ plan, foods, lots, logs, elecciones, prefs, dias });
+  const faltan = lista.filter(x => x.falta >= 1);
+  const tienes = lista.filter(x => x.falta < 1);
+  const cantidad = (g, food) => fmtG(Math.round(g), food);
+  const textoFalta = x => cantidad(x.falta, x.food) + (x.envases ? ` (≈ ${x.envases} ${x.envases === 1 ? nombreEnvase(x.producto) : plural(nombreEnvase(x.producto), x.envases)} de ${fmt(x.producto.packG)} g)` : '');
+  const anadir = async () => {
+    // Quita lo que se añadió antes desde aquí (sin marcar) para no repetir
+    await db.transaction('rw', db.shopping, async () => {
+      await db.shopping.filter(s => s.dePlan && !s.done).delete();
+      await db.shopping.bulkAdd(faltan.map(x => ({ name: `${x.nombre}: ${textoFalta(x)}`, done: 0, dePlan: 1 })));
+    });
+    toast(`${faltan.length} cosas añadidas a Mi lista ✓`);
+  };
+  const fila = x => html`
+    <div class="row" key=${x.clave}>
+      <${Dot} group=${x.group} />
+      <span class="grow">${x.nombre}<br />
+        <small class="muted">tu plan pide ${cantidad(x.necesita, x.food)} · tienes ${x.hay ? cantidad(x.hay, x.food) : 'nada'}</small></span>
+      ${x.falta >= 1 ? html`<span class="tag warn">comprar ${textoFalta(x)}</span>` : html`<span class="tag ok">tienes ✓</span>`}
+    </div>`;
+
+  return html`
+    <section class="card list">
+      <h3 class="group-title">Para tu plan</h3>
+      <${Seg} value=${dias} onChange=${setDias} options=${[3, 5, 7, 14].map(d => ({ value: d, label: `${d} días` }))} />
+      <p class="muted small">Lo que pide tu plan para los próximos ${dias} días menos lo que ya tienes en casa. Usa lo que sueles comer de verdad (últimas 4 semanas). Cantidades en crudo, como se compran.</p>
+      ${!faltan.length && html`<p class="aviso ok small">Tienes todo lo que pide tu plan para estos días ✓</p>`}
+      ${faltan.map(fila)}
+      ${faltan.length > 0 && html`<button class="btn" onClick=${anadir}>Añadir lo que falta a Mi lista</button>`}
+      ${tienes.length > 0 && html`
+        <button class="link small" onClick=${() => setVerTodo(!verTodo)}>${verTodo ? 'Ocultar' : 'Ver'} lo que ya tienes (${tienes.length})</button>
+        ${verTodo && tienes.map(fila)}`}
+    </section>`;
+}
+
+function Compra({ foods, lots, basicos, shopping, prefs, setSheet }) {
   const [nuevo, setNuevo] = useState('');
   const auto = foods.map(f => ({ f, e: estadoCompra(f, lots) })).filter(x => x.e.necesita);
   const faltan = basicos.filter(b => b.status !== 'tengo');
@@ -173,6 +221,7 @@ function Compra({ foods, lots, basicos, shopping, setSheet }) {
     setNuevo('');
   };
   return html`
+    <${CompraPlan} foods=${foods} lots=${lots} prefs=${prefs} shopping=${shopping} />
     <section class="card list">
       <h3 class="group-title">Automático</h3>
       ${!auto.length && !faltan.length && html`<p class="muted small">Nada por ahora. En cada producto de tu despensa puedes elegir "Avisar cuando queden X" y "comprar Y": cuando baje, aparecerá aquí solo.</p>`}
