@@ -84,7 +84,23 @@
     const C = await import('/js/copias.js');
     await prueba('Una copia dañada NO se acepta', () => C.validarCopia({ app: 'otra' }).ok === false);
     await prueba('Una copia con partes rotas se rechaza sin fallar', () => C.validarCopia({ app: 'nutristock', foods: [], logs: 'roto' }).ok === false);
-    await prueba('Una copia buena se acepta', () => C.validarCopia({ app: 'nutristock', foods: [{ id: 'a', name: 'A' }], logs: [{ date: '2026-10-10', n: { kcal: 1 } }], weights: [] }).ok === true);
+    const copiaBuena = () => ({ app: 'nutristock', version: 1, foods: [{ id: 'a', name: 'A' }], lots: [{ id: 1, foodId: 'a', g: 100 }], basicos: [], shopping: [], plans: [{ id: 'p1' }],
+      logs: [{ id: 5, date: '2026-10-10', foodId: 'a', n: { kcal: 1 } }], weights: [{ date: '2026-10-10', kg: 84 }], settings: [{ key: 'planActivo', value: 'p1' }], workouts: [], marcas: [], ejercicios: [], whoop: [] });
+    await prueba('Una copia buena (completa) se acepta', () => C.validarCopia(copiaBuena()).ok === true || C.validarCopia(copiaBuena()).errores);
+    await prueba('Una copia INCOMPLETA (sin planes) se rechaza', () => { const d = copiaBuena(); delete d.plans; return C.validarCopia(d).ok === false; });
+    await prueba('Una copia con datos repetidos o sin identificador se rechaza', () => { const d = copiaBuena(); d.logs.push({ id: 5, date: '2026-10-11', n: {} }); const e = copiaBuena(); e.weights.push({ kg: 80 }); return !C.validarCopia(d).ok && !C.validarCopia(e).ok; });
+    await prueba('Una copia antigua sin Whoop se acepta y avisa (no se toca Whoop)', () => { const d = copiaBuena(); delete d.whoop; const v = C.validarCopia(d); return v.ok && v.avisos.length > 0 || v; });
+    const Nb2 = await import('/js/nube.js');
+    await prueba('Nube: perder los 3 pesos o 1 de 2 planes se detecta (tablas pequeñas)', () => {
+      const p1 = Nb2.detectarPerdidas(['weights|a', 'weights|b', 'weights|c', 'logs|1'], ['logs|1']);
+      const p2 = Nb2.detectarPerdidas(['plans|x', 'plans|y'], ['plans|y']);
+      return p1.some(x => x.tabla === 'weights') && p2.some(x => x.tabla === 'plans') || { p1, p2 };
+    });
+    await prueba('Nube: borrar 2 comidas de 100 o cosas de la lista NO se toma como pérdida', () =>
+      Nb2.detectarPerdidas([...Array(100)].map((_, i) => 'logs|' + i).concat(['shopping|1', 'shopping|2']), [...Array(98)].map((_, i) => 'logs|' + i)).length === 0);
+    await prueba('Nube: lo de fábrica (básicos, ajustes) no cuenta como datos tuyos', () => Nb2.filasPropias(['basicos|sal', 'settings|prefs', 'logs|1']) === 1);
+    const D = await import('/js/db.js');
+    await prueba('Registros nuevos: números únicos y crecientes', () => { const a = D.nuevoId(), b = D.nuevoId(), c = D.nuevoId(); return a < b && b < c && a > 1e15 || [a, b, c]; });
 
     const Nb = await import('/js/nube.js');
     await prueba('Nube: la huella no depende del orden de los datos', () => Nb.huella({ a: 1, b: { c: 2, d: [1, 2] } }) === Nb.huella({ b: { d: [1, 2], c: 2 }, a: 1 }));

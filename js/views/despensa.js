@@ -71,8 +71,8 @@ function Stock({ foods, lots, setSheet }) {
   const acabados = foods.filter(f => !conStock.has(f.id) && (f.aviso != null || f.minG));
   if (!items.length && !acabados.length) return html`
     <${Empty}>
-      Tu despensa está vacía.<br />Toca <b>+</b> para añadir tu compra: escanea los productos o elígelos de tu biblioteca.
-      También puedes añadir cosas de casa (toallitas, papel, detergente…).
+      Tu despensa está vacía. Escanea los productos o elígelos de tu biblioteca; también cosas de casa (toallitas, papel…).
+      <br /><button class="btn" style=${{ marginTop: '12px' }} onClick=${() => setSheet({ type: 'add' })}><${Icon} name="plus" size=${18} /> Añadir mi primera compra</button>
     <//>`;
   const grupos = Object.keys(GROUPS).filter(g => items.some(f => (f.group || 'otro') === g));
   return html`${grupos.map(g => html`

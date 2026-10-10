@@ -25,7 +25,7 @@
     --bg: #000000;
     --card: #1c1c1e;
     --text: #f2f2f7;
-    --muted: #8e8e93;
+    --muted: #a1a1a8; /* algo más claro que el gris de iOS: se lee mejor en oscuro */
     --line: #2c2c2e;
     --fill: #2c2c2e;
     --accent: #22c55e;
@@ -548,3 +548,8 @@ button.card.whoop { width: 100%; text-align: left; color: var(--text); }
 .semana-punto.parcial { background: var(--accent); opacity: .5; }
 .semana-punto.pegado { border: 2px solid var(--accent); box-sizing: border-box; }
 .evolucion .pg-pt { cursor: pointer; }
+
+/* Más agrupado por secciones */
+.mas-grupo { font-size: 13px; font-weight: 600; color: var(--muted); margin: 10px 4px -4px; letter-spacing: .02em; }
+/* Hoy: la fecha se ve como algo que se puede tocar */
+.top-title .fecha-txt { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); }

@@ -1,6 +1,6 @@
 // Service worker: permite abrir la app sin conexión (en el súper sin cobertura, por ejemplo).
 // Cambia VERSION cada vez que publiques cambios para que el iPhone descargue lo nuevo.
-const VERSION = 'v30';
+const VERSION = 'v31';
 const CACHE = 'nutristock-' + VERSION;
 const LOCAL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',

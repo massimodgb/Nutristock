@@ -28,13 +28,17 @@ function llaveServidor() {
 }
 const admin = createClient(SUPABASE_URL, llaveServidor(), { auth: { persistSession: false } });
 
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
+// Solo la app publicada puede llamar a esta función desde el navegador (la sesión se comprueba igualmente dentro)
+const ORIGENES = ['https://massimodgb.github.io'];
+let origenActual = ORIGENES[0];
+const cors = () => ({
+  'Access-Control-Allow-Origin': origenActual,
+  'Vary': 'Origin',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
-};
+});
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } });
+  new Response(JSON.stringify(body), { status, headers: { ...cors(), 'Content-Type': 'application/json' } });
 const volver = (estado: string, detalle = '') =>
   Response.redirect(`${APP}whoop.html?estado=${estado}${detalle ? '&detalle=' + encodeURIComponent(detalle) : ''}`, 302);
 
@@ -111,7 +115,9 @@ async function uno(token: string, ruta: string) {
 }
 
 Deno.serve(async req => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  const o = req.headers.get('Origin') || '';
+  origenActual = ORIGENES.includes(o) ? o : ORIGENES[0];
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors() });
   const url = new URL(req.url);
 
   // ---- Vuelta desde Whoop ----

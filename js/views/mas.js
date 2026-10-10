@@ -1,7 +1,7 @@
 // "Más": peso corporal, preferencias y copias de seguridad.
 import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getPrefs, setSetting } from '../db.js';
-import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar } from '../nube.js';
+import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar, decidirNube, nombreTabla } from '../nube.js';
 import { listaSupl, guardarListaSupl, idSupl } from '../suplementos.js';
 import { estadoWhoop, conectarWhoop, comprobarWhoop, desconectarWhoop, sincronizarWhoop } from '../whoop.js';
 import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
@@ -32,21 +32,26 @@ export function Mas({ go }) {
     <div class="page">
       <header class="top"><h1>Más</h1></header>
 
+      <h2 class="mas-grupo">Mi seguimiento</h2>
       <section class="card list">
-        <button class="row" onClick=${() => go('guia')}>
-          <${Icon} name="check" /><span class="grow"><b>Cómo se usa (guías)</b></span><${Icon} name="right" size=${18} />
-        </button>
         <button class="row" onClick=${() => go('informes')}>
           <${Icon} name="plan" /><span class="grow"><b>Informes</b> para nutricionista y entrenadora</span><${Icon} name="right" size=${18} />
         </button>
+        <button class="row" onClick=${() => go('perfil')}>
+          <${Icon} name="chart" /><span class="grow">Perfil y objetivo</span><${Icon} name="right" size=${18} />
+        </button>
+        <button class="row" onClick=${() => go('guia')}>
+          <${Icon} name="check" /><span class="grow">Cómo se usa (guías)</span><${Icon} name="right" size=${18} />
+        </button>
+      </section>
+
+      <h2 class="mas-grupo">Plan y bibliotecas</h2>
+      <section class="card list">
         <button class="row" onClick=${() => go('ideas')}>
           <${Icon} name="bolt" /><span class="grow">Ideas y recetas</span><${Icon} name="right" size=${18} />
         </button>
         <button class="row" onClick=${() => go('plan')}>
           <${Icon} name="plan" /><span class="grow">Mi plan de alimentación</span><${Icon} name="right" size=${18} />
-        </button>
-        <button class="row" onClick=${() => go('perfil')}>
-          <${Icon} name="chart" /><span class="grow">Perfil y objetivo</span><${Icon} name="right" size=${18} />
         </button>
         <button class="row" onClick=${() => go('biblioteca')}>
           <${Icon} name="biblio" /><span class="grow">Biblioteca de productos</span><${Icon} name="right" size=${18} />
@@ -56,6 +61,7 @@ export function Mas({ go }) {
         </button>
       </section>
 
+      <h2 class="mas-grupo">Cuerpo y ajustes</h2>
       <section class="card">
         <h3>Peso corporal</h3>
         <div class="inline">
@@ -87,8 +93,12 @@ export function Mas({ go }) {
       </section>
 
       <${ListaSuplementos} />
+
+      <h2 class="mas-grupo">Conexiones</h2>
       <${Nube} />
       <${Whoop} />
+
+      <h2 class="mas-grupo">Datos y seguridad</h2>
       <${TusDatos} persist=${persist} />
 
       <p class="muted small center">NutriStock · Fase 1</p>
@@ -110,9 +120,28 @@ function Nube() {
     setTrabajando(false);
   };
 
+  const lista = c => Object.entries(c || {}).map(([t, n]) => `${n} ${nombreTabla(t)}`).join(', ') || 'nada';
+  if (e.conectado && e.conflicto) return html`
+    <section class="card form" id="nube">
+      <h3>Nube: elige qué datos conservar</h3>
+      <p class="aviso warn small">Hay datos <b>en la nube</b> y también <b>en este móvil</b>. Para no mezclar ni perder nada, no se ha tocado ninguno hasta que elijas.</p>
+      <p class="small"><b>En la nube:</b> ${lista(e.conflicto.nube)}.</p>
+      <p class="small"><b>En este móvil:</b> ${lista(e.conflicto.aqui)}.</p>
+      <button class="btn" disabled=${trabajando} onClick=${() => confirm('Este móvil se reemplaza por lo que hay en la nube. Antes se guarda una copia interna de este móvil. ¿Seguir?') && accion(() => decidirNube({ primera: 'nube' }))}>Usar los datos de la nube</button>
+      <button class="btn secondary" disabled=${trabajando} onClick=${() => confirm('La nube pasa a tener lo de este móvil. Lo que solo estaba en la nube se marca como borrado (se puede recuperar). Antes se guarda una copia interna. ¿Seguir?') && accion(() => decidirNube({ primera: 'movil' }))}>Usar los datos de este móvil</button>
+      <small class="muted">Si dudas, exporta antes una copia en "Tus datos" (aquí abajo). La forma recomendada es usar la app en un solo móvil.</small>
+      ${msg && html`<p class="error small">${msg.texto}</p>`}
+    </section>`;
+
   if (e.conectado) return html`
     <section class="card form">
       <h3>Nube</h3>
+      ${e.perdida && html`
+        <div class="aviso warn small">
+          <span><b>Faltan datos en este móvil</b> respecto a la nube: ${e.perdida.map(x => `${x.antes - x.ahora} de ${x.antes} ${nombreTabla(x.tabla)}`).join(', ')}. No se han borrado en la nube.</span>
+        </div>
+        <button class="btn" disabled=${trabajando} onClick=${() => accion(() => decidirNube({ perdida: 'recuperar' }))}>Recuperarlos de la nube</button>
+        <button class="btn secondary danger-text" disabled=${trabajando} onClick=${() => confirm('Se borrarán también en la nube (quedan marcados como borrados y se pueden recuperar desde Supabase). ¿Seguir?') && accion(() => decidirNube({ perdida: 'borrar' }))}>Los borré yo a propósito</button>`}
       <div class=${'aviso ' + (e.error ? 'warn' : 'ok')}>
         <span>${e.ocupado ? 'Sincronizando…' : e.error ? html`<b>No se pudo sincronizar.</b> ${e.error}`
           : html`<b>Tus datos están guardados en la nube ✓</b> Última vez: ${hace == null ? '—' : hace < 1 ? 'ahora mismo' : hace < 60 ? `hace ${hace} min` : new Date(e.ultima).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}.`}</span>
@@ -278,9 +307,10 @@ function TusDatos({ persist }) {
             <div class="preview small">
               <b>La copia está bien.</b> Contiene:<br />
               ${revisar.v.resumen.registros} registros de comida · ${revisar.v.resumen.productos} productos tuyos ·
-              ${revisar.v.resumen.despensa} envases en la despensa · ${revisar.v.resumen.pesos} pesos · ${revisar.v.resumen.entrenos} entrenos
+              ${revisar.v.resumen.despensa} envases en la despensa · ${revisar.v.resumen.pesos} pesos · ${revisar.v.resumen.entrenos} entrenos · ${revisar.v.resumen.planes} planes
               ${revisar.v.resumen.fecha !== '¿?' ? html`<br />Exportada el ${revisar.v.resumen.fecha}.` : ''}
             </div>
+            ${revisar.v.avisos?.length > 0 && html`<ul class="small muted">${revisar.v.avisos.map(x => html`<li>${x}</li>`)}</ul>`}
             <p class="aviso warn">Restaurar <b>reemplaza todo</b> lo que tienes ahora por esta copia. Antes, la app guarda sola una copia automática de lo actual, por si te arrepientes.</p>
             <button class="btn danger" onClick=${restaurar}>Reemplazar mis datos por esta copia</button>` : html`
             <p class="error"><b>Este archivo no se puede restaurar.</b> No se ha cambiado nada.</p>

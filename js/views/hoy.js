@@ -16,6 +16,7 @@ import { estadoCompra, textoStock } from './stock.js';
 import { exportarCopia, estadoCopia } from '../copias.js';
 import { resumenWhoop, colorRecuperacion, estadoWhoop } from '../whoop.js';
 import { listaSupl, tomadosDia, marcarSupl } from '../suplementos.js';
+import { estadoNube, escucharNube } from '../nube.js';
 
 export function Hoy({ go }) {
   const [date, setDate] = useState(todayStr());
@@ -58,7 +59,7 @@ export function Hoy({ go }) {
         <button class="icon-btn" onClick=${() => setDate(addDays(date, -1))} aria-label="Día anterior"><${Icon} name="left" /></button>
         <label class="top-title fecha-picker">
           ${isToday ? 'Hoy' : fmtDate(date, { weekday: 'long' })}
-          <small>${fmtDate(date, { day: 'numeric', month: 'long' })} ▾</small>
+          <small class="fecha-txt"><${Icon} name="hoy" size=${13} /> ${fmtDate(date, { day: 'numeric', month: 'long' })} ▾</small>
           <input type="date" aria-label="Elegir fecha" value=${date}
             onChange=${e => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && setDate(e.target.value)} />
         </label>
@@ -66,6 +67,7 @@ export function Hoy({ go }) {
       </header>
 
       ${!isToday && html`<button class="chip volver-hoy" onClick=${() => setDate(todayStr())}>Volver a hoy</button>`}
+      ${isToday && html`<${AvisoNube} go=${go} />`}
       ${isToday && html`<${RecordatorioCopia} />`}
       <${Resumen} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
       <${Rapido} date=${date} logs=${logs} ayer=${ayer}
@@ -946,4 +948,15 @@ function Suplementos({ date }) {
           </button>`)}
       </div>
     </section>`;
+}
+
+// Si la nube necesita que elijas algo (datos en dos sitios, o datos que faltan), se avisa aquí
+function AvisoNube({ go }) {
+  const [e, setE] = useState(estadoNube());
+  useEffect(() => escucharNube(setE), []);
+  if (!e.conflicto && !e.perdida) return null;
+  return html`
+    <button class="card aviso warn copia-aviso" onClick=${() => go('mas')}>
+      <span class="grow">${e.conflicto ? 'La nube necesita que elijas qué datos conservar.' : 'Faltan datos en este móvil respecto a la nube.'} Toca para verlo en Más → Nube.</span>
+    </button>`;
 }

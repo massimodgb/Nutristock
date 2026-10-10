@@ -24,6 +24,20 @@ db.version(4).stores({ ejercicios: 'id' });
 // v5: datos de Whoop (recuperación, ciclos, sueño, entrenos), uno por registro
 db.version(5).stores({ whoop: 'id, tipo, fecha' });
 
+// Números únicos para los registros nuevos (en vez de 1, 2, 3…): así dos aparatos nunca crean el mismo número.
+// Es la hora en microsegundos + un poco de azar. Los registros que ya existían conservan su número.
+let ultimoId = 0;
+export function nuevoId() {
+  const id = Math.max(Date.now() * 1000 + Math.floor(Math.random() * 1000), ultimoId + 1);
+  ultimoId = id;
+  return id;
+}
+for (const t of ['lots', 'shopping', 'logs', 'workouts', 'marcas']) {
+  db[t].hook('creating', function (pk, obj) {
+    if (pk == null && obj.id == null) { const id = nuevoId(); obj.id = id; return id; }
+  });
+}
+
 // Carga los alimentos base la primera vez y los actualiza si cambian en una versión nueva
 // (sin pisar los que hayas editado tú, por ejemplo al calibrar un factor de cocción).
 export async function seed() {
@@ -172,10 +186,12 @@ export async function exportAll() {
 
 export async function importAll(data) {
   if (data?.app !== 'nutristock') throw new Error('Este archivo no es una copia de NutriStock');
-  await db.transaction('rw', TABLES.map(t => db[t]), async () => {
-    for (const t of TABLES) {
+  // Solo se reemplazan las partes que trae la copia (una copia antigua sin "whoop" no borra tus datos de Whoop)
+  const presentes = TABLES.filter(t => Array.isArray(data[t]));
+  await db.transaction('rw', presentes.map(t => db[t]), async () => {
+    for (const t of presentes) {
       await db[t].clear();
-      if (Array.isArray(data[t]) && data[t].length) await db[t].bulkPut(data[t]);
+      if (data[t].length) await db[t].bulkPut(data[t]);
     }
   });
 }
