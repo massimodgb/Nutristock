@@ -533,3 +533,18 @@ button.card.whoop { width: 100%; text-align: left; color: var(--text); }
 /* Recetas propias */
 .receta-ing { align-items: center; }
 .receta-g { width: 110px; flex: none; }
+
+/* Entreno: semana y evolución */
+.semana { display: flex; flex-direction: column; gap: 8px; }
+.semana-dias { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.semana-dia { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; border-radius: 10px; color: var(--text); }
+.semana-dia small { font-size: 11px; color: var(--muted); }
+.semana-dia b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.semana-dia.hoy b { color: var(--accent); }
+.semana-dia.sel { background: var(--fill); }
+.semana-dia:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.semana-punto { width: 8px; height: 8px; border-radius: 50%; }
+.semana-punto.hecho { background: var(--accent); }
+.semana-punto.parcial { background: var(--accent); opacity: .5; }
+.semana-punto.pegado { border: 2px solid var(--accent); box-sizing: border-box; }
+.evolucion .pg-pt { cursor: pointer; }

@@ -149,6 +149,17 @@
       return Math.round(r.n.kcal) === 76 && r.crudoG === 450 || r;
     });
 
+    const En = await import('/js/views/entreno.js');
+    await prueba('Entreno: evolución del 1RM usa el estimado (100 kg × 3 ≈ 110 kg)', () => {
+      const e = En.evolucionRM([{ kg: 100, reps: 3, date: '2026-09-01' }, { kg: 112, reps: 1, date: '2026-10-01' }]);
+      return e.length === 2 && Math.round(e[0].v) === 110 && e[1].v === 112 || e;
+    });
+    await prueba('Entreno: peso máximo por sesión de un ejercicio', () => {
+      const s = En.sesionesConPeso([{ date: '2026-10-01', series: [{ kg: 80 }, { kg: 85 }] }, { date: '2026-10-08', series: [{ kg: 90 }] }]);
+      return s.length === 2 && s[0].v === 85 && s[1].v === 90 || s;
+    });
+    await prueba('Entreno: unir ejercicios (alias)', () => En.alias([{ id: 'wall ball', uneCon: 'cal row' }, { id: 'x' }])['wall ball'] === 'cal row');
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;

@@ -17,9 +17,10 @@ export function Entreno({ go, inicial }) {
   const workouts = useLive(() => db.workouts.where('date').equals(date).toArray(), [date]);
   const marcas = useLive(() => db.marcas.toArray(), []);
   const todos = useLive(() => db.workouts.toArray(), []);
+  const propios = useLive(() => db.ejercicios.toArray(), []);
 
-  if (!workouts || !marcas || !todos) return html`<div class="loading">Cargando…</div>`;
-  const hist = historialPesos(todos);
+  if (!workouts || !marcas || !todos || !propios) return html`<div class="loading">Cargando…</div>`;
+  const hist = historialPesos(todos, alias(propios));
   if (reloj) return html`<${RelojActivo} cfg=${reloj.cfg} onResultado=${reloj.onResultado} onCerrar=${() => setReloj(null)} />`;
   const isToday = date === todayStr();
 
@@ -37,6 +38,7 @@ export function Entreno({ go, inicial }) {
             <small>${fmtDate(date, { day: 'numeric', month: 'long' })}</small></button>
           <button class="icon-btn" onClick=${() => setDate(addDays(date, 1))} aria-label="Día siguiente"><${Icon} name="right" /></button>
         </div>
+        <${Semana} date=${date} todos=${todos} onDia=${setDate} />
         ${workouts.length === 0 && html`<${Pegar} date=${date} />`}
         ${workouts.map(w => html`<${Workout} key=${w.id} w=${w} marcas=${marcas} hist=${hist} onReloj=${setReloj} />`)}`}
       ${vista === 'marcas' && html`<${Marcas} marcas=${marcas} />`}
@@ -333,6 +335,12 @@ function MarcaDetalle({ x, tipo, marcas }) {
         </div>`}
       ${tipo === 'fuerza' && Object.keys(porReps).length > 0 && html`
         <div class="chips wrap">${Object.values(porReps).sort((a, b) => a.reps - b.reps).map(m => html`<span class="tag">${m.reps}RM: <b>${fmt(m.kg, 1)} kg</b></span>`)}</div>`}
+      ${marcas.length >= 2 && html`
+        <h4>Evolución</h4>
+        ${tipo === 'fuerza'
+          ? html`<${Evolucion} puntos=${evolucionRM(marcas)} unidad="kg" nota="1RM (o estimado de tus series de varias repeticiones) de cada día." />`
+          : html`<${Evolucion} puntos=${[...marcas].sort((a, b) => a.date.localeCompare(b.date)).map(m => ({ date: m.date, v: m.valor, texto: m.resultado }))}
+              menorMejor=${x.tipo !== 'amrap'} nota=${x.tipo === 'amrap' ? 'Rondas: más arriba, mejor.' : 'Tiempo: más arriba, más rápido.'} formato=${v => x.tipo === 'amrap' ? `${Math.floor(v / 1000)}+${v % 1000}` : mmss(v)} />`}`}
       <h4>Nueva marca</h4>
       ${tipo === 'fuerza' ? html`
         <div class="grid2">
@@ -362,12 +370,15 @@ function Ejercicios() {
   const [nuevo, setNuevo] = useState(false);
   if (!workouts || !propios) return html`<div class="loading">Cargando…</div>`;
 
+  const unidos = alias(propios);
   const mapa = {};
-  const entrada = (clave, nombre) => (mapa[clave] ||= { clave, nombre, veces: 0, ultima: '', links: new Set(), historial: [] });
+  const entrada = (clave, nombre) => (mapa[clave] ||= { clave, nombre, veces: 0, ultima: '', links: new Set(), historial: [], variantes: new Set() });
   for (const w of workouts) {
     leer(w).secciones.forEach((s, si) => s.partes.forEach((p, pi) => p.lineas.forEach((l, li) => {
       for (const nombre of l.ejercicios || []) {
-        const e = entrada(claveEjercicio(nombre), nombre);
+        const original = claveEjercicio(nombre);
+        const e = entrada(unidos[original] || original, nombre);
+        if (unidos[original]) e.variantes.add(nombre);
         e.veces++;
         if (w.date > e.ultima) e.ultima = w.date;
         (l.links || []).forEach(u => e.links.add(u));
@@ -378,6 +389,7 @@ function Ejercicios() {
   }
   // Lo que has añadido o editado a mano (nombre, vídeo, notas) manda sobre lo automático
   for (const p of propios) {
+    if (p.uneCon) continue; // es una variante unida a otro
     const e = entrada(p.id, p.nombre);
     e.nombre = p.nombre || e.nombre;
     e.notas = p.notas;
@@ -402,17 +414,35 @@ function Ejercicios() {
         </button>`)}
     </section>
     <${Sheet} open=${!!sel} onClose=${() => setSel(null)} title=${sel?.nombre}>
-      ${sel && html`<${EjercicioDetalle} e=${sel} onDone=${() => setSel(null)} />`}
+      ${sel && html`<${EjercicioDetalle} e=${sel} todos=${Object.values(mapa)} propios=${propios} onDone=${() => setSel(null)} />`}
     <//>
     <${Sheet} open=${nuevo} onClose=${() => setNuevo(false)} title="Nuevo ejercicio">
-      ${nuevo && html`<${EjercicioDetalle} e=${{ clave: '', nombre: '', links: new Set(), historial: [] }} onDone=${() => setNuevo(false)} />`}
+      ${nuevo && html`<${EjercicioDetalle} e=${{ clave: '', nombre: '', links: new Set(), historial: [], variantes: new Set() }} todos=${[]} propios=${propios} onDone=${() => setNuevo(false)} />`}
     <//>`;
 }
 
-function EjercicioDetalle({ e, onDone }) {
+function EjercicioDetalle({ e, todos = [], propios = [], onDone }) {
   const [nombre, setNombre] = useState(e.nombre);
   const [video, setVideo] = useState('');
   const [notas, setNotas] = useState(e.notas || '');
+  const [unir, setUnir] = useState('');
+  const otros = todos.filter(x => x.clave !== e.clave).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  const variantesUnidas = propios.filter(p => p.uneCon === e.clave);
+  // Unir: este ejercicio pasa a contar como el elegido (sus sesiones y pesos se suman allí)
+  const hacerUnion = async () => {
+    const destino = otros.find(x => x.clave === unir);
+    if (!destino || !e.clave) return;
+    const prev = (await db.ejercicios.get(e.clave)) || {};
+    await db.ejercicios.put({ ...prev, id: e.clave, nombre: e.nombre, uneCon: destino.clave });
+    toast(`${e.nombre} ahora cuenta como ${destino.nombre} ✓`);
+    onDone();
+  };
+  const separar = async id => {
+    const prev = await db.ejercicios.get(id);
+    if (prev) await db.ejercicios.put({ ...prev, uneCon: null });
+    toast('Separado ✓');
+  };
+  const sesiones = sesionesConPeso(e.historial);
   const guardar = async () => {
     const id = e.clave || claveEjercicio(nombre);
     const prev = (await db.ejercicios.get(id)) || {};
@@ -428,6 +458,22 @@ function EjercicioDetalle({ e, onDone }) {
       <label>Añadir vídeo (enlace de YouTube, Instagram…)<input value=${video} onInput=${ev => setVideo(ev.target.value)} placeholder="https://youtube.com/…" /></label>
       <label>Notas (técnica, escalado, molestias…)<textarea rows="3" value=${notas} onInput=${ev => setNotas(ev.target.value)}></textarea></label>
       <button class="btn" disabled=${!nombre.trim()} onClick=${guardar}>Guardar</button>
+      ${sesiones.length >= 2 && html`
+        <h4>Evolución</h4>
+        <${Evolucion} puntos=${sesiones} unidad="kg" nota="El peso más alto que usaste en cada sesión." />`}
+      ${(e.variantes?.size > 0 || variantesUnidas.length > 0) && html`
+        <h4>Variantes unidas aquí</h4>
+        ${variantesUnidas.map(v => html`<div class="inline"><span class="grow">${v.nombre}</span><button class="btn small secondary" onClick=${() => separar(v.id)}>Separar</button></div>`)}`}
+      ${e.clave && otros.length > 0 && html`
+        <h4>¿Es el mismo ejercicio que otro?</h4>
+        <small class="muted">Por ejemplo, "Cal row" y "Cal Row". Al unirlos, sus sesiones y pesos se juntan en uno.</small>
+        <div class="inline">
+          <select aria-label="Unir con" value=${unir} onChange=${ev => setUnir(ev.target.value)}>
+            <option value="">Elige el ejercicio…</option>
+            ${otros.map(x => html`<option value=${x.clave}>${x.nombre}</option>`)}
+          </select>
+          <button class="btn small" disabled=${!unir} onClick=${hacerUnion}>Unir</button>
+        </div>`}
       ${e.historial.length > 0 && html`
         <h4>Historial</h4>
         <table class="ntable">
@@ -479,7 +525,7 @@ async function registrarRecords(nombre, filas, marcas) {
 }
 
 // Todos los pesos que has usado en cada ejercicio (de las series y de "+ kg"), del más reciente al más antiguo
-function historialPesos(workouts) {
+function historialPesos(workouts, unidos = {}) {
   const h = {};
   for (const w of workouts) {
     const res = w.resultados || {};
@@ -489,7 +535,8 @@ function historialPesos(workouts) {
       const k = `${pi}-${li}`;
       const usados = res[si]?.series?.[k] || (res[si]?.pesos?.[k] ? [res[si].pesos[k]] : null);
       const conKg = (usados || []).filter(x => x.kg);
-      if (conKg.length) (h[claveEjercicio(nombre)] ||= []).push({ date: w.date, sets: conKg });
+      const c = claveEjercicio(nombre);
+      if (conKg.length) (h[unidos[c] || c] ||= []).push({ date: w.date, sets: conKg });
     })));
   }
   for (const k of Object.keys(h)) h[k].sort((a, b) => b.date.localeCompare(a.date));
@@ -537,4 +584,101 @@ function PesoLinea({ l, clave, r, marcas, ultimo, onGuardar }) {
       }}>Guardar peso</button>
       <button class="link" onClick=${() => setAbierto(false)}>Cancelar</button>
     </div>`;
+}
+
+// ---------- Ejercicios unidos: "Cal row" → "Cal Row" ----------
+export function alias(propios) {
+  return Object.fromEntries((propios || []).filter(p => p.uneCon).map(p => [p.id, p.uneCon]));
+}
+
+// Mejor 1RM de cada día (real o estimado con la fórmula de Epley)
+export function evolucionRM(marcas) {
+  const porDia = {};
+  for (const m of marcas) {
+    if (!m.kg || !m.reps) continue;
+    const est = m.reps === 1 ? m.kg : m.kg * (1 + m.reps / 30);
+    if (!porDia[m.date] || est > porDia[m.date].v) porDia[m.date] = { date: m.date, v: est, texto: `${fmt(m.kg, 1)} kg × ${m.reps}` };
+  }
+  return Object.values(porDia).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Peso máximo de cada sesión de un ejercicio
+export function sesionesConPeso(historial = []) {
+  const porDia = {};
+  for (const h of historial) {
+    const max = Math.max(0, ...(h.series || []).map(x => x.kg || 0));
+    if (max && (!porDia[h.date] || max > porDia[h.date].v)) porDia[h.date] = { date: h.date, v: max, texto: `${fmt(max, 1)} kg` };
+  }
+  return Object.values(porDia).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Gráfica de evolución: puntos por fecha y línea de "lo mejor hasta ese día"
+function Evolucion({ puntos, unidad = '', menorMejor = false, nota, formato }) {
+  const [sel, setSel] = useState(null);
+  if (puntos.length < 2) return null;
+  const W = 340, H = 140, izq = 34, der = 8, arriba = 10, abajo = 22;
+  const vs = puntos.map(p => p.v);
+  let lo = Math.min(...vs), hi = Math.max(...vs);
+  if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
+  const m = (hi - lo) * 0.12; lo -= m; hi += m;
+  const t0 = new Date(puntos[0].date), t1 = new Date(puntos.at(-1).date);
+  const span = Math.max(1, t1 - t0);
+  const x = d => izq + (W - izq - der) * ((new Date(d) - t0) / span);
+  // Si menor es mejor (tiempos), lo de arriba es lo más rápido
+  const y = v => arriba + (H - arriba - abajo) * (menorMejor ? (v - lo) / (hi - lo) : 1 - (v - lo) / (hi - lo));
+  let mejor = null;
+  const escalon = puntos.map((p, i) => {
+    mejor = mejor == null ? p.v : menorMejor ? Math.min(mejor, p.v) : Math.max(mejor, p.v);
+    return `${i ? 'L' : 'M'}${x(p.date)},${y(mejor)}`;
+  }).join(' ');
+  const txt = v => formato ? formato(v) : `${fmt(v, 1)}${unidad ? ' ' + unidad : ''}`;
+  const ps = puntos.find(p => p.date === sel);
+  const ini = puntos[0].v, fin = mejor;
+  const cambio = menorMejor ? ini - fin : fin - ini;
+  return html`
+    <svg class="chart evolucion" viewBox=${`0 0 ${W} ${H}`} role="img" aria-label="Evolución">
+      <text x=${izq - 4} y=${y(menorMejor ? lo : hi) + 4} text-anchor="end" class="tick">${txt(menorMejor ? lo + m : hi - m)}</text>
+      <text x=${izq - 4} y=${y(menorMejor ? hi : lo)} text-anchor="end" class="tick">${txt(menorMejor ? hi - m : lo + m)}</text>
+      <line x1=${izq} x2=${W - der} y1=${H - abajo} y2=${H - abajo} class="axis" />
+      <text x=${izq} y=${H - 5} class="tick">${fmtDate(puntos[0].date, { day: 'numeric', month: 'short' })}</text>
+      <text x=${W - der} y=${H - 5} text-anchor="end" class="tick">${fmtDate(puntos.at(-1).date, { day: 'numeric', month: 'short' })}</text>
+      <path d=${escalon} class="peso-line" />
+      ${puntos.map(p => html`
+        <g class="pg-pt" onClick=${() => setSel(sel === p.date ? null : p.date)}>
+          <circle cx=${x(p.date)} cy=${y(p.v)} r="11" fill="transparent" />
+          <circle cx=${x(p.date)} cy=${y(p.v)} r=${sel === p.date ? 6 : 4} class="peso-dot"><title>${fmtDate(p.date)}: ${p.texto || txt(p.v)}</title></circle>
+        </g>`)}
+    </svg>
+    ${ps ? html`<p class="small"><b>${fmtDate(ps.date, { weekday: 'short', day: 'numeric', month: 'short', year: '2-digit' })}</b>: ${ps.texto || txt(ps.v)}</p>`
+      : html`<p class="small">${cambio > 0 ? `Has mejorado ${txt(Math.abs(cambio)).replace(/^0:/, '0:')} desde ${fmtDate(puntos[0].date, { month: 'long' })}.` : 'Aún sin mejora respecto a la primera vez.'}</p>`}
+    <small class="muted">${nota} La línea es tu mejor marca hasta cada día. Toca un punto para ver la fecha.</small>`;
+}
+
+// ---------- La semana de entreno ----------
+function Semana({ date, todos, onDia }) {
+  const d = new Date(date + 'T12:00');
+  const lunes = addDays(date, -((d.getDay() + 6) % 7));
+  const dias = Array.from({ length: 7 }, (_, i) => addDays(lunes, i));
+  const hoy = todayStr();
+  const deDia = f => todos.filter(w => w.date === f);
+  const estado = f => {
+    const ws = deDia(f);
+    if (!ws.length) return '';
+    const secs = ws.flatMap(w => leer(w).secciones.map((s, i) => !!w.resultados?.[i]?.hecho));
+    return secs.length && secs.every(Boolean) ? 'hecho' : secs.some(Boolean) ? 'parcial' : 'pegado';
+  };
+  const semana = dias.flatMap(deDia);
+  const rpes = semana.flatMap(w => Object.values(w.resultados || {}).map(x => x.rpe).filter(Boolean));
+  return html`
+    <section class="card semana">
+      <div class="semana-dias">
+        ${dias.map(f => html`
+          <button class=${'semana-dia' + (f === date ? ' sel' : '') + (f === hoy ? ' hoy' : '')} onClick=${() => onDia(f)} aria-label=${fmtDate(f, { weekday: 'long', day: 'numeric' }) + (estado(f) ? ', entreno' : '')}>
+            <small>${fmtDate(f, { weekday: 'narrow' })}</small>
+            <b>${new Date(f + 'T12:00').getDate()}</b>
+            <span class=${'semana-punto ' + estado(f)}></span>
+          </button>`)}
+      </div>
+      <small class="muted">${semana.length ? `${new Set(semana.map(w => w.date)).size} ${new Set(semana.map(w => w.date)).size === 1 ? 'día' : 'días'} de entreno esta semana${rpes.length ? ` · RPE medio ${fmt(rpes.reduce((a, b) => a + b, 0) / rpes.length, 1)}` : ''}.` : 'Esta semana aún no hay entrenos.'} Punto lleno: hecho; medio: a medias; hueco: pegado sin hacer.</small>
+    </section>`;
 }
