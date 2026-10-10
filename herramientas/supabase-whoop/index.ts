@@ -16,7 +16,16 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const REDIRECT = `${SUPABASE_URL}/functions/v1/whoop`;
 const CLIENT_ID = Deno.env.get('WHOOP_CLIENT_ID') || '';
 const CLIENT_SECRET = Deno.env.get('WHOOP_CLIENT_SECRET') || '';
-const admin = createClient(SUPABASE_URL, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
+// Llave del servidor: la nueva (SUPABASE_SECRET_KEYS, un diccionario) o la antigua (service_role)
+function llaveServidor() {
+  try {
+    const d = JSON.parse(Deno.env.get('SUPABASE_SECRET_KEYS') || '{}');
+    const k = d.default || Object.values(d)[0];
+    if (k) return k as string;
+  } catch { /* sin llaves nuevas */ }
+  return Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+}
+const admin = createClient(SUPABASE_URL, llaveServidor(), { auth: { persistSession: false } });
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
