@@ -37,7 +37,7 @@ export async function seed() {
     // Productos tuyos sin clasificar (por ejemplo, escaneados antes de que existiera esto)
     const todos = await db.foods.toArray();
     for (const f of todos) {
-      if (f.source === 'base' || f.genericId || f.group === 'hogar') continue;
+      if (f.source === 'base' || f.source === 'receta' || f.genericId || f.group === 'hogar') continue;
       const gen = alimentoPorNombre(f.name);
       const g = gen && todos.find(x => x.id === gen);
       if (g) await db.foods.update(f.id, { genericId: gen, ...(!f.group || f.group === 'otro' ? { group: g.group } : {}) });

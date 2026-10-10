@@ -529,3 +529,7 @@ button.card.whoop { width: 100%; text-align: left; color: var(--text); }
 .compra-mas { border-top: 1px solid var(--line); padding-top: 6px; }
 .stepper { display: flex; align-items: center; gap: 12px; }
 .stepper b { font-size: 24px; min-width: 32px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Recetas propias */
+.receta-ing { align-items: center; }
+.receta-g { width: 110px; flex: none; }

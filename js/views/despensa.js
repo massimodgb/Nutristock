@@ -6,6 +6,7 @@ import { DIAS_HISTORIAL } from '../compra-plan.js';
 import { construirLista, candidatos, textoCantidad } from '../lista-compra.js';
 import { Sheet, Seg, Dot, Empty, Icon, Num, toast } from '../ui.js';
 import { Escaner, resolverCodigo, FoodForm, NoEncontrado, PegarEtiqueta } from './biblioteca.js';
+import { Receta } from './receta.js';
 import { CantidadStock, FichaStock, textoStock, estadoCompra, plural, nombreEnvase, anadirStock } from './stock.js';
 
 export function Despensa({ go }) {
@@ -102,9 +103,10 @@ function Stock({ foods, lots, setSheet }) {
       </details>`}`;
 }
 
-function AddStock({ foods, prefs, food: inicial, onDone }) {
+function AddStock({ foods, lots, prefs, food: inicial, onDone }) {
   const [food, setFood] = useState(inicial || null);
-  const [modo, setModo] = useState(inicial ? 'cantidad' : 'buscar'); // buscar | escanear | cargando | noencontrado | pegar | nuevo | cantidad
+  const [modo, setModo] = useState(inicial ? 'cantidad' : 'buscar'); // buscar | escanear | cargando | noencontrado | pegar | nuevo | cantidad | receta
+  const [receta, setReceta] = useState(null);
   const [nuevo, setNuevo] = useState(null);
   const [q, setQ] = useState('');
 
@@ -137,6 +139,8 @@ function AddStock({ foods, prefs, food: inicial, onDone }) {
       onSaved=${f => { setFood(f); setModo('cantidad'); }} onDone=${() => {}} />`;
   }
   if (modo === 'cantidad' && food) return html`<${CantidadStock} food=${food} onDone=${onDone} />`;
+  if (modo === 'receta') return html`<${Receta} foods=${foods} lots=${lots} prefs=${prefs} inicial=${receta} onDone=${onDone} />`;
+  const recetas = foods.filter(f => f.source === 'receta');
 
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const res = foods.filter(f => (f.group === 'hogar' || !(prefs.excluirMar && f.mar)) && norm(`${f.name} ${f.brand || ''}`).includes(norm(q)))
@@ -151,7 +155,12 @@ function AddStock({ foods, prefs, food: inicial, onDone }) {
         </button>`)}
     </div>
     <button class="btn secondary" onClick=${() => { setNuevo({ draft: { n: {}, name: q } }); setModo('nuevo'); }}>
-      <${Icon} name="pen" size=${18} /> Crear producto nuevo (comida o de casa)</button>`;
+      <${Icon} name="pen" size=${18} /> Crear producto nuevo (comida o de casa)</button>
+    <button class="btn secondary" onClick=${() => { setReceta(null); setModo('receta'); }}>
+      <${Icon} name="bolt" size=${18} /> Cociné una receta (guiso, comida para varios días)</button>
+    ${recetas.length > 0 && html`
+      <small class="muted">Cocinar otra vez:</small>
+      <div class="chips wrap">${recetas.map(f => html`<button class="chip" onClick=${() => { setReceta(f); setModo('receta'); }}>${f.name}</button>`)}</div>`}`;
 }
 
 const ESTADOS = [{ value: 'tengo', label: 'Tengo' }, { value: 'poco', label: 'Poco' }, { value: 'no', label: 'No' }];

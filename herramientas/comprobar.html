@@ -143,6 +143,12 @@
     });
     await prueba('Vitaminas: un producto tuyo usa los datos de su alimento base', () => Mi.microsDe({ id: 'p-x', genericId: 'espinacas' }, 100, byId).fe === 2.7);
 
+    const Re = await import('/js/views/receta.js');
+    await prueba('Receta: 250 g de lentejas + 200 g de zanahoria en 1200 g cocinados ≈ 76 kcal/100 g', () => {
+      const r = Re.calcularReceta([{ foodId: 'lentejas', g: 250 }, { foodId: 'zanahoria', g: 200 }], 1200, byId);
+      return Math.round(r.n.kcal) === 76 && r.crudoG === 450 || r;
+    });
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;
