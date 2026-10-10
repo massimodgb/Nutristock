@@ -121,6 +121,15 @@
     });
     await prueba('Cruces: la hora de la cena se escribe como hora', () => Cr.textoHora(22.5) === '22:30');
 
+    const LC = await import('/js/lista-compra.js');
+    await prueba('Lista única: lo del plan y el aviso de la despensa salen en UNA fila', () => {
+      const marca = { ...byId['pollo-pechuga'], id: 'p-x', source: 'manual', name: 'Pechuga X', genericId: 'pollo-pechuga', packG: 500, envase: 'bandeja', aviso: 1, comprar: 2 };
+      const l = LC.construirLista({ plan: planMini, foods: [...FOODS, marca], lots: [], dias: 7, hoy: '2026-10-10' });
+      const f = l.filter(x => x.clave === 'f:pollo-pechuga');
+      return f.length === 1 && f[0].motivos.length === 2 && LC.textoCantidad(f[0]).principal === '5 bandejas' || l;
+    });
+    await prueba('Lista única: el pan se pide en rebanadas', () => LC.textoCantidad({ g: 420 }, 420, byId['pan-integral']).principal === '14 rebanadas');
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;

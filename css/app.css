@@ -511,3 +511,21 @@ button.card.whoop { width: 100%; text-align: left; color: var(--text); }
 .row.lista-item { gap: 6px; }
 .lista-marcar { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-align: left; color: var(--text); padding: 2px 0; }
 .btn.danger-text { color: var(--danger); }
+
+/* Lista de la compra única */
+.compra-cab { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding-top: 8px; }
+.compra-cab .seg { flex: 0 1 220px; }
+.compra-fila { display: flex; align-items: center; gap: 10px; }
+.check-btn { flex: none; padding: 6px 2px; }
+.check-btn .check { display: block; border-color: var(--muted); }
+.check-btn:focus-visible, .compra-txt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.compra-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; text-align: left; color: var(--text); }
+.compra-nombre { display: flex; align-items: center; gap: 6px; font-size: 15px; overflow-wrap: anywhere; }
+.compra-txt small { overflow-wrap: anywhere; }
+.compra-cant { flex: none; max-width: 42%; display: flex; flex-direction: column; align-items: flex-end; text-align: right; font-variant-numeric: tabular-nums; }
+.compra-cant b { font-size: 15px; white-space: nowrap; }
+.compra-cant small { font-size: 11px; }
+.compra-anadir { padding: 8px 0 4px; }
+.compra-mas { border-top: 1px solid var(--line); padding-top: 6px; }
+.stepper { display: flex; align-items: center; gap: 12px; }
+.stepper b { font-size: 24px; min-width: 32px; text-align: center; font-variant-numeric: tabular-nums; }

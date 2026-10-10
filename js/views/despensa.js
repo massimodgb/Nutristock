@@ -1,11 +1,12 @@
 // Despensa: stock por envases (comida y cosas de casa), básicos y lista de la compra.
-import { html, useState } from '../lib.js';
+import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getPrefs, getSetting, setSetting, resumenStock, slug, activePlan } from '../db.js';
 import { GROUPS, daysUntil, fmt, fmtG, todayStr, addDays, fmtDate } from '../nutri.js';
-import { necesidadesPlan, DIAS_HISTORIAL } from '../compra-plan.js';
+import { DIAS_HISTORIAL } from '../compra-plan.js';
+import { construirLista, candidatos, textoCantidad } from '../lista-compra.js';
 import { Sheet, Seg, Dot, Empty, Icon, Num, toast } from '../ui.js';
 import { Escaner, resolverCodigo, FoodForm, NoEncontrado, PegarEtiqueta } from './biblioteca.js';
-import { CantidadStock, FichaStock, textoStock, estadoCompra, plural, nombreEnvase } from './stock.js';
+import { CantidadStock, FichaStock, textoStock, estadoCompra, plural, nombreEnvase, anadirStock } from './stock.js';
 
 export function Despensa({ go }) {
   const [tab, setTab] = useState('stock');
@@ -15,12 +16,24 @@ export function Despensa({ go }) {
   const shopping = useLive(() => db.shopping.toArray(), []);
   const prefs = useLive(getPrefs, []);
   const [sheet, setSheet] = useState(null);
+  const [dias, setDias] = useState(7);
+  const hoy = todayStr();
+  const desde = addDays(hoy, -DIAS_HISTORIAL);
+  const plan = useLive(() => activePlan().then(p => p || null), []);
+  const logs = useLive(() => db.logs.where('date').aboveOrEqual(desde).toArray(), [desde]);
+  const elecciones = useLive(() => db.settings.where('key').startsWith('opciones:').toArray()
+    .then(r => r.filter(x => x.key.slice(9) >= desde).map(x => ({ date: x.key.slice(9), v: x.value }))), [desde]);
+  const ocultos = useLive(() => getSetting('compraOculta', {}), []);
+  const ajustes = useLive(() => getSetting('compraAjuste', {}), []);
+  // Lo que antes se añadía a "Mi lista" desde el plan ya está en la lista única: se limpia una vez
+  useEffect(() => { db.shopping.filter(x => !!x.dePlan).delete(); }, []);
 
-  if ([foods, lots, basicos, shopping, prefs].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
+  if ([foods, lots, basicos, shopping, prefs, plan, logs, elecciones, ocultos, ajustes].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
-  const ctx = { foods, byId, lots, basicos, shopping, prefs, setSheet };
-  const enCompra = foods.filter(f => estadoCompra(f, lots).necesita).length + basicos.filter(b => b.status !== 'tengo').length
-    + shopping.filter(s => !s.done).length;
+  const lista = construirLista({ plan, foods, lots, logs, elecciones, prefs, dias, ocultos, ajustes, hoy });
+  const ctx = { foods, byId, lots, basicos, shopping, prefs, setSheet, plan, lista, dias, setDias, ocultos, ajustes };
+  const manuales = shopping.filter(x => !x.dePlan);
+  const enCompra = lista.length + basicos.filter(b => b.status !== 'tengo').length + manuales.filter(x => !x.done).length;
 
   return html`
     <div class="page">
@@ -37,13 +50,10 @@ export function Despensa({ go }) {
       ${tab === 'compra' && html`<${Compra} ...${ctx} />`}
 
       <${Sheet} open=${sheet?.type === 'add'} onClose=${() => setSheet(null)} title="Añadir a la despensa">
-        ${sheet?.type === 'add' && html`<${AddStock} ...${ctx} food=${sheet.food} buscar=${sheet.buscar} sugerido=${sheet.sugerido} onDone=${async () => {
-          if (sheet.clave) await db.shopping.filter(s => s.clave === sheet.clave && !s.done).modify({ done: 1 });
-          setSheet(null);
-        }} />`}
+        ${sheet?.type === 'add' && html`<${AddStock} ...${ctx} food=${sheet.food} onDone=${() => setSheet(null)} />`}
       <//>
-      <${Sheet} open=${sheet?.type === 'plan'} onClose=${() => setSheet(null)} title=${sheet?.item?.nombre}>
-        ${sheet?.type === 'plan' && html`<${SugerenciaPlan} item=${sheet.item} dias=${sheet.dias} shopping=${shopping} setSheet=${setSheet} />`}
+      <${Sheet} open=${sheet?.type === 'comprar'} onClose=${() => setSheet(null)} title=${sheet?.item?.nombre}>
+        ${sheet?.type === 'comprar' && html`<${Comprado} item=${sheet.item} foods=${foods} lots=${lots} dias=${dias} onDone=${() => setSheet(null)} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'food'} onClose=${() => setSheet(null)} title=${sheet?.food?.name}>
         ${sheet?.type === 'food' && html`<${FichaStock} food=${byId[sheet.food.id] || sheet.food} lots=${lots} onAdd=${() => setSheet({ type: 'add', food: byId[sheet.food.id] || sheet.food })} onQuitar=${() => setSheet(null)} />`}
@@ -91,11 +101,11 @@ function Stock({ foods, lots, setSheet }) {
       </details>`}`;
 }
 
-function AddStock({ foods, prefs, food: inicial, buscar: qInicial, sugerido, onDone }) {
+function AddStock({ foods, prefs, food: inicial, onDone }) {
   const [food, setFood] = useState(inicial || null);
   const [modo, setModo] = useState(inicial ? 'cantidad' : 'buscar'); // buscar | escanear | cargando | noencontrado | pegar | nuevo | cantidad
   const [nuevo, setNuevo] = useState(null);
-  const [q, setQ] = useState(qInicial || '');
+  const [q, setQ] = useState('');
 
   const buscar = async code => {
     setNuevo({ code });
@@ -125,7 +135,7 @@ function AddStock({ foods, prefs, food: inicial, buscar: qInicial, sugerido, onD
     return html`<${FoodForm} initial=${nuevo?.draft || { n: {} }} aviso=${nuevo?.aviso} foods=${foods}
       onSaved=${f => { setFood(f); setModo('cantidad'); }} onDone=${() => {}} />`;
   }
-  if (modo === 'cantidad' && food) return html`<${CantidadStock} food=${food} sugerido=${food.id === inicial?.id ? sugerido : null} onDone=${onDone} />`;
+  if (modo === 'cantidad' && food) return html`<${CantidadStock} food=${food} onDone=${onDone} />`;
 
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const res = foods.filter(f => (f.group === 'hogar' || !(prefs.excluirMar && f.mar)) && norm(`${f.name} ${f.brand || ''}`).includes(norm(q)))
@@ -170,152 +180,205 @@ function Basicos({ basicos }) {
     </section>`;
 }
 
-// Compra para los próximos días según tu plan, menos lo que ya tienes
-export const textoCompra = (x, g = x.falta) => fmtG(Math.round(g), x.food)
-  + (x.producto?.packG ? ` (≈ ${Math.max(1, Math.ceil(g / x.producto.packG))} ${plural(nombreEnvase(x.producto), Math.max(1, Math.ceil(g / x.producto.packG)))} de ${fmt(x.producto.packG)} g)` : '');
-
-function CompraPlan({ foods, lots, prefs, shopping, setSheet }) {
-  const [dias, setDias] = useState(7);
-  const [verTodo, setVerTodo] = useState(false);
-  const [verQuitados, setVerQuitados] = useState(false);
-  const ocultos = useLive(() => getSetting('compraOculta', {}), []);
-  const desde = addDays(todayStr(), -DIAS_HISTORIAL);
-  const plan = useLive(() => activePlan().then(p => p || null), []);
-  const logs = useLive(() => db.logs.where('date').aboveOrEqual(desde).toArray(), [desde]);
-  const elecciones = useLive(() => db.settings.where('key').startsWith('opciones:').toArray()
-    .then(r => r.filter(x => x.key.slice(9) >= desde).map(x => ({ date: x.key.slice(9), v: x.value }))), [desde]);
-  if ([plan, logs, elecciones, ocultos].includes(undefined)) return null;
-  if (!plan) return html`<section class="card"><h3>Para tu plan</h3><p class="muted small">Carga tu plan en Más → Mi plan y aquí verás qué comprar para la semana.</p></section>`;
-
-  const hoy = todayStr();
-  const quitado = x => ocultos[x.clave] && ocultos[x.clave] >= hoy; // quitado hasta esa fecha
-  const lista = necesidadesPlan({ plan, foods, lots, logs, elecciones, prefs, dias });
-  const quitados = lista.filter(x => x.falta >= 1 && quitado(x));
-  const faltan = lista.filter(x => x.falta >= 1 && !quitado(x));
-  const tienes = lista.filter(x => x.falta < 1);
-  const cantidad = (g, food) => fmtG(Math.round(g), food);
-  const enLista = x => shopping.some(s => s.clave === x.clave && !s.done);
-  const anadir = async () => {
-    // Solo lo que aún no está en tu lista (sin repetir)
-    const nuevos = faltan.filter(x => !enLista(x));
-    await db.shopping.bulkAdd(nuevos.map(x => ({ name: `${x.nombre}: ${textoCompra(x)}`, done: 0, dePlan: 1, clave: x.clave })));
-    toast(nuevos.length ? `${nuevos.length} cosas añadidas a Mi lista ✓` : 'Ya estaba todo en Mi lista');
-  };
-  const volver = async x => {
-    const o = { ...ocultos };
-    delete o[x.clave];
-    await setSetting('compraOculta', o);
-  };
-  const fila = x => html`
-    <button class="row" key=${x.clave} onClick=${() => setSheet({ type: 'plan', item: x, dias })}>
-      <${Dot} group=${x.group} />
-      <span class="grow">${x.nombre}<br />
-        <small class="muted">tu plan pide ${cantidad(x.necesita, x.food)} · tienes ${x.hay ? cantidad(x.hay, x.food) : 'nada'}</small></span>
-      ${x.falta >= 1 ? html`<span class=${'tag ' + (enLista(x) ? 'ok' : 'warn')}>${enLista(x) ? 'en tu lista' : `comprar ${textoCompra(x)}`}</span>` : html`<span class="tag ok">tienes ✓</span>`}
-      <${Icon} name="right" size=${14} />
-    </button>`;
-
-  return html`
-    <section class="card list">
-      <h3 class="group-title">Para tu plan</h3>
-      <${Seg} value=${dias} onChange=${setDias} options=${[3, 5, 7, 14].map(d => ({ value: d, label: `${d} días` }))} />
-      <p class="muted small">Lo que pide tu plan para los próximos ${dias} días menos lo que ya tienes en casa. Usa lo que sueles comer de verdad (últimas 4 semanas). Cantidades en crudo, como se compran.</p>
-      ${!faltan.length && html`<p class="aviso ok small">Tienes todo lo que pide tu plan para estos días ✓</p>`}
-      ${faltan.map(fila)}
-      ${faltan.length > 0 && html`
-        <p class="muted small">Toca uno para decir que ya lo compraste, cambiar la cantidad o quitarlo.</p>
-        <button class="btn" onClick=${anadir}>Añadir todo lo que falta a Mi lista</button>`}
-      ${quitados.length > 0 && html`
-        <button class="link small" onClick=${() => setVerQuitados(!verQuitados)}>${verQuitados ? 'Ocultar' : 'Ver'} lo que quitaste (${quitados.length})</button>
-        ${verQuitados && quitados.map(x => html`
-          <div class="row" key=${x.clave}>
-            <${Dot} group=${x.group} /><span class="grow muted">${x.nombre}<br /><small>quitado hasta el ${fmtDate(ocultos[x.clave], { day: 'numeric', month: 'short' })}</small></span>
-            <button class="btn small secondary" onClick=${() => volver(x)}>Volver a sugerir</button>
-          </div>`)}`}
-      ${tienes.length > 0 && html`
-        <button class="link small" onClick=${() => setVerTodo(!verTodo)}>${verTodo ? 'Ocultar' : 'Ver'} lo que ya tienes (${tienes.length})</button>
-        ${verTodo && tienes.map(fila)}`}
-    </section>`;
-}
-
-function Compra({ foods, lots, basicos, shopping, prefs, setSheet }) {
+// ---------- La lista de la compra (una sola) ----------
+// Lo que pide tu plan + los avisos de la despensa (sin repetir), los básicos que se acabaron y lo que apuntas a mano.
+function Compra({ lista, basicos, shopping, plan, dias, setDias, setSheet }) {
   const [nuevo, setNuevo] = useState('');
-  const auto = foods.map(f => ({ f, e: estadoCompra(f, lots) })).filter(x => x.e.necesita);
-  const faltan = basicos.filter(b => b.status !== 'tengo');
+  const faltanBasicos = basicos.filter(b => b.status !== 'tengo');
+  const manuales = shopping.filter(x => !x.dePlan);
   const add = async () => {
     if (!nuevo.trim()) return;
     await db.shopping.add({ name: nuevo.trim(), done: 0 });
     setNuevo('');
   };
+  const nada = !lista.length && !faltanBasicos.length && !manuales.length;
   return html`
-    <${CompraPlan} foods=${foods} lots=${lots} prefs=${prefs} shopping=${shopping} setSheet=${setSheet} />
-    <section class="card list">
-      <h3 class="group-title">Automático</h3>
-      ${!auto.length && !faltan.length && html`<p class="muted small">Nada por ahora. En cada producto de tu despensa puedes elegir "Avisar cuando queden X" y "comprar Y": cuando baje, aparecerá aquí solo.</p>`}
-      ${auto.map(({ f, e }) => html`
-        <button class="row" onClick=${() => setSheet({ type: 'add', food: f })}>
-          <${Dot} group=${f.group} />
-          <span class="grow">${f.name}<br /><small class="muted">quedan ${textoStock(f, lots)}</small></span>
-          <span class="tag warn">comprar ${e.comprar} ${plural(nombreEnvase(f), e.comprar)}</span>
-        </button>`)}
-      ${auto.length > 0 && html`<p class="muted small">Toca un producto cuando lo compres para añadirlo a la despensa: sale de la lista solo.</p>`}
-      ${faltan.map(b => html`
-        <button class="row" onClick=${() => { db.basicos.update(b.id, { status: 'tengo' }); toast(`${b.name}: comprado ✓`); }}>
-          <span class="check"></span><span class="grow">${b.name}</span>
-          <small class="muted">${b.status === 'no' ? 'se acabó' : 'queda poco'}</small>
-        </button>`)}
-    </section>
-    <section class="card list">
-      <h3 class="group-title">Mi lista</h3>
-      <div class="inline">
-        <input placeholder="Añadir a la lista" value=${nuevo} onInput=${e => setNuevo(e.target.value)} onKeyDown=${e => e.key === 'Enter' && add()} />
-        <button class="btn small" onClick=${add}>Añadir</button>
+    <section class="card list compra">
+      <div class="compra-cab">
+        <h3>Lista de la compra</h3>
+        ${plan && html`<${Seg} value=${dias} onChange=${setDias} options=${[3, 7, 14].map(d => ({ value: d, label: `${d} días` }))} />`}
       </div>
-      ${shopping.map(s => html`
-        <div class=${'row lista-item' + (s.done ? ' done' : '')} key=${s.id}>
-          <button class="lista-marcar" aria-pressed=${!!s.done} onClick=${() => db.shopping.update(s.id, { done: s.done ? 0 : 1 })}>
-            <span class=${'check' + (s.done ? ' on' : '')}></span><span class="grow">${s.name}</span>
-          </button>
-          <button class="icon-btn" aria-label=${'Borrar ' + s.name} onClick=${() => db.shopping.delete(s.id)}><${Icon} name="trash" size=${15} /></button>
+      <p class="muted small">${plan ? `Lo que pide tu plan para ${dias} días menos lo que tienes en casa, y lo que se te acaba.` : 'Lo que se te acaba en la despensa.'} Toca el círculo cuando lo compres.</p>
+      ${nada && html`<p class="aviso ok small">No te falta nada ✓</p>`}
+      ${lista.map(it => {
+        const c = textoCantidad(it);
+        return html`
+          <div class="row compra-fila" key=${it.clave}>
+            <button class="check-btn" aria-label=${'Lo he comprado: ' + it.nombre} onClick=${() => setSheet({ type: 'comprar', item: it })}><span class="check"></span></button>
+            <button class="compra-txt" onClick=${() => setSheet({ type: 'comprar', item: it })}>
+              <span class="compra-nombre"><${Dot} group=${it.group} /> ${it.nombre}</span>
+              <small class="muted">${it.motivos.includes('plan') ? 'para tu plan' : 'se te acaba'}${it.motivos.length > 1 ? ' · y se te acaba' : ''}${it.ajustado ? ' · cantidad tuya' : ''}${it.producto && it.producto.source !== 'base' ? ` · ${it.producto.name}` : ''}</small>
+            </button>
+            <span class="compra-cant"><b>${c.principal}</b>${c.detalle ? html`<small class="muted">${c.detalle}</small>` : ''}</span>
+          </div>`;
+      })}
+      ${faltanBasicos.map(b => html`
+        <div class="row compra-fila" key=${'b' + b.id}>
+          <button class="check-btn" aria-label=${'Comprado: ' + b.name} onClick=${() => { db.basicos.update(b.id, { status: 'tengo' }); toast(`${b.name}: comprado ✓`); }}><span class="check"></span></button>
+          <span class="compra-txt"><span class="compra-nombre">${b.name}</span><small class="muted">básico · ${b.status === 'no' ? 'se acabó' : 'queda poco'}</small></span>
         </div>`)}
-      ${shopping.some(s => s.done) && html`
-        <button class="link" onClick=${() => db.shopping.where('done').equals(1).delete()}>Borrar comprados</button>`}
+      ${manuales.map(x => html`
+        <div class=${'row compra-fila' + (x.done ? ' done' : '')} key=${'m' + x.id}>
+          <button class="check-btn" aria-pressed=${!!x.done} aria-label=${(x.done ? 'Desmarcar: ' : 'Comprado: ') + x.name} onClick=${() => db.shopping.update(x.id, { done: x.done ? 0 : 1 })}><span class=${'check' + (x.done ? ' on' : '')}></span></button>
+          <span class="compra-txt grow"><span class="compra-nombre">${x.name}</span><small class="muted">apuntado a mano</small></span>
+          <button class="icon-btn" aria-label=${'Borrar ' + x.name} onClick=${() => db.shopping.delete(x.id)}><${Icon} name="trash" size=${15} /></button>
+        </div>`)}
+      <div class="inline compra-anadir">
+        <input placeholder="Apuntar algo más (ej: servilletas)" value=${nuevo} onInput=${e => setNuevo(e.target.value)} onKeyDown=${e => e.key === 'Enter' && add()} />
+        <button class="btn small" disabled=${!nuevo.trim()} onClick=${add}>Añadir</button>
+      </div>
+      ${manuales.some(x => x.done) && html`<button class="link small" onClick=${() => db.shopping.where('done').equals(1).delete()}>Quitar lo apuntado que ya compraste</button>`}
+    </section>
+    <${Quitados} />`;
+}
+
+// Lo que dijiste que no ibas a comprar (por si cambias de idea)
+function Quitados() {
+  const ocultos = useLive(() => getSetting('compraOculta', {}), []);
+  const foods = useLive(() => db.foods.toArray(), []);
+  const [ver, setVer] = useState(false);
+  if (!ocultos || !foods) return null;
+  const hoy = todayStr();
+  const activos = Object.entries(ocultos).filter(([, hasta]) => hasta >= hoy);
+  if (!activos.length) return null;
+  const nombre = clave => clave.startsWith('l:') ? `Lista ${clave.slice(2)}` : foods.find(f => f.id === clave.slice(2))?.name || clave;
+  const volver = async clave => { const o = { ...ocultos }; delete o[clave]; await setSetting('compraOculta', o); };
+  return html`
+    <section class="card list">
+      <button class="link small" onClick=${() => setVer(!ver)}>${ver ? 'Ocultar' : 'Ver'} lo que quitaste de la lista (${activos.length})</button>
+      ${ver && activos.map(([clave, hasta]) => html`
+        <div class="row" key=${clave}>
+          <span class="grow muted">${nombre(clave)}<br /><small>quitado hasta el ${fmtDate(hasta, { day: 'numeric', month: 'short' })}</small></span>
+          <button class="btn small secondary" onClick=${() => volver(clave)}>Volver a ponerlo</button>
+        </div>`)}
     </section>`;
 }
 
-// Una sugerencia del plan: qué quieres hacer con ella
-function SugerenciaPlan({ item: x, dias, shopping, setSheet }) {
-  const [g, setG] = useState(Math.round(x.falta));
-  const enLista = shopping.find(s => s.clave === x.clave && !s.done);
-  const comprado = () => {
-    // Si ya sabemos qué producto compras (con su envase), vamos directos a cuántos; si no, a elegirlo o escanearlo
-    const p = x.producto;
-    if (p) setSheet({ type: 'add', food: p, sugerido: Math.max(1, Math.ceil(g / p.packG)), clave: x.clave });
-    else setSheet({ type: 'add', buscar: x.lista ? '' : x.nombre, clave: x.clave });
+// "Lo he comprado": qué producto (o escanea otra marca) y cuántos envases / unidades. Se guarda en la despensa.
+function Comprado({ item: it, foods, lots, dias, onDone }) {
+  const opciones = candidatos(it, foods, lots);
+  const [prod, setProd] = useState(it.producto || opciones[0] || null);
+  const [modo, setModo] = useState('cantidad'); // cantidad | escanear | cargando | noencontrado | pegar | nuevo | ajustar
+  const [r, setR] = useState(null);
+  const raizBase = it.lista ? null : it.foodId;
+  const base = raizBase && foods.find(f => f.id === raizBase);
+
+  // Producto escaneado: queda unido a este alimento (cuenta como él en tu plan y en la lista)
+  const unir = async f => {
+    if (raizBase && f.id !== raizBase && f.genericId !== raizBase && f.group !== 'hogar') {
+      const cambios = { genericId: raizBase, ...(base?.factor && !f.factor ? { factor: base.factor } : {}), ...(!f.group || f.group === 'otro' ? { group: base?.group || it.group } : {}) };
+      await db.foods.update(f.id, cambios);
+      f = { ...f, ...cambios };
+    }
+    setProd(f);
+    setModo('cantidad');
   };
-  const aLista = async () => {
-    const name = `${x.nombre}: ${textoCompra(x, g)}`;
-    if (enLista) await db.shopping.update(enLista.id, { name });
-    else await db.shopping.add({ name, done: 0, dePlan: 1, clave: x.clave });
-    toast(enLista ? 'Cantidad cambiada en Mi lista ✓' : 'Añadido a Mi lista ✓');
-    setSheet(null);
+  const leer = async code => {
+    setModo('cargando');
+    const res = await resolverCodigo(code, foods);
+    setR(res);
+    if (res.food) { toast(res.food.name); await unir(res.food); return; }
+    if (res.estado === 'off' || res.estado === 'incompleto' || res.estado === 'nuevo') {
+      // Lo dejamos ya clasificado como este alimento
+      if (raizBase) res.draft = { ...res.draft, genericId: raizBase, group: res.draft.group || base?.group || it.group };
+      setR(res);
+      setModo(res.estado === 'off' ? 'nuevo' : 'noencontrado');
+      return;
+    }
+    setModo('noencontrado');
   };
-  const quitar = async () => {
-    const o = { ...(await getSetting('compraOculta', {})), [x.clave]: addDays(todayStr(), dias - 1) };
-    await setSetting('compraOculta', o);
-    if (enLista) await db.shopping.delete(enLista.id);
-    toast(`${x.nombre}: quitado de las sugerencias`);
-    setSheet(null);
-  };
+
+  if (modo === 'escanear') return html`<${Escaner} onCode=${leer} />`;
+  if (modo === 'cargando') return html`<p class="muted">Buscando el producto…</p>`;
+  if (modo === 'noencontrado') return html`<${NoEncontrado} r=${r} onPegar=${() => setModo('pegar')}
+    onMano=${() => { setR({ ...r, aviso: '' }); setModo('nuevo'); }} onReintentar=${() => leer(r.code)} onOtro=${() => setModo('escanear')} />`;
+  if (modo === 'pegar') return html`<${PegarEtiqueta} onDone=${n => { setR({ ...r, draft: { ...r.draft, n, source: 'livetext' }, aviso: 'Revisa que los números coincidan con la etiqueta.' }); setModo('nuevo'); }} />`;
+  if (modo === 'nuevo') return html`<${FoodForm} initial=${r?.draft || { n: {}, genericId: raizBase || '' }}
+    aviso=${(r?.aviso ? r.aviso + ' ' : '') + (base ? `Contará como ${base.name}.` : '')} foods=${foods} onSaved=${unir} onDone=${() => setModo('cantidad')} />`;
+  if (modo === 'ajustar') return html`<${Ajustar} it=${it} dias=${dias} onDone=${onDone} onVolver=${() => setModo('cantidad')} />`;
+
   return html`
     <div class="form">
-      <p class="small">Tu plan pide <b>${fmtG(Math.round(x.necesita), x.food)}</b> para los próximos ${dias} días. Tienes ${x.hay ? fmtG(Math.round(x.hay), x.food) : 'nada'}, así que faltan <b>${fmtG(Math.round(x.falta), x.food)}</b> (en crudo).</p>
-      <button class="btn" onClick=${comprado}><${Icon} name="check" size=${18} /> Ya lo he comprado: añadir a la despensa</button>
-      <small class="muted">${x.producto ? `Se añade como ${x.producto.name}. Puedes cambiar cuántos ${plural(nombreEnvase(x.producto), 2)}.` : x.lista ? 'Elige qué compraste (por ejemplo, brócoli o calabacín) o escanéalo.' : 'Elige tu producto o escanéalo.'}</small>
-      <label>¿Cuánto vas a comprar?<${Num} value=${g} onChange=${v => setG(v || 0)} suffix="g" /></label>
-      <div class="chips">${[0.5, 1, 1.5].map(f => html`<button class=${'chip' + (g === Math.round(x.falta * f) ? ' on' : '')} onClick=${() => setG(Math.round(x.falta * f))}>${f === 1 ? 'Lo que falta' : f === 0.5 ? 'La mitad' : '50 % más'}</button>`)}</div>
-      <button class="btn secondary" disabled=${!g} onClick=${aLista}>${enLista ? 'Cambiar la cantidad en Mi lista' : 'Añadir a Mi lista'}${g ? ` (${textoCompra(x, g)})` : ''}</button>
-      <button class="btn secondary danger-text" onClick=${quitar}>No lo voy a comprar: quitar de las sugerencias</button>
-      <small class="muted">Lo quita durante estos ${dias} días. Puedes volver a verlo en "Lo que quitaste".</small>
+      <p class="small">${it.motivos.includes('plan') ? `Tu plan pide ${fmtG(Math.round(it.necesita || it.g))} para ${dias} días y te faltan ${fmtG(Math.round(it.gPlan || it.g))}.` : 'Se te está acabando.'}</p>
+      <label>¿Qué compraste?</label>
+      <div class="chips wrap">
+        ${opciones.slice(0, 8).map(f => html`<button class=${'chip' + (prod?.id === f.id ? ' on' : '')} onClick=${() => setProd(f)}>${f.name}${f.brand ? ` · ${f.brand}` : ''}</button>`)}
+      </div>
+      <button class="btn secondary" onClick=${() => setModo('escanear')}><${Icon} name="scan" size=${18} /> Es otra marca: escanear el código</button>
+      ${prod && html`<${CuantoCompre} key=${prod.id} it=${it} prod=${prod} onDone=${onDone} />`}
+      <div class="compra-mas">
+        <button class="link small" onClick=${() => setModo('ajustar')}>Necesito otra cantidad o no lo voy a comprar</button>
+      </div>
+    </div>`;
+}
+
+// Cuántos envases / unidades / gramos compraste del producto elegido
+function CuantoCompre({ it, prod, onDone }) {
+  const hogar = prod.group === 'hogar';
+  const sugerido = textoCantidad(it, it.g, prod).n || 1;
+  const [packG, setPackG] = useState(prod.packG || null);
+  const [envase, setEnvase] = useState(prod.envase || '');
+  const [suelto, setSuelto] = useState(false);
+  const [n, setN] = useState(hogar ? Math.max(1, Math.round(it.g)) : sugerido);
+  const [g, setG] = useState(Math.round(it.g));
+  const [expiry, setExpiry] = useState('');
+  const porUnidad = !hogar && !prod.packG && prod.unitG && !suelto;
+  const nombreUd = hogar ? nombreEnvase(prod) : porUnidad ? (prod.unitName || 'unidad') : (envase.trim() || nombreEnvase(prod));
+  const necesitaPeso = !hogar && !porUnidad && !suelto && !packG;
+  const total = hogar ? n : suelto ? g : porUnidad ? n * prod.unitG : n * (packG || 0);
+
+  const guardar = async () => {
+    const cambios = {};
+    if (!hogar && !porUnidad && !suelto) { cambios.packG = packG; if (envase.trim()) cambios.envase = envase.trim(); }
+    if (Object.keys(cambios).length) { if (prod.source === 'base') cambios.edited = true; await db.foods.update(prod.id, cambios); }
+    const f = { ...prod, ...cambios };
+    const filas = hogar || (!porUnidad && !suelto)
+      ? await anadirStock(f, { envases: n, expiry: expiry || null })
+      : await anadirStock({ ...f, packG: null }, { g: total, expiry: expiry || null });
+    toast(filas ? `${prod.name}: guardado en la despensa ✓` : 'No se guardó nada');
+    onDone();
+  };
+  return html`
+    <div class="form compra-cuanto">
+      ${!hogar && !porUnidad && !suelto && html`
+        <div class="grid2">
+          <label>Cada envase pesa<${Num} value=${packG} onChange=${setPackG} suffix="g" /></label>
+          <label>Y es un/a<input value=${envase} onInput=${e => setEnvase(e.target.value)} placeholder="bolsa, bandeja…" /></label>
+        </div>
+        ${!prod.packG && html`<small class="muted">Viene en la etiqueta. Solo se pregunta la primera vez.</small>`}`}
+      ${suelto ? html`<label>¿Cuántos gramos compraste?<${Num} value=${g} onChange=${v => setG(v || 0)} suffix="g" /></label>` : html`
+        <label>¿Cuántos ${plural(nombreUd, 2)} compraste?</label>
+        <div class="stepper">
+          <button class="icon-btn" aria-label="Uno menos" disabled=${n <= 1} onClick=${() => setN(Math.max(1, n - 1))}>−</button>
+          <b>${n}</b><span class="muted">${plural(nombreUd, n)}</span>
+          <button class="icon-btn" aria-label="Uno más" onClick=${() => setN(n + 1)}>+</button>
+        </div>`}
+      ${!hogar && html`<button class="link small" onClick=${() => setSuelto(!suelto)}>${suelto ? 'Lo compré en envases o unidades' : 'Lo compré suelto, a peso'}</button>`}
+      ${!hogar && html`<label>Caduca (opcional)<input type="date" min=${todayStr()} value=${expiry} onInput=${e => setExpiry(e.target.value)} /></label>`}
+      <button class="btn" disabled=${necesitaPeso || !total} onClick=${guardar}>
+        ${necesitaPeso ? 'Pon cuánto pesa cada envase' : `Guardar en la despensa${hogar ? '' : ` (${fmtG(Math.round(total))})`}`}</button>
+    </div>`;
+}
+
+// Cambiar cuánto necesitas o quitarlo de la lista
+function Ajustar({ it, dias, onDone, onVolver }) {
+  const [g, setG] = useState(Math.round(it.g));
+  const hasta = addDays(todayStr(), dias - 1);
+  const guardar = async () => {
+    await setSetting('compraAjuste', { ...(await getSetting('compraAjuste', {})), [it.clave]: { g, hasta } });
+    toast('Cantidad cambiada ✓'); onDone();
+  };
+  const quitar = async () => {
+    await setSetting('compraOculta', { ...(await getSetting('compraOculta', {})), [it.clave]: hasta });
+    toast(`${it.nombre}: quitado de la lista`); onDone();
+  };
+  const c = textoCantidad(it, g);
+  return html`
+    <div class="form">
+      <label>¿Cuánto quieres comprar?<${Num} value=${g} onChange=${v => setG(v || 0)} suffix="g" /></label>
+      <small class="muted">Son ${c.principal}${c.detalle ? ` (${c.detalle})` : ''}. Vale para estos ${dias} días.</small>
+      <button class="btn" disabled=${!g} onClick=${guardar}>Usar esta cantidad</button>
+      <button class="btn secondary danger-text" onClick=${quitar}>No lo voy a comprar: quitar de la lista</button>
+      <button class="link small" onClick=${onVolver}>Volver</button>
     </div>`;
 }
