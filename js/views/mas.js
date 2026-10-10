@@ -2,6 +2,7 @@
 import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getPrefs, setSetting } from '../db.js';
 import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar } from '../nube.js';
+import { listaSupl, guardarListaSupl, idSupl } from '../suplementos.js';
 import { estadoWhoop, conectarWhoop, comprobarWhoop, desconectarWhoop, sincronizarWhoop } from '../whoop.js';
 import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
@@ -85,6 +86,7 @@ export function Mas({ go }) {
         </div>
       </section>
 
+      <${ListaSuplementos} />
       <${Nube} />
       <${Whoop} />
       <${TusDatos} persist=${persist} />
@@ -137,6 +139,39 @@ function Nube() {
         })}>Crear cuenta</button>
       </div>
       <small class="muted">La primera vez pulsa "Crear cuenta" (contraseña de 6 caracteres o más). Después, siempre "Entrar".</small>
+    </section>`;
+}
+
+// ---------- Suplementos: tu lista ----------
+function ListaSuplementos() {
+  const lista = useLive(listaSupl, []);
+  const [nombre, setNombre] = useState('');
+  const [dosis, setDosis] = useState('');
+  if (!lista) return null;
+  const cambiar = (i, campo, v) => guardarListaSupl(lista.map((s, j) => (j === i ? { ...s, [campo]: v } : s)));
+  const anadir = () => {
+    const n = nombre.trim();
+    if (!n) return;
+    let id = idSupl(n);
+    while (lista.some(s => s.id === id)) id += '-2';
+    guardarListaSupl([...lista, { id, nombre: n, dosis: dosis.trim() }]);
+    setNombre(''); setDosis('');
+  };
+  return html`
+    <section class="card form">
+      <h3>Suplementos</h3>
+      <p class="small muted">Los que tomas aparecen en Hoy para marcarlos con un toque. Tu nutricionista los verá en el informe.</p>
+      ${lista.map((s, i) => html`
+        <div class="inline" key=${s.id}>
+          <input aria-label="Nombre" value=${s.nombre} onChange=${e => e.target.value.trim() && cambiar(i, 'nombre', e.target.value.trim())} />
+          <input aria-label="Dosis" class="supl-dosis" placeholder="dosis" value=${s.dosis} onChange=${e => cambiar(i, 'dosis', e.target.value.trim())} />
+          <button class="icon-btn" aria-label=${'Quitar ' + s.nombre} onClick=${() => confirm(`¿Quitar ${s.nombre} de tu lista?`) && guardarListaSupl(lista.filter((_, j) => j !== i))}><${Icon} name="trash" size=${16} /></button>
+        </div>`)}
+      <div class="inline">
+        <input placeholder="Añadir (ej: Vitamina D)" value=${nombre} onInput=${e => setNombre(e.target.value)} onKeyDown=${e => e.key === 'Enter' && anadir()} />
+        <input class="supl-dosis" placeholder="dosis" value=${dosis} onInput=${e => setDosis(e.target.value)} onKeyDown=${e => e.key === 'Enter' && anadir()} />
+        <button class="btn small" disabled=${!nombre.trim()} onClick=${anadir}>Añadir</button>
+      </div>
     </section>`;
 }
 

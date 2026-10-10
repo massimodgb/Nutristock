@@ -500,3 +500,9 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 /* Tarjeta de Whoop en Hoy: ahora se puede tocar */
 button.card.whoop { width: 100%; text-align: left; color: var(--text); }
 .whoop-ver { color: var(--accent); font-size: 13px; }
+
+/* Suplementos en Hoy */
+.supl { display: flex; flex-direction: column; gap: 8px; }
+.supl-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; }
+.supl-chip small { opacity: .75; font-size: 12px; }
+.supl-dosis { max-width: 90px; }

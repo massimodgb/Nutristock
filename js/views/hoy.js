@@ -15,6 +15,7 @@ import { leer } from './entreno.js';
 import { estadoCompra, textoStock } from './stock.js';
 import { exportarCopia, estadoCopia } from '../copias.js';
 import { resumenWhoop, colorRecuperacion, estadoWhoop } from '../whoop.js';
+import { listaSupl, tomadosDia, marcarSupl } from '../suplementos.js';
 
 export function Hoy({ go }) {
   const [date, setDate] = useState(todayStr());
@@ -71,6 +72,7 @@ export function Hoy({ go }) {
         onCopiar=${(titulo, entradas) => setSheet({ type: 'copiar', titulo, entradas })}
         onOtroDia=${() => setSheet({ type: 'otrodia' })} />
       <${Agua} date=${date} prefs=${prefs} />
+      <${Suplementos} date=${date} />
       ${isToday && html`<${PesoHoy} date=${date} />`}
       <${WhoopHoy} date=${date} comido=${total.kcal} isToday=${isToday} go=${go} />
       <${EntrenoHoy} date=${date} go=${go} />
@@ -925,4 +927,23 @@ function WhoopHoy({ date, comido, isToday, go }) {
       ${w.hrv != null && html`<small class="muted">VFC ${fmt(w.hrv)} ms · pulso en reposo ${fmt(w.fcReposo)}${w.entrenos.length ? ` · ${w.entrenos.map(e => `${e.deporte || 'entreno'} ${fmt(e.strain, 1)}`).join(', ')}` : ''}</small>`}
       <small class="whoop-ver">Ver cómo se cruza con lo que comes ›</small>
     </button>`;
+}
+
+// Suplementos del día: un toque para marcar que lo tomaste
+function Suplementos({ date }) {
+  const lista = useLive(listaSupl, []);
+  const tomados = useLive(() => tomadosDia(date), [date]);
+  if (!lista || !tomados || !lista.length) return null;
+  const n = lista.filter(s => tomados[s.id]).length;
+  return html`
+    <section class="card supl">
+      <div class="supl-top"><span>Suplementos</span><small class="muted">${n} de ${lista.length}</small></div>
+      <div class="chips wrap">
+        ${lista.map(s => html`
+          <button class=${'chip supl-chip' + (tomados[s.id] ? ' on' : '')} aria-pressed=${!!tomados[s.id]}
+            onClick=${() => marcarSupl(date, s.id, !tomados[s.id])}>
+            ${tomados[s.id] ? '✓ ' : ''}${s.nombre}${s.dosis ? html` <small>${s.dosis}</small>` : ''}
+          </button>`)}
+      </div>
+    </section>`;
 }

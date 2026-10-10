@@ -8,6 +8,8 @@ import { leer } from './entreno.js';
 import { textoFormato } from '../entreno/parser.js';
 import { mejorRM, nombreRM } from '../entreno/rm.js';
 import { BENCHMARKS } from '../entreno/datos.js';
+import { resumenWhoop } from '../whoop.js';
+import { listaSupl, tomadosEntre } from '../suplementos.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const n1 = (x, d = 0) => fmt(x || 0, d);
@@ -15,7 +17,7 @@ const COMIDA_NOMBRE = (plan, id) => (id === 'extra' ? 'Fuera del plan' : plan?.c
 
 // ---------- Reunir todos los datos del periodo ----------
 async function reunir(desde, hasta) {
-  const [logs, pesosTodos, plan, foods, prefs, perfil, workouts, marcas, aguas] = await Promise.all([
+  const [logs, pesosTodos, plan, foods, prefs, perfil, workouts, marcas, aguas, whoopFilas, supl, suplTomados] = await Promise.all([
     db.logs.where('date').between(desde, hasta, true, true).toArray(),
     db.weights.toArray(),
     activePlan(),
@@ -25,7 +27,14 @@ async function reunir(desde, hasta) {
     db.workouts.where('date').between(desde, hasta, true, true).toArray(),
     db.marcas.toArray(),
     db.settings.where('key').between('agua:' + desde, 'agua:' + hasta, true, true).toArray(),
+    db.whoop.where('fecha').between(desde, hasta, true, true).toArray(),
+    listaSupl(),
+    tomadosEntre(desde, hasta),
   ]);
+  // Whoop por día (si está conectado)
+  const porFechaW = {};
+  for (const f of whoopFilas) (porFechaW[f.fecha] ||= []).push(f);
+  const whoop = Object.fromEntries(Object.entries(porFechaW).map(([f, fs]) => [f, resumenWhoop(fs)]));
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
   const ref = plan ? planRef(plan, byId, prefs) : null;
   const agua = Object.fromEntries(aguas.map(a => [a.key.slice(5), a.value]));
@@ -52,6 +61,8 @@ async function reunir(desde, hasta) {
       cumplimiento: dl.length && total ? hechos / total : null,
       agua: agua[date] || 0, peso: pesos[date] ?? null,
       entreno: ws.length > 0, rpe: rpes.length ? rpes.reduce((a, b) => a + b, 0) / rpes.length : null,
+      w: whoop[date] || null,
+      supl: supl.filter(x => suplTomados[date]?.[x.id]).map(x => x.nombre),
     };
   });
   const conDatos = dias.filter(d => d.registros);
@@ -77,7 +88,14 @@ async function reunir(desde, hasta) {
   const masFrecuentes = Object.entries(frec).sort((a, b) => b[1].veces - a[1].veces).slice(0, 15);
   const balance = calcularBalance({ perfil, plan: ref, weights: pesosTodos, logs: await db.logs.where('date').aboveOrEqual(addDays(hasta, -27)).toArray() });
   const pesosPeriodo = pesosTodos.filter(w => w.date >= desde && w.date <= hasta).sort((a, b) => a.date.localeCompare(b.date));
-  return { desde, hasta, logs, dias, conDatos, medias, ref, plan, byId, porComida, masFrecuentes, balance, pesosPeriodo, workouts, marcas, perfil };
+  // Medias de Whoop (los días que hay dato)
+  const mediaW = (k, soloCompletos) => {
+    const v = dias.map(d => d.w).filter(w => w && w[k] != null && (!soloCompletos || !w.enCurso)).map(w => w[k]);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+  const whoopMedias = { rec: mediaW('recuperacion'), horas: mediaW('horas'), sueno: mediaW('sueno'), strain: mediaW('strain'), kcal: mediaW('kcal', true), hrv: mediaW('hrv'), fc: mediaW('fcReposo'), dias: dias.filter(d => d.w?.recuperacion != null).length };
+  const suplResumen = supl.map(x => ({ ...x, dias: dias.filter(d => suplTomados[d.date]?.[x.id]).length }));
+  return { desde, hasta, logs, dias, conDatos, medias, ref, plan, byId, porComida, masFrecuentes, balance, pesosPeriodo, workouts, marcas, perfil, whoopMedias, suplResumen };
 }
 
 // ---------- Informe para la nutricionista ----------
@@ -113,9 +131,12 @@ function htmlNutricion(D) {
   ${balance.gasto ? `<br>Gasto estimado: ${n1(balance.gasto)} kcal/día (${balance.fuenteGasto === 'real' ? 'calculado con sus datos de comida y peso' : 'fórmula Mifflin-St Jeor × actividad'}).` : ''}
   ${balance.gasto && balance.planKcal ? `<br>Con el plan medio: ${fraseCambio(balance.proyPlan)}; con lo que come de verdad: ${fraseCambio(balance.proyComido)}.` : ''}</p>
 
+  ${htmlWhoop(D, true)}
+  ${htmlSupl(D)}
+
   <h2>Día a día</h2>
-  <table class="peq"><tr><th>Día</th><th>kcal</th><th>P</th><th>C</th><th>G</th><th>Fibra</th><th>Sal</th><th>Agua</th><th>Peso</th><th>Plan</th><th>Fuera</th><th>Entreno</th></tr>
-  ${dias.map(d => `<tr><td>${fmtDate(d.date)}</td><td>${d.registros ? n1(d.n.kcal) : '—'}</td><td>${d.registros ? n1(d.n.prot) : ''}</td><td>${d.registros ? n1(d.n.carb) : ''}</td><td>${d.registros ? n1(d.n.fat) : ''}</td><td>${d.registros ? n1(d.n.fib) : ''}</td><td>${d.registros ? n1(d.n.salt, 1) : ''}</td><td>${d.agua ? n1(d.agua / 1000, 1) + ' L' : ''}</td><td>${d.peso ? n1(d.peso, 1) : ''}</td><td>${d.cumplimiento != null ? n1(d.cumplimiento * 100) + '%' : ''}</td><td>${d.fuera ? n1(d.fuera) : ''}</td><td>${d.entreno ? 'Sí' + (d.rpe ? ` (RPE ${n1(d.rpe, 1)})` : '') : ''}</td></tr>`).join('')}
+  <table class="peq"><tr><th>Día</th><th>kcal</th><th>P</th><th>C</th><th>G</th><th>Fibra</th><th>Sal</th><th>Agua</th><th>Peso</th><th>Plan</th><th>Fuera</th><th>Entreno</th>${D.whoopMedias.dias ? '<th>Recup.</th><th>Gasto Whoop</th>' : ''}</tr>
+  ${dias.map(d => `<tr><td>${fmtDate(d.date)}</td><td>${d.registros ? n1(d.n.kcal) : '—'}</td><td>${d.registros ? n1(d.n.prot) : ''}</td><td>${d.registros ? n1(d.n.carb) : ''}</td><td>${d.registros ? n1(d.n.fat) : ''}</td><td>${d.registros ? n1(d.n.fib) : ''}</td><td>${d.registros ? n1(d.n.salt, 1) : ''}</td><td>${d.agua ? n1(d.agua / 1000, 1) + ' L' : ''}</td><td>${d.peso ? n1(d.peso, 1) : ''}</td><td>${d.cumplimiento != null ? n1(d.cumplimiento * 100) + '%' : ''}</td><td>${d.fuera ? n1(d.fuera) : ''}</td><td>${d.entreno ? 'Sí' + (d.rpe ? ` (RPE ${n1(d.rpe, 1)})` : '') : ''}</td>${D.whoopMedias.dias ? `<td>${d.w?.recuperacion != null ? n1(d.w.recuperacion) + '%' : ''}</td><td>${d.w?.kcal && !d.w.enCurso ? n1(d.w.kcal) : ''}</td>` : ''}</tr>`).join('')}
   </table>
 
   <h2>Por comida</h2>
@@ -163,6 +184,8 @@ function htmlEntreno(D) {
   ${pesosPeriodo.length ? ` Peso corporal: ${n1(pesosPeriodo[0].kg, 1)} → ${n1(pesosPeriodo.at(-1).kg, 1)} kg.` : ''}
   ${con.length ? ` Nutrición media: ${n1(D.medias.kcal)} kcal, ${n1(D.medias.prot)} g de proteína y ${n1(D.medias.carb)} g de carbohidratos al día.` : ''}</p>
 
+  ${htmlWhoop(D, false)}
+
   <h2>Sesiones</h2>
   ${sesiones.length === 0 ? '<p>No hay entrenos registrados en el periodo.</p>' : sesiones.map(w => {
     const p = leer(w);
@@ -170,6 +193,7 @@ function htmlEntreno(D) {
     const dia = dias.find(d => d.date === w.date);
     return `<div class="sesion"><h3>${fmtDate(w.date, { weekday: 'long', day: 'numeric', month: 'long' })}</h3>
       ${dia?.registros ? `<p class="nota">Ese día: ${n1(dia.n.kcal)} kcal · P ${n1(dia.n.prot)} g · C ${n1(dia.n.carb)} g</p>` : ''}
+      ${dia?.w?.recuperacion != null ? `<p class="nota">Whoop: recuperación ${n1(dia.w.recuperacion)} %${dia.w.horas != null ? ` · durmió ${n1(dia.w.horas, 1)} h` : ''}${dia.w.strain != null ? ` · esfuerzo del día ${n1(dia.w.strain, 1)}` : ''}</p>` : ''}
       ${p.secciones.map((s, si) => {
         const rs = r[si] || {};
         const res = [rs.hecho ? '✓ hecho' : 'no marcado', rs.tiempo && `tiempo ${esc(rs.tiempo)}`, rs.porBloque && `bloques: ${esc(rs.porBloque)}`,
@@ -194,10 +218,34 @@ function htmlEntreno(D) {
   ${bench.map(({ b, mias }) => `<tr><td>${esc(b.name)}</td><td>${mias.sort((a, c) => a.date.localeCompare(c.date)).map(m => `${esc(m.resultado)} (${fmtDate(m.date, { day: 'numeric', month: 'short' })})`).join(' · ')}</td></tr>`).join('')}</table>` : ''}
 
   <h2>Día a día</h2>
-  <table class="peq"><tr><th>Día</th><th>Entreno</th><th>RPE medio</th><th>Peso</th><th>kcal</th><th>Proteína</th><th>Carbohidratos</th></tr>
-  ${dias.map(d => `<tr><td>${fmtDate(d.date)}</td><td>${d.entreno ? 'Sí' : ''}</td><td>${d.rpe ? n1(d.rpe, 1) : ''}</td><td>${d.peso ? n1(d.peso, 1) : ''}</td><td>${d.registros ? n1(d.n.kcal) : ''}</td><td>${d.registros ? n1(d.n.prot) + ' g' : ''}</td><td>${d.registros ? n1(d.n.carb) + ' g' : ''}</td></tr>`).join('')}
+  <table class="peq"><tr><th>Día</th><th>Entreno</th><th>RPE medio</th>${D.whoopMedias.dias ? '<th>Recup.</th><th>Sueño</th><th>Esfuerzo</th>' : ''}<th>Peso</th><th>kcal</th><th>Proteína</th><th>Carbohidratos</th></tr>
+  ${dias.map(d => `<tr><td>${fmtDate(d.date)}</td><td>${d.entreno ? 'Sí' : ''}</td><td>${d.rpe ? n1(d.rpe, 1) : ''}</td>${D.whoopMedias.dias ? `<td>${d.w?.recuperacion != null ? n1(d.w.recuperacion) + '%' : ''}</td><td>${d.w?.horas != null ? n1(d.w.horas, 1) + ' h' : ''}</td><td>${d.w?.strain != null ? n1(d.w.strain, 1) : ''}</td>` : ''}<td>${d.peso ? n1(d.peso, 1) : ''}</td><td>${d.registros ? n1(d.n.kcal) : ''}</td><td>${d.registros ? n1(d.n.prot) + ' g' : ''}</td><td>${d.registros ? n1(d.n.carb) + ' g' : ''}</td></tr>`).join('')}
   </table>
   <p class="nota">Generado con NutriStock el ${fmtDate(todayStr(), { day: 'numeric', month: 'long', year: 'numeric' })}.</p>`;
+}
+
+// Bloque de Whoop (para los dos informes)
+function htmlWhoop(D, nutricion) {
+  const W = D.whoopMedias;
+  if (!W.dias) return '';
+  const comido = D.medias.kcal;
+  return `<h2>Recuperación y gasto (Whoop)</h2>
+  <table><tr><th></th><th>Media del periodo</th></tr>
+  ${W.rec != null ? `<tr><td>Recuperación</td><td>${n1(W.rec)} % (${W.dias} días con dato)</td></tr>` : ''}
+  ${W.hrv != null ? `<tr><td>VFC / pulso en reposo</td><td>${n1(W.hrv)} ms / ${n1(W.fc)} ppm</td></tr>` : ''}
+  ${W.horas != null ? `<tr><td>Sueño</td><td>${n1(W.horas, 1)} h${W.sueno != null ? ` (rendimiento del sueño ${n1(W.sueno)} %)` : ''}</td></tr>` : ''}
+  ${W.strain != null ? `<tr><td>Esfuerzo (strain, 0-21)</td><td>${n1(W.strain, 1)}</td></tr>` : ''}
+  ${W.kcal != null ? `<tr><td>Gasto total según Whoop</td><td>${n1(W.kcal)} kcal/día${nutricion && comido ? ` · come ${n1(comido)} kcal, ${comido < W.kcal ? 'déficit' : 'superávit'} de ${n1(Math.abs(W.kcal - comido))} kcal/día (estimación de Whoop)` : ''}</td></tr>` : ''}
+  </table>`;
+}
+
+// Suplementos: cuántos días tomó cada uno
+function htmlSupl(D) {
+  if (!D.suplResumen.length) return '';
+  return `<h2>Suplementos</h2>
+  <table><tr><th>Suplemento</th><th>Dosis</th><th>Días tomado</th></tr>
+  ${D.suplResumen.map(x => `<tr><td>${esc(x.nombre)}</td><td>${esc(x.dosis || '')}</td><td>${x.dias} de ${D.dias.length}</td></tr>`).join('')}
+  </table>`;
 }
 
 // ---------- CSV para Excel ----------
@@ -213,8 +261,8 @@ const csv = (cab, filas) => '﻿' + [cab, ...filas].map(f => f.map(celda).join('
 function csvNutricion(D) {
   const { plan, dias, logs } = D;
   return [
-    ['nutricion_por_dia.csv', csv(['fecha', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'agua_ml', 'peso_kg', 'fuera_plan_kcal', 'cumplimiento_plan_pct', 'entreno', 'rpe_medio'],
-      dias.map(d => [d.date, d.registros ? d.n.kcal : null, d.registros ? d.n.prot : null, d.registros ? d.n.carb : null, d.registros ? d.n.fat : null, d.registros ? d.n.fib : null, d.registros ? d.n.sug : null, d.registros ? d.n.sat : null, d.registros ? d.n.salt : null, d.agua || null, d.peso, d.fuera || null, d.cumplimiento != null ? d.cumplimiento * 100 : null, d.entreno ? 'si' : '', d.rpe]))],
+    ['nutricion_por_dia.csv', csv(['fecha', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'agua_ml', 'peso_kg', 'fuera_plan_kcal', 'cumplimiento_plan_pct', 'entreno', 'rpe_medio', 'recuperacion_pct', 'sueno_h', 'esfuerzo', 'gasto_whoop_kcal', 'suplementos'],
+      dias.map(d => [d.date, d.registros ? d.n.kcal : null, d.registros ? d.n.prot : null, d.registros ? d.n.carb : null, d.registros ? d.n.fat : null, d.registros ? d.n.fib : null, d.registros ? d.n.sug : null, d.registros ? d.n.sat : null, d.registros ? d.n.salt : null, d.agua || null, d.peso, d.fuera || null, d.cumplimiento != null ? d.cumplimiento * 100 : null, d.entreno ? 'si' : '', d.rpe, d.w?.recuperacion ?? null, d.w?.horas ?? null, d.w?.strain ?? null, d.w?.kcal && !d.w.enCurso ? d.w.kcal : null, d.supl.join(', ')]))],
     ['nutricion_registros.csv', csv(['fecha', 'hora', 'comida', 'alimento', 'gramos', 'pesado_en', 'gramos_crudo', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'aproximado'],
       [...logs].sort((a, b) => a.date.localeCompare(b.date) || (a.ts || 0) - (b.ts || 0)).map(l => [l.date, l.ts > 1e12 ? new Date(l.ts).toTimeString().slice(0, 5) : '', COMIDA_NOMBRE(plan, l.mealId), l.name, l.g, l.g ? (l.crudo ? 'crudo' : 'cocido') : '', l.rawG, l.n.kcal, l.n.prot, l.n.carb, l.n.fat, l.n.fib, l.n.sug, l.n.sat, l.n.salt, l.aprox ? 'si' : '']))],
     ['peso.csv', csv(['fecha', 'peso_kg'], D.pesosPeriodo.map(w => [w.date, w.kg]))],
@@ -243,6 +291,8 @@ function csvEntreno(D) {
     ['marcas_fuerza.csv', csv(['ejercicio', 'repeticiones', 'kg', 'fecha'], marcas)],
     ['benchmarks.csv', csv(['wod', 'resultado', 'fecha'], bench)],
     ['peso.csv', csv(['fecha', 'peso_kg'], D.pesosPeriodo.map(w => [w.date, w.kg]))],
+    ...(D.whoopMedias.dias ? [['whoop.csv', csv(['fecha', 'recuperacion_pct', 'vfc_ms', 'pulso_reposo', 'sueno_h', 'sueno_pct', 'esfuerzo', 'gasto_kcal', 'entrenos_whoop'],
+      D.dias.filter(d => d.w).map(d => [d.date, d.w.recuperacion, d.w.hrv, d.w.fcReposo, d.w.horas, d.w.sueno, d.w.strain, d.w.enCurso ? null : d.w.kcal, d.w.entrenos.map(e => `${e.deporte || 'entreno'} ${Math.round((e.strain || 0) * 10) / 10}`).join(', ')]))]] : []),
   ];
 }
 
