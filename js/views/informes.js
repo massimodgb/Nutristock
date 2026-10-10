@@ -10,6 +10,7 @@ import { mejorRM, nombreRM } from '../entreno/rm.js';
 import { BENCHMARKS } from '../entreno/datos.js';
 import { resumenWhoop } from '../whoop.js';
 import { listaSupl, tomadosEntre } from '../suplementos.js';
+import { MICROS, microsMedios } from '../data/micros.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const n1 = (x, d = 0) => fmt(x || 0, d);
@@ -95,7 +96,8 @@ async function reunir(desde, hasta) {
   };
   const whoopMedias = { rec: mediaW('recuperacion'), horas: mediaW('horas'), sueno: mediaW('sueno'), strain: mediaW('strain'), kcal: mediaW('kcal', true), hrv: mediaW('hrv'), fc: mediaW('fcReposo'), dias: dias.filter(d => d.w?.recuperacion != null).length };
   const suplResumen = supl.map(x => ({ ...x, dias: dias.filter(d => suplTomados[d.date]?.[x.id]).length }));
-  return { desde, hasta, logs, dias, conDatos, medias, ref, plan, byId, porComida, masFrecuentes, balance, pesosPeriodo, workouts, marcas, perfil, whoopMedias, suplResumen };
+  const micros = microsMedios(logs, byId);
+  return { desde, hasta, logs, dias, conDatos, medias, ref, plan, byId, porComida, masFrecuentes, balance, pesosPeriodo, workouts, marcas, perfil, whoopMedias, suplResumen, micros };
 }
 
 // ---------- Informe para la nutricionista ----------
@@ -131,6 +133,7 @@ function htmlNutricion(D) {
   ${balance.gasto ? `<br>Gasto estimado: ${n1(balance.gasto)} kcal/día (${balance.fuenteGasto === 'real' ? 'calculado con sus datos de comida y peso' : 'fórmula Mifflin-St Jeor × actividad'}).` : ''}
   ${balance.gasto && balance.planKcal ? `<br>Con el plan medio: ${fraseCambio(balance.proyPlan)}; con lo que come de verdad: ${fraseCambio(balance.proyComido)}.` : ''}</p>
 
+  ${htmlMicros(D)}
   ${htmlWhoop(D, true)}
   ${htmlSupl(D)}
 
@@ -239,6 +242,17 @@ function htmlWhoop(D, nutricion) {
   </table>`;
 }
 
+// Vitaminas y minerales (media de los días registrados)
+function htmlMicros(D) {
+  const M = D.micros;
+  if (!M?.dias) return '';
+  return `<h2>Vitaminas y minerales (media diaria, sin suplementos)</h2>
+  <table><tr><th></th><th>Media diaria</th><th>Referencia EFSA (hombre adulto)</th><th>%</th></tr>
+  ${MICROS.map(m => `<tr><td>${m.name}</td><td>${n1(M.media[m.k], m.dec)} ${m.unit}</td><td>${n1(m.ref)} ${m.unit}</td><td>${n1(M.media[m.k] / m.ref * 100)} %</td></tr>`).join('')}
+  </table>
+  <p class="nota">Calculado con el ${n1(M.cobertura * 100)} % de las calorías registradas (los platos aproximados fuera del plan no traen estos datos). Valores de tablas USDA/BEDCA o de la etiqueta.</p>`;
+}
+
 // Suplementos: cuántos días tomó cada uno
 function htmlSupl(D) {
   if (!D.suplResumen.length) return '';
@@ -261,8 +275,8 @@ const csv = (cab, filas) => '﻿' + [cab, ...filas].map(f => f.map(celda).join('
 function csvNutricion(D) {
   const { plan, dias, logs } = D;
   return [
-    ['nutricion_por_dia.csv', csv(['fecha', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'agua_ml', 'peso_kg', 'fuera_plan_kcal', 'cumplimiento_plan_pct', 'entreno', 'rpe_medio', 'recuperacion_pct', 'sueno_h', 'esfuerzo', 'gasto_whoop_kcal', 'suplementos'],
-      dias.map(d => [d.date, d.registros ? d.n.kcal : null, d.registros ? d.n.prot : null, d.registros ? d.n.carb : null, d.registros ? d.n.fat : null, d.registros ? d.n.fib : null, d.registros ? d.n.sug : null, d.registros ? d.n.sat : null, d.registros ? d.n.salt : null, d.agua || null, d.peso, d.fuera || null, d.cumplimiento != null ? d.cumplimiento * 100 : null, d.entreno ? 'si' : '', d.rpe, d.w?.recuperacion ?? null, d.w?.horas ?? null, d.w?.strain ?? null, d.w?.kcal && !d.w.enCurso ? d.w.kcal : null, d.supl.join(', ')]))],
+    ['nutricion_por_dia.csv', csv(['fecha', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'agua_ml', 'peso_kg', 'fuera_plan_kcal', 'cumplimiento_plan_pct', 'entreno', 'rpe_medio', 'recuperacion_pct', 'sueno_h', 'esfuerzo', 'gasto_whoop_kcal', 'suplementos', ...MICROS.map(m => `${m.name.toLowerCase().replace(/ /g, '_')}_${m.unit === 'µg' ? 'ug' : m.unit}`)],
+      dias.map(d => [d.date, d.registros ? d.n.kcal : null, d.registros ? d.n.prot : null, d.registros ? d.n.carb : null, d.registros ? d.n.fat : null, d.registros ? d.n.fib : null, d.registros ? d.n.sug : null, d.registros ? d.n.sat : null, d.registros ? d.n.salt : null, d.agua || null, d.peso, d.fuera || null, d.cumplimiento != null ? d.cumplimiento * 100 : null, d.entreno ? 'si' : '', d.rpe, d.w?.recuperacion ?? null, d.w?.horas ?? null, d.w?.strain ?? null, d.w?.kcal && !d.w.enCurso ? d.w.kcal : null, d.supl.join(', '), ...MICROS.map(m => D.micros.porDia[d.date]?.[m.k] ?? null)]))],
     ['nutricion_registros.csv', csv(['fecha', 'hora', 'comida', 'alimento', 'gramos', 'pesado_en', 'gramos_crudo', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'aproximado'],
       [...logs].sort((a, b) => a.date.localeCompare(b.date) || (a.ts || 0) - (b.ts || 0)).map(l => [l.date, l.ts > 1e12 ? new Date(l.ts).toTimeString().slice(0, 5) : '', COMIDA_NOMBRE(plan, l.mealId), l.name, l.g, l.g ? (l.crudo ? 'crudo' : 'cocido') : '', l.rawG, l.n.kcal, l.n.prot, l.n.carb, l.n.fat, l.n.fib, l.n.sug, l.n.sat, l.n.salt, l.aprox ? 'si' : '']))],
     ['peso.csv', csv(['fecha', 'peso_kg'], D.pesosPeriodo.map(w => [w.date, w.kg]))],

@@ -31,8 +31,19 @@ export async function buscarCodigo(barcode) {
       fat: v('fat'), sat: v('saturated-fat'), fib: v('fiber'),
       salt: v('salt') ?? (v('sodium') != null ? Math.round(v('sodium') * 2.5 * 100) / 100 : null),
     },
+    micros: microsOFF(nu),
     source: 'off',
   };
+}
+
+// Vitaminas y minerales si la etiqueta los trae (Open Food Facts los da en gramos por 100 g)
+function microsOFF(nu) {
+  const g = k => { const x = Number(nu[k + '_100g']); return Number.isFinite(x) && nu[k + '_100g'] !== '' ? x : null; };
+  const out = {};
+  const pon = (k, x, factor, dec) => { if (x != null) out[k] = Math.round(x * factor * 10 ** dec) / 10 ** dec; };
+  pon('fe', g('iron'), 1000, 2); pon('mg', g('magnesium'), 1000, 1); pon('k', g('potassium'), 1000, 0);
+  pon('ca', g('calcium'), 1000, 0); pon('vc', g('vitamin-c'), 1000, 1); pon('vd', g('vitamin-d'), 1e6, 2); pon('b12', g('vitamin-b12'), 1e6, 2);
+  return Object.keys(out).length ? out : null;
 }
 
 // ---------- Texto de etiqueta (Live Text) ----------

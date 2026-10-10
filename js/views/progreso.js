@@ -8,6 +8,8 @@ import { sumN, planRef, mealBlocks, blockFoods, visibleFood, fmt, todayStr, addD
 import { Seg, Empty } from '../ui.js';
 import { resumenWhoop, colorRecuperacion } from '../whoop.js';
 import { FACTORES, MIN_DIAS, paresCruce, compararMitades, fraseCruce, textoValor } from '../cruces.js';
+import { MICROS, microsMedios } from '../data/micros.js';
+import { listaSupl } from '../suplementos.js';
 
 const DIAS_CRUCES = 60;
 const MACROS = [
@@ -98,6 +100,8 @@ export function Progreso({ go }) {
           <${MediaFrentePlan} medias=${medias} objetivo=${ref} />
           <p class="pg-micros small muted">Fibra ${fmt(medias.fib)} g · azúcar ${fmt(medias.sug)} g · saturadas ${fmt(medias.sat, 1)} g · sal ${fmt(medias.salt, 1)} g (media al día)</p>
         </section>
+
+        <${Micros} logs=${logs.filter(l => l.date >= desde && l.date <= hoy)} byId=${byId} />
 
         <section class="card">
           <h3>Día a día</h3>
@@ -394,4 +398,49 @@ function Dispersion({ pares, factor, umbral, sel, onSel }) {
         </g>`)}
     </svg>
     <p class="muted small">Cada punto es un día. Arriba, mejor recuperación. Toca uno para ver qué día fue${umbral != null ? '; la raya separa los días con menos y con más' : ''}.</p>`;
+}
+
+// ---------- Vitaminas y minerales ----------
+const SUPL_MICRO = [[/magnes/i, 'mg'], [/electrol/i, 'k'], [/potas/i, 'k'], [/hierro/i, 'fe'], [/calcio/i, 'ca'], [/vitamina ?d|vit\.? ?d\b/i, 'vd'], [/b12/i, 'b12'], [/vitamina ?c\b/i, 'vc']];
+function Micros({ logs, byId }) {
+  const supl = useLive(listaSupl, []);
+  if (!supl) return null;
+  const r = microsMedios(logs, byId);
+  if (!r.dias) return null;
+  const tomas = supl.filter(s => SUPL_MICRO.some(([re]) => re.test(s.nombre)));
+  const bajos = MICROS.filter(m => r.media[m.k] / m.ref < 0.6);
+  return html`
+    <section class="card">
+      <h3>Vitaminas y minerales</h3>
+      <p class="small muted">Media al día de lo que comes frente a lo recomendado para un hombre adulto (EFSA).${bajos.length ? ` Por debajo: ${bajos.map(m => m.name.charAt(0).toLowerCase() + m.name.slice(1)).join(', ')}.` : ''}</p>
+      <div class="pg-ledger">
+        ${MICROS.map(m => {
+          const pct = r.media[m.k] / m.ref;
+          const estado = pct >= 0.9 ? 'ok' : pct < 0.6 ? 'alto' : '';
+          return html`
+            <div class="pg-fila">
+              <span class="pg-nombre">${m.name}</span>
+              <span class="pg-num"><b>${fmt(r.media[m.k], m.dec)}</b><span class="muted"> / ${fmt(m.ref)} ${m.unit}</span></span>
+              <div class="pg-track" aria-hidden="true">
+                <div class="pg-fill" style=${{ width: Math.min(pct / 1.3, 1) * 100 + '%', background: pct >= 0.9 ? 'var(--accent)' : pct < 0.6 ? 'var(--warn)' : 'var(--fat)' }}></div>
+                <div class="pg-meta" style=${{ left: (1 / 1.3) * 100 + '%' }}></div>
+              </div>
+              <span class=${'pg-pct ' + estado}>${fmt(pct * 100)} %</span>
+            </div>`;
+        })}
+      </div>
+      ${r.cobertura < 0.9 && html`<p class="small muted">Calculado con el ${fmt(r.cobertura * 100)} % de lo que comiste: lo de fuera del plan y los platos aproximados no traen estos datos.</p>`}
+      ${tomas.length > 0 && html`<p class="small muted">No incluye tus suplementos (${tomas.map(s => s.nombre).join(', ')}), que suman a lo de aquí.</p>`}
+      <details class="porque">
+        <summary>¿Por qué importan para entrenar?</summary>
+        <ul>
+          <li><b>Magnesio y potasio</b>: músculos y nervios; se pierden con el sudor. Si se quedan cortos, más calambres y peor recuperación.</li>
+          <li><b>Hierro</b>: lleva el oxígeno al músculo. Poco hierro = te cansas antes.</li>
+          <li><b>Calcio y vitamina D</b>: huesos fuertes. La vitamina D se forma sobre todo con el sol; la comida aporta poca, por eso suele salir baja.</li>
+          <li><b>Vitamina C</b>: defensas y ayuda a absorber el hierro (fruta y verdura).</li>
+          <li><b>Vitamina B12</b>: energía y glóbulos rojos; solo está en alimentos de origen animal.</li>
+        </ul>
+        <p class="small muted">Valores aproximados de tablas (USDA/BEDCA) o de la etiqueta del producto. Si algo sale bajo varias semanas, coméntalo con tu nutricionista.</p>
+      </details>
+    </section>`;
 }

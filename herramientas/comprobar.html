@@ -135,6 +135,14 @@
     });
     await prueba('Lista única: el pan se pide en rebanadas', () => LC.textoCantidad({ g: 420 }, 420, byId['pan-integral']).principal === '14 rebanadas');
 
+    const Mi = await import('/js/data/micros.js');
+    await prueba('Vitaminas: todos los alimentos base tienen datos', () => FOODS.every(f => Mi.MICRO_DATA[f.id]) || FOODS.filter(f => !Mi.MICRO_DATA[f.id]).map(f => f.id));
+    await prueba('Vitaminas: 320 g de pollo crudo ≈ 1,3 mg de hierro y 1069 mg de potasio', () => {
+      const m = Mi.microsDe(byId['pollo-pechuga'], 320, byId);
+      return Math.round(m.fe * 10) === 13 && Math.round(m.k) === 1069 || m;
+    });
+    await prueba('Vitaminas: un producto tuyo usa los datos de su alimento base', () => Mi.microsDe({ id: 'p-x', genericId: 'espinacas' }, 100, byId).fe === 2.7);
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;
