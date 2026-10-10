@@ -3,6 +3,7 @@ import { html, render, useState, useEffect } from './lib.js';
 import { seed } from './db.js';
 import { copiaDiaria } from './copias.js';
 import { iniciarNube } from './nube.js';
+import { iniciarWhoop } from './whoop.js';
 import { Icon } from './ui.js';
 import { Hoy } from './views/hoy.js';
 import { Despensa } from './views/despensa.js';
@@ -64,6 +65,7 @@ seed()
     render(html`<${App} />`, raiz);
     window.__arrancada = true;
     copiaDiaria(); // copia interna automática, una al día
+    iniciarWhoop(); // trae los datos de Whoop cuando hay sesión
     iniciarNube(); // si has entrado con tu cuenta, sincroniza con la nube
   })
   .catch(e => {

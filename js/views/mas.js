@@ -2,6 +2,7 @@
 import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getPrefs, setSetting } from '../db.js';
 import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar } from '../nube.js';
+import { estadoWhoop, conectarWhoop, comprobarWhoop, desconectarWhoop, sincronizarWhoop } from '../whoop.js';
 import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
 import { Num, Toggle, Icon, Sheet, toast } from '../ui.js';
@@ -85,6 +86,7 @@ export function Mas({ go }) {
       </section>
 
       <${Nube} />
+      <${Whoop} />
       <${TusDatos} persist=${persist} />
 
       <p class="muted small center">NutriStock · Fase 1</p>
@@ -135,6 +137,39 @@ function Nube() {
         })}>Crear cuenta</button>
       </div>
       <small class="muted">La primera vez pulsa "Crear cuenta" (contraseña de 6 caracteres o más). Después, siempre "Entrar".</small>
+    </section>`;
+}
+
+// ---------- Whoop ----------
+function Whoop() {
+  const [nube, setNube] = useState(estadoNube());
+  const est = useLive(estadoWhoop, []);
+  const [msg, setMsg] = useState(null);
+  const [trabajando, setTrabajando] = useState(false);
+  useEffect(() => escucharNube(setNube), []);
+  if (!est) return null;
+  const accion = async (fn, ok) => {
+    setMsg(null); setTrabajando(true);
+    try { const r = await fn(); if (ok) setMsg({ texto: ok(r) }); } catch (err) { setMsg({ error: true, texto: err.message }); }
+    setTrabajando(false);
+  };
+  const ultima = est.ultima ? new Date(est.ultima).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : null;
+  return html`
+    <section class="card form">
+      <h3>Whoop</h3>
+      ${!nube.conectado ? html`<p class="small muted">Para conectar Whoop, primero entra con tu cuenta en "Nube" (aquí arriba).</p>`
+        : est.conectado ? html`
+          <div class="aviso ok"><span><b>Whoop conectado ✓</b> ${ultima ? `Última actualización: ${ultima}.` : ''}</span></div>
+          <p class="small muted">Recuperación, sueño, esfuerzo y calorías gastadas aparecen en Hoy. Se actualiza solo al abrir la app. Si cambias tu peso en Whoop, se apunta solo.</p>
+          <button class="btn secondary" disabled=${trabajando} onClick=${() => accion(() => sincronizarWhoop({ forzar: true }), n => n == null ? 'Actualizado.' : `Actualizado ✓ (${n} datos)`)}>${trabajando ? 'Actualizando…' : 'Actualizar ahora'}</button>
+          <button class="link small" onClick=${() => confirm('¿Desconectar Whoop? Los datos ya traídos se quedan.') && accion(desconectarWhoop)}>Desconectar Whoop</button>`
+        : html`
+          ${est.reconectar && html`<p class="aviso warn small">Whoop pidió volver a conectar (el permiso caducó o se quitó).</p>`}
+          <p class="small">Trae tu recuperación, sueño, esfuerzo (strain), calorías gastadas, entrenos y peso.</p>
+          <button class="btn" disabled=${trabajando} onClick=${() => accion(conectarWhoop)}>Conectar Whoop</button>
+          <small class="muted">Se abre Whoop: entra con tu cuenta y pulsa "Allow / Permitir". Después vuelve a NutriStock.</small>
+          ${est.pendiente && html`<button class="btn secondary" disabled=${trabajando} onClick=${() => accion(comprobarWhoop, ok => ok ? 'Whoop conectado ✓' : 'Todavía no aparece conectado. Prueba otra vez "Conectar Whoop".')}>Ya lo he conectado: comprobar</button>`}`}
+      ${msg && html`<p class=${msg.error ? 'error small' : 'aviso ok small'}>${msg.texto}</p>`}
     </section>`;
 }
 

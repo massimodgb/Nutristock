@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NutriStock · Whoop</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 17px/1.5 -apple-system, Segoe UI, sans-serif; max-width: 480px; margin: 0 auto; padding: 48px 20px; text-align: center; background: #111; color: #eee; }
+    h1 { font-size: 26px; }
+    a { display: inline-block; margin-top: 16px; padding: 12px 20px; border-radius: 12px; background: #22c55e; color: #fff; text-decoration: none; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1 id="t">Whoop</h1>
+  <p id="m"></p>
+  <a href="./#mas">Volver a NutriStock</a>
+  <script>
+    const e = new URLSearchParams(location.search).get('estado');
+    const txt = {
+      ok: ['✓ Whoop conectado', 'Ya puedes volver a NutriStock: tus datos de Whoop aparecerán solos. Si esta página se abrió dentro de la app, toca "OK" o "Listo" arriba.'],
+      cancelado: ['No se conectó', 'Cancelaste en Whoop. Puedes intentarlo otra vez desde Más → Whoop.'],
+      caducado: ['Tardó demasiado', 'Vuelve a NutriStock y pulsa otra vez "Conectar Whoop".'],
+      error: ['Algo falló', 'Whoop no aceptó la conexión. Vuelve a intentarlo; si se repite, haz una captura para Claude.'],
+    }[e] || ['Whoop', ''];
+    document.getElementById('t').textContent = txt[0];
+    document.getElementById('m').textContent = txt[1];
+  </script>
+</body>
+</html>

@@ -21,6 +21,8 @@ db.version(2).stores({ logs: '++id, date, foodId' });
 db.version(3).stores({ workouts: '++id, date', marcas: '++id, ejercicio, date' });
 // v4: biblioteca de ejercicios (los que añades a mano, y nombres, vídeos y notas que editas)
 db.version(4).stores({ ejercicios: 'id' });
+// v5: datos de Whoop (recuperación, ciclos, sueño, entrenos), uno por registro
+db.version(5).stores({ whoop: 'id, tipo, fecha' });
 
 // Carga los alimentos base la primera vez y los actualiza si cambian en una versión nueva
 // (sin pisar los que hayas editado tú, por ejemplo al calibrar un factor de cocción).
@@ -160,7 +162,7 @@ export async function deleteLog(log) {
 }
 
 // ---------- Copia de seguridad ----------
-const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios'];
+const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop'];
 
 export async function exportAll() {
   const out = { app: 'nutristock', version: 1, exportedAt: new Date().toISOString() };
@@ -173,7 +175,7 @@ export async function importAll(data) {
   await db.transaction('rw', TABLES.map(t => db[t]), async () => {
     for (const t of TABLES) {
       await db[t].clear();
-      if (data[t]?.length) await db[t].bulkPut(data[t]);
+      if (Array.isArray(data[t]) && data[t].length) await db[t].bulkPut(data[t]);
     }
   });
 }

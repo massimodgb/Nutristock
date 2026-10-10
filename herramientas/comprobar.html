@@ -97,6 +97,18 @@
       return Math.round(r.necesita) === 2240 && Math.round(r.falta) === 1240 || r;
     });
 
+    const W = await import('/js/whoop.js');
+    await prueba('Whoop: un ciclo que empieza a las 23:30 UTC en España (+02:00) cuenta para el día siguiente', () => W.fechaLocal('2026-10-09T23:30:00.000Z', '+02:00') === '2026-10-10');
+    await prueba('Whoop: resumen del día (recuperación, horas de sueño sin siestas, kcal)', () => {
+      const r = W.resumenWhoop([
+        { tipo: 'recuperacion', d: { score: { recovery_score: 71, hrv_rmssd_milli: 62, resting_heart_rate: 52 } } },
+        { tipo: 'sueno', d: { nap: true, end: '2026-10-10T15:00:00Z', score: { stage_summary: { total_in_bed_time_milli: 3.6e6, total_awake_time_milli: 0 } } } },
+        { tipo: 'sueno', d: { nap: false, end: '2026-10-10T06:00:00Z', score: { sleep_performance_percentage: 88, stage_summary: { total_in_bed_time_milli: 8 * 3.6e6, total_awake_time_milli: 0.5 * 3.6e6 } } } },
+        { tipo: 'ciclo', d: { start: '2026-10-10T05:00:00Z', end: null, score: { strain: 14.2, kilojoule: 12552 } } },
+      ]);
+      return r.recuperacion === 71 && r.horas === 7.5 && Math.round(r.kcal) === 3000 && r.enCurso === true || r;
+    });
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;

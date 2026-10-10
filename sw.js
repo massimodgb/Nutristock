@@ -1,10 +1,10 @@
 // Service worker: permite abrir la app sin conexión (en el súper sin cobertura, por ejemplo).
 // Cambia VERSION cada vez que publiques cambios para que el iPhone descargue lo nuevo.
-const VERSION = 'v21';
+const VERSION = 'v22';
 const CACHE = 'nutristock-' + VERSION;
 const LOCAL = [
   './', 'index.html', 'manifest.webmanifest', 'css/app.css',
-  'js/app.js', 'js/lib.js', 'js/db.js', 'js/nutri.js', 'js/ui.js', 'js/importar.js', 'js/plan-pdf.js', 'js/balance.js', 'js/copias.js', 'js/nube.js', 'js/compra-plan.js', 'js/data/foods.js', 'js/data/restaurantes.js', 'js/data/restaurantes2.js', 'js/data/recetas.js', 'js/entreno/parser.js', 'js/entreno/datos.js', 'js/entreno/rm.js',
+  'js/app.js', 'js/lib.js', 'js/db.js', 'js/nutri.js', 'js/ui.js', 'js/importar.js', 'js/plan-pdf.js', 'js/balance.js', 'js/copias.js', 'js/nube.js', 'js/compra-plan.js', 'js/whoop.js', 'js/data/foods.js', 'js/data/restaurantes.js', 'js/data/restaurantes2.js', 'js/data/recetas.js', 'js/entreno/parser.js', 'js/entreno/datos.js', 'js/entreno/rm.js',
   'js/views/hoy.js', 'js/views/despensa.js', 'js/views/biblioteca.js', 'js/views/plan.js', 'js/views/mas.js', 'js/views/progreso.js', 'js/views/perfil.js', 'js/views/entreno.js', 'js/views/reloj.js', 'js/views/stock.js', 'js/views/guia.js', 'js/views/ideas.js', 'js/views/informes.js',
   'icons/icon-180.png', 'icons/icon-192.png',
 ];

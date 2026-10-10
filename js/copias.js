@@ -15,7 +15,7 @@ const respaldos = new Dexie('nutristock-respaldos');
 respaldos.version(1).stores({ copias: '++id, fecha' });
 const MAX_INTERNAS = 7;
 
-const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios'];
+const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop'];
 
 // ---------- Exportar a archivo ----------
 export async function exportarCopia() {

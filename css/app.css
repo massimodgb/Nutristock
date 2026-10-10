@@ -427,3 +427,11 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
   .informe details { display: block; }
   .informe details > *:not(summary) { display: block; }
 }
+
+/* Whoop en Hoy */
+.whoop { display: flex; flex-direction: column; gap: 6px; }
+.whoop-fila { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; }
+.whoop-dato { display: flex; flex-direction: column; padding: 6px 2px; border-radius: 10px; background: var(--fill); }
+.whoop-dato b { font-size: 18px; }
+.whoop-dato small { font-size: 11px; color: var(--muted); }
+.whoop-dato.ok b { color: #22c55e; } .whoop-dato.warn b { color: #eab308; } .whoop-dato.bad b { color: #ef4444; }

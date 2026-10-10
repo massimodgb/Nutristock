@@ -14,6 +14,7 @@ import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
 import { leer } from './entreno.js';
 import { estadoCompra, textoStock } from './stock.js';
 import { exportarCopia, estadoCopia } from '../copias.js';
+import { resumenWhoop, colorRecuperacion, estadoWhoop } from '../whoop.js';
 
 export function Hoy({ go }) {
   const [date, setDate] = useState(todayStr());
@@ -71,6 +72,7 @@ export function Hoy({ go }) {
         onOtroDia=${() => setSheet({ type: 'otrodia' })} />
       <${Agua} date=${date} prefs=${prefs} />
       ${isToday && html`<${PesoHoy} date=${date} />`}
+      <${WhoopHoy} date=${date} comido=${total.kcal} isToday=${isToday} go=${go} />
       <${EntrenoHoy} date=${date} go=${go} />
       ${isToday && plan && html`
         <button class="card idea-link" onClick=${() => go('ideas')}>
@@ -899,5 +901,26 @@ function RecordatorioCopia() {
     <section class="card aviso warn copia-aviso">
       <span class="grow">${estado.ultima ? `Hace ${estado.dias} días que no guardas una copia de tus datos.` : 'Aún no has guardado ninguna copia de tus datos fuera del iPhone.'}</span>
       <button class="btn small" onClick=${async () => { if (await exportarCopia()) { toast('Copia guardada ✓'); setEstado(await estadoCopia()); } }}>Guardar copia</button>
+    </section>`;
+}
+
+// Tus datos de Whoop del día (solo si lo tienes conectado)
+function WhoopHoy({ date, comido, isToday, go }) {
+  const est = useLive(estadoWhoop, []);
+  const filas = useLive(() => db.whoop.where('fecha').equals(date).toArray(), [date]);
+  if (!est?.conectado || !filas) return null;
+  if (!filas.length) return isToday ? html`<section class="card whoop"><small class="muted">Whoop: aún no hay datos de hoy.</small></section>` : null;
+  const w = resumenWhoop(filas);
+  const dato = (valor, texto, clase = '') => html`<div class=${'whoop-dato ' + clase}><b>${valor}</b><small>${texto}</small></div>`;
+  return html`
+    <section class="card whoop">
+      <div class="whoop-fila">
+        ${dato(w.recuperacion != null ? `${fmt(w.recuperacion)} %` : '—', 'recuperación', colorRecuperacion(w.recuperacion))}
+        ${dato(w.horas != null ? `${fmt(w.horas, 1)} h` : '—', w.sueno != null ? `sueño ${fmt(w.sueno)} %` : 'sueño')}
+        ${dato(w.strain != null ? fmt(w.strain, 1) : '—', 'esfuerzo')}
+        ${dato(w.kcal != null ? fmt(w.kcal) : '—', w.enCurso ? 'kcal gastadas (va)' : 'kcal gastadas')}
+      </div>
+      ${w.kcal != null && comido > 0 && html`<small class="muted">Comido ${fmt(comido)} kcal frente a ${fmt(w.kcal)} gastadas según Whoop${w.enCurso ? ' (el día aún no ha terminado)' : ''}.</small>`}
+      ${w.hrv != null && html`<small class="muted">VFC ${fmt(w.hrv)} ms · pulso en reposo ${fmt(w.fcReposo)}${w.entrenos.length ? ` · ${w.entrenos.map(e => `${e.deporte || 'entreno'} ${fmt(e.strain, 1)}`).join(', ')}` : ''}</small>`}
     </section>`;
 }

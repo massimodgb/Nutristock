@@ -19,7 +19,7 @@ export const NUBE_URL = 'https://bublielinhboyngelmwg.supabase.co';
 export const NUBE_CLAVE = 'sb_publishable_q1agUK4AXhIrUqM6ZdEZTw_zMRmfm-G';
 const LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0/+esm';
 
-const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios'];
+const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop'];
 const LOTE = 500;
 // Más de esto borrado de golpe (y más del 20 %) se considera "pérdida de datos", no algo que hiciste tú
 const BORRADO_MASIVO = 20;
@@ -275,4 +275,18 @@ export async function salir() {
   await memo.huellas.clear();
   await memo.meta.clear();
   cambiar({ conectado: false, email: null, ultima: null, aviso: null });
+}
+
+// Llamar a una función del servidor (por ejemplo "whoop") con tu sesión
+export async function llamarFuncion(nombre, body) {
+  if (!estado.conectado) throw new Error('Entra primero con tu cuenta en Más → Nube.');
+  const c = await sb();
+  const { data, error } = await c.functions.invoke(nombre, { body });
+  if (error) {
+    let m = error.message;
+    try { const j = await error.context?.json?.(); if (j?.error) m = j.error; } catch {}
+    if (/Failed to send|not found|404/i.test(m)) m = 'La función de Whoop aún no está instalada en Supabase.';
+    throw new Error(m);
+  }
+  return data;
 }
