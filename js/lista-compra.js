@@ -7,7 +7,7 @@ import { fmtG, fmt } from './nutri.js';
 
 const ORDEN = ['proteina', 'lacteo', 'verdura', 'fruta', 'almidon', 'grasa', 'suplemento', 'otro', 'hogar', undefined];
 
-export function construirLista({ plan, foods, lots, logs = [], elecciones = [], prefs = {}, dias = 7, ocultos = {}, ajustes = {}, hoy }) {
+export function construirLista({ plan, foods, lots, logs = [], elecciones = [], prefs = {}, dias = 7, ocultos = {}, ajustes = {}, forzados = {}, hoy }) {
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
   const items = new Map();
 
@@ -37,9 +37,21 @@ export function construirLista({ plan, foods, lots, logs = [], elecciones = [], 
     }
   }
 
+  // 3) Lo que pusiste tú en la lista ("ponerlo en la lista ya"), aunque aún no tocara
+  for (const [clave, fz] of Object.entries(forzados)) {
+    const f = byId[fz.foodId];
+    if (!f) continue;
+    const g = f.group === 'hogar' ? f.comprar || 1 : f.packG ? (f.comprar || 1) * f.packG : f.minG || 100;
+    const it = items.get(clave);
+    if (it) { if (!it.motivos.includes('tú')) it.motivos.push('tú'); it.productoAviso ||= f; it.g = Math.max(it.g, g); continue; }
+    const raiz = f.genericId || f.id;
+    items.set(clave, { clave, nombre: (byId[raiz] || f).name, group: f.group, foodId: raiz, lista: null, ids: null,
+      g, hogar: f.group === 'hogar', productoAviso: f, motivos: ['tú'] });
+  }
+
   const out = [];
   for (const it of items.values()) {
-    if (ocultos[it.clave] && ocultos[it.clave] >= hoy) continue; // lo quitaste
+    if (ocultos[it.clave] && ocultos[it.clave] >= hoy && !forzados[it.clave]) continue; // lo quitaste
     const aj = ajustes[it.clave];
     if (aj && aj.hasta >= hoy && aj.g > 0) { it.gPlan = it.g; it.g = aj.g; it.ajustado = true; }
     it.producto = productoHabitual(it, foods, lots);

@@ -1,7 +1,7 @@
 // Despensa por envases: cuántas bolsas/paquetes/botes tienes, cuál está abierto,
 // cuándo avisar y cuántos comprar. Lo usan la Despensa y la Biblioteca.
 import { html, useState } from '../lib.js';
-import { db, resumenStock, round1 } from '../db.js';
+import { db, resumenStock, round1, useLive, getSetting, setSetting } from '../db.js';
 import { fmt, fmtG, todayStr } from '../nutri.js';
 import { Num, Toggle, Dot, Icon, toast } from '../ui.js';
 
@@ -155,14 +155,63 @@ export function FichaStock({ food, lots, onAdd, onQuitar }) {
       }}><${Icon} name="trash" size=${18} /> Quitar de la despensa</button>
 
       <h4>Lista de la compra</h4>
-      ${(food.packG || hogar) ? html`
-        <div class="grid2">
-          <label>Avisar cuando queden<${Num} value=${food.aviso} onChange=${v => set({ aviso: v })} suffix=${plural(env, 2)} /></label>
-          <label>Y comprar<${Num} value=${food.comprar} onChange=${v => set({ comprar: v })} suffix=${plural(env, 2)} /></label>
-        </div>
-        <small class="muted">Ej.: compras 3 bolsas de almendras → avisar cuando quede 1 y comprar 3. Puedes poner medios (0,5 = media bolsa).</small>`
+      <${YaALaLista} food=${food} est=${est} />
+      ${(food.packG || hogar) ? html`<${AvisoCompra} food=${food} lots=${lots} set=${set} />`
       : html`
         <label>Avisar cuando queden menos de<${Num} value=${food.minG} onChange=${v => set({ minG: v })} suffix="g" /></label>
         <small class="muted">Consejo: pon el peso de cada envase (al pulsar "Añadir más") y podrás contar en bolsas o paquetes.</small>`}
     </div>`;
+}
+
+// "Quiero comprarlo ya": lo pone en la lista aunque aún no toque por el aviso. Se quita al marcarlo como comprado.
+export const claveCompra = food => 'f:' + (food.genericId || food.id);
+function YaALaLista({ food, est }) {
+  const forzados = useLive(() => getSetting('compraForzada', {}), []);
+  if (!forzados) return null;
+  const clave = claveCompra(food);
+  const puesto = !!forzados[clave];
+  const cambiar = async () => {
+    const f = { ...(await getSetting('compraForzada', {})) };
+    if (puesto) delete f[clave]; else f[clave] = { foodId: food.id, desde: todayStr() };
+    await setSetting('compraForzada', f);
+    toast(puesto ? 'Quitado de la lista' : `${food.name}: en tu lista de la compra ✓`);
+  };
+  if (est.necesita && !puesto) return null; // ya está en la lista por el aviso
+  return html`
+    <button class=${'btn ' + (puesto ? 'secondary' : '')} onClick=${cambiar}>
+      ${puesto ? 'Está en tu lista (lo pusiste tú): quitar' : 'Ponerlo en la lista de la compra ya'}</button>`;
+}
+
+// ¿Cuándo avisar? En palabras, con lo que tienes ahora al lado. (El número es "envases que quedan", contando el abierto.)
+function AvisoCompra({ food, lots, set }) {
+  const hogar = esHogar(food);
+  const env = nombreEnvase(food);
+  const r = resumenStock(food, lots);
+  const [otro, setOtro] = useState(false);
+  const abiertoA = conGenero(env, hogar ? 'empezad' : 'abiert');
+  const opciones = hogar ? [
+    { v: 0, t: 'Cuando se acabe' },
+    { v: 1, t: `Cuando quede 1 ${env}` },
+    { v: 2, t: `Cuando queden 2 ${plural(env, 2)}` },
+  ] : [
+    { v: 0, t: 'Cuando se acabe todo' },
+    { v: 0.5, t: `Cuando solo quede ${fem(env) ? 'la' : 'el'} ${abiertoA} a la mitad` },
+    { v: 1, t: `Cuando solo quede ${fem(env) ? 'la' : 'el'} ${abiertoA}` },
+    { v: 1.5, t: `1 ${conGenero(env, 'cerrad')} + la mitad de otr${fem(env) ? 'a' : 'o'}` },
+    { v: 2, t: `1 ${conGenero(env, 'cerrad')} + otr${fem(env) ? 'a' : 'o'} casi enter${fem(env) ? 'a' : 'o'}` },
+  ];
+  const elegida = opciones.find(o => o.v === food.aviso);
+  const ahora = hogar ? `${r.mios.length} ${plural(env, r.mios.length)}`
+    : r.envases == null ? '' : `${r.cerrados ? `${r.cerrados} ${conGenero(env, 'cerrad', r.cerrados)}` : ''}${r.cerrados && r.abiertos.length ? ' + ' : ''}${r.abiertos.length ? `${r.abiertos.length} ${conGenero(env, 'abiert', r.abiertos.length)}` : ''}${r.mios.length ? ` (≈ ${fmt(r.envases, 1)} ${plural(env, 2)})` : 'nada'}`;
+  return html`
+    <label>¿Cuándo quieres que te lo ponga en la lista?</label>
+    ${ahora && html`<small class="muted">Ahora tienes: ${ahora}.</small>`}
+    <div class="chips wrap">
+      <button class=${'chip' + (food.aviso == null ? ' on' : '')} onClick=${() => { setOtro(false); set({ aviso: null }); }}>No avisar</button>
+      ${opciones.map(o => html`<button class=${'chip' + (food.aviso === o.v && !otro ? ' on' : '')} onClick=${() => { setOtro(false); set({ aviso: o.v }); }}>${o.t}</button>`)}
+      <button class=${'chip' + ((otro || (food.aviso != null && !elegida)) ? ' on' : '')} onClick=${() => setOtro(true)}>Otra cantidad</button>
+    </div>
+    ${(otro || (food.aviso != null && !elegida)) && html`<label>Avisar cuando queden<${Num} value=${food.aviso} onChange=${v => set({ aviso: v })} suffix=${plural(env, 2)} /></label>
+      <small class="muted">Cuenta el abierto: 1,5 = 1 ${conGenero(env, 'cerrad')} + medi${fem(env) ? 'a' : 'o'} abiert${fem(env) ? 'a' : 'o'}.</small>`}
+    <label>Y cuando toque, comprar<${Num} value=${food.comprar} onChange=${v => set({ comprar: v })} suffix=${plural(env, 2)} /></label>`;
 }

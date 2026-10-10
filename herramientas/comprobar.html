@@ -128,6 +128,11 @@
       const f = l.filter(x => x.clave === 'f:pollo-pechuga');
       return f.length === 1 && f[0].motivos.length === 2 && LC.textoCantidad(f[0]).principal === '5 bandejas' || l;
     });
+    await prueba('Lista: "ponerlo en la lista ya" lo añade aunque no toque por el aviso', () => {
+      const m = { ...byId['muesli'], id: 'p-m', source: 'manual', genericId: 'muesli', packG: 375, envase: 'bolsa', comprar: 2 };
+      const l = LC.construirLista({ plan: null, foods: [...FOODS, m], lots: [{ foodId: 'p-m', g: 375 }], forzados: { 'f:muesli': { foodId: 'p-m' } }, hoy: '2026-10-10' });
+      return l.length === 1 && l[0].motivos[0] === 'tú' && LC.textoCantidad(l[0]).principal === '2 bolsas' || l;
+    });
     await prueba('Lista única: el pan se pide en rebanadas', () => LC.textoCantidad({ g: 420 }, 420, byId['pan-integral']).principal === '14 rebanadas');
 
     document.getElementById('resumen').innerHTML = fallos

@@ -25,12 +25,13 @@ export function Despensa({ go }) {
     .then(r => r.filter(x => x.key.slice(9) >= desde).map(x => ({ date: x.key.slice(9), v: x.value }))), [desde]);
   const ocultos = useLive(() => getSetting('compraOculta', {}), []);
   const ajustes = useLive(() => getSetting('compraAjuste', {}), []);
+  const forzados = useLive(() => getSetting('compraForzada', {}), []);
   // Lo que antes se añadía a "Mi lista" desde el plan ya está en la lista única: se limpia una vez
   useEffect(() => { db.shopping.filter(x => !!x.dePlan).delete(); }, []);
 
-  if ([foods, lots, basicos, shopping, prefs, plan, logs, elecciones, ocultos, ajustes].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
+  if ([foods, lots, basicos, shopping, prefs, plan, logs, elecciones, ocultos, ajustes, forzados].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
-  const lista = construirLista({ plan, foods, lots, logs, elecciones, prefs, dias, ocultos, ajustes, hoy });
+  const lista = construirLista({ plan, foods, lots, logs, elecciones, prefs, dias, ocultos, ajustes, forzados, hoy });
   const ctx = { foods, byId, lots, basicos, shopping, prefs, setSheet, plan, lista, dias, setDias, ocultos, ajustes };
   const manuales = shopping.filter(x => !x.dePlan);
   const enCompra = lista.length + basicos.filter(b => b.status !== 'tengo').length + manuales.filter(x => !x.done).length;
@@ -207,7 +208,7 @@ function Compra({ lista, basicos, shopping, plan, dias, setDias, setSheet }) {
             <button class="check-btn" aria-label=${'Lo he comprado: ' + it.nombre} onClick=${() => setSheet({ type: 'comprar', item: it })}><span class="check"></span></button>
             <button class="compra-txt" onClick=${() => setSheet({ type: 'comprar', item: it })}>
               <span class="compra-nombre"><${Dot} group=${it.group} /> ${it.nombre}</span>
-              <small class="muted">${it.motivos.includes('plan') ? 'para tu plan' : 'se te acaba'}${it.motivos.length > 1 ? ' · y se te acaba' : ''}${it.ajustado ? ' · cantidad tuya' : ''}${it.producto && it.producto.source !== 'base' ? ` · ${it.producto.name}` : ''}</small>
+              <small class="muted">${[it.motivos.includes('plan') && 'para tu plan', it.motivos.includes('aviso') && 'se te acaba', it.motivos.includes('tú') && 'lo pusiste tú'].filter(Boolean).join(' · ')}${it.ajustado ? ' · cantidad tuya' : ''}${it.producto && it.producto.source !== 'base' ? ` · ${it.producto.name}` : ''}</small>
             </button>
             <span class="compra-cant"><b>${c.principal}</b>${c.detalle ? html`<small class="muted">${c.detalle}</small>` : ''}</span>
           </div>`;
@@ -230,6 +231,11 @@ function Compra({ lista, basicos, shopping, plan, dias, setDias, setSheet }) {
       ${manuales.some(x => x.done) && html`<button class="link small" onClick=${() => db.shopping.where('done').equals(1).delete()}>Quitar lo apuntado que ya compraste</button>`}
     </section>
     <${Quitados} />`;
+}
+
+async function quitarForzado(clave) {
+  const f = await getSetting('compraForzada', {});
+  if (f[clave]) { const o = { ...f }; delete o[clave]; await setSetting('compraForzada', o); }
 }
 
 // Lo que dijiste que no ibas a comprar (por si cambias de idea)
@@ -299,13 +305,13 @@ function Comprado({ item: it, foods, lots, dias, onDone }) {
 
   return html`
     <div class="form">
-      <p class="small">${it.motivos.includes('plan') ? `Tu plan pide ${fmtG(Math.round(it.necesita || it.g))} para ${dias} días y te faltan ${fmtG(Math.round(it.gPlan || it.g))}.` : 'Se te está acabando.'}</p>
+      <p class="small">${it.motivos.includes('plan') ? `Tu plan pide ${fmtG(Math.round(it.necesita || it.g))} para ${dias} días y te faltan ${fmtG(Math.round(it.gPlan || it.g))}.` : it.motivos.includes('aviso') ? 'Se te está acabando.' : 'Lo pusiste tú en la lista.'}</p>
       <label>¿Qué compraste?</label>
       <div class="chips wrap">
         ${opciones.slice(0, 8).map(f => html`<button class=${'chip' + (prod?.id === f.id ? ' on' : '')} onClick=${() => setProd(f)}>${f.name}${f.brand ? ` · ${f.brand}` : ''}</button>`)}
       </div>
       <button class="btn secondary" onClick=${() => setModo('escanear')}><${Icon} name="scan" size=${18} /> Es otra marca: escanear el código</button>
-      ${prod && html`<${CuantoCompre} key=${prod.id} it=${it} prod=${prod} onDone=${onDone} />`}
+      ${prod && html`<${CuantoCompre} key=${prod.id} it=${it} prod=${prod} onDone=${async () => { await quitarForzado(it.clave); onDone(); }} />`}
       <div class="compra-mas">
         <button class="link small" onClick=${() => setModo('ajustar')}>Necesito otra cantidad o no lo voy a comprar</button>
       </div>
@@ -370,6 +376,7 @@ function Ajustar({ it, dias, onDone, onVolver }) {
   };
   const quitar = async () => {
     await setSetting('compraOculta', { ...(await getSetting('compraOculta', {})), [it.clave]: hasta });
+    await quitarForzado(it.clave);
     toast(`${it.nombre}: quitado de la lista`); onDone();
   };
   const c = textoCantidad(it, g);
