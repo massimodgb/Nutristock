@@ -17,6 +17,7 @@ import { exportarCopia, estadoCopia } from '../copias.js';
 import { resumenWhoop, colorRecuperacion, estadoWhoop } from '../whoop.js';
 import { listaSupl, tomadosDia, marcarSupl } from '../suplementos.js';
 import { estadoNube, escucharNube } from '../nube.js';
+import { AnadirComida, GrupoDetalle, agrupar, platosDe } from './anadir.js';
 
 export function Hoy({ go }) {
   const [date, setDate] = useState(todayStr());
@@ -97,24 +98,21 @@ export function Hoy({ go }) {
               onRepetir=${ayerLogs => setSheet({ type: 'copiar', titulo: `${m.nombre} de ayer`, entradas: ayerLogs.map(plantilla) })}
               onOption=${o => setChoice(m.id, o)}
               onBlock=${(block, optionId) => setSheet({ type: 'block', meal: m, block, optionId })}
-              onLog=${log => setSheet({ type: 'log', log })} />`}
+              onLog=${log => setSheet({ type: 'log', log })}
+              onGrupo=${g => setSheet({ type: 'grupo', grupo: g })}
+              onAnadir=${() => setSheet({ type: 'anadir', mealId: m.id })} />`}
           ${plan.entreno?.despuesDe === m.id && html`
             <div class="training"><${Icon} name="bolt" size=${14} /> ${plan.entreno.texto}</div>`}
         `)}
         <button class=${'comida-fila' + (abierta === 'extra' ? ' abierta' : '')} onClick=${() => setAbierta(abierta === 'extra' ? null : 'extra')} aria-expanded=${abierta === 'extra'}>
           <span class="comida-ico extra"><${Icon} name="plus" size=${20} /></span>
-          <span class="grow"><b>Extras y comidas libres</b><small>${extras.length ? extras.map(l => l.name.split(' (')[0]).slice(0, 3).join(', ') : 'Snacks, restaurante, caprichos'}</small></span>
+          <span class="grow"><b>Extras y comidas libres</b><small>${extras.length ? agrupar(extras).map(e => e.tipo === 'grupo' ? e.nombre : e.log.name.split(' (')[0]).slice(0, 3).join(', ') : 'Snacks, restaurante, caprichos'}</small></span>
           <span class="comida-estado">${extras.length ? `${fmt(sumN(extras.map(l => l.n)).kcal)} kcal` : ''}</span>
         </button>
         ${abierta === 'extra' && html`
           <div class="meal embebido">
-            ${extras.map(l => html`
-              <button class="row" onClick=${() => setSheet({ type: 'log', log: l })}>
-                <span class="grow">${l.name}${l.aprox && html` <span class="tag">aprox.</span>`}
-                  ${l.g ? html`<small> · ${fmt(l.g)} g</small>` : ''}</span>
-                <span class="muted">${fmt(l.n.kcal)} kcal</span>
-              </button>`)}
-            <button class="btn secondary" onClick=${() => setSheet({ type: 'extra' })}><${Icon} name="plus" size=${18} /> Añadir algo fuera del plan</button>
+            <${ListaRegistros} logs=${extras} onLog=${l => setSheet({ type: 'log', log: l })} onGrupo=${g => setSheet({ type: 'grupo', grupo: g })} />
+            <button class="btn secondary" onClick=${() => setSheet({ type: 'anadir', mealId: 'extra' })}><${Icon} name="plus" size=${18} /> Añadir algo</button>
           </div>`}
       </section>
 
@@ -135,7 +133,7 @@ export function Hoy({ go }) {
           <${Icon} name="bolt" size=${20} /><span class="grow"><b>Ideas y recetas</b><br /><small class="muted">Qué cocinar con lo que tienes en casa y tu plan</small></span><${Icon} name="right" size=${16} />
         </button>`}
 
-      <button class="fab" aria-label="Añadir alimento" onClick=${() => setSheet({ type: 'extra' })}><${Icon} name="plus" size=${26} /></button>
+      <button class="fab" aria-label="Añadir comida o alimento" onClick=${() => setSheet({ type: 'anadir', mealId: 'extra' })}><${Icon} name="plus" size=${26} /></button>
 
       <${Sheet} open=${sheet?.type === 'desglose'} onClose=${() => setSheet(null)} title="Desglose del día">
         ${sheet?.type === 'desglose' && html`<${Desglose} ...${ctx} logs=${logs} choice=${choice} total=${total} objetivo=${ref} />`}
@@ -152,8 +150,13 @@ export function Hoy({ go }) {
       <${Sheet} open=${sheet?.type === 'otrodia'} onClose=${() => setSheet(null)} title="Copiar otro día">
         ${sheet?.type === 'otrodia' && html`<${OtroDia} ...${ctx} elecciones=${elecciones} onDone=${() => setSheet(null)} />`}
       <//>
-      <${Sheet} open=${sheet?.type === 'extra'} onClose=${() => setSheet(null)} title="Fuera del plan">
-        ${sheet?.type === 'extra' && html`<${ExtraSheet} ...${ctx} onDone=${() => setSheet(null)} />`}
+      <${Sheet} open=${sheet?.type === 'anadir'} onClose=${() => setSheet(null)} title=${sheet?.grupo ? 'Añadir platos' : 'Añadir comida'}>
+        ${sheet?.type === 'anadir' && html`<${AnadirComida} ...${ctx} mealId=${sheet.mealId} grupo=${sheet.grupo} grupoNombre=${sheet.grupoNombre} onDone=${() => setSheetRaw(null)} />`}
+      <//>
+      <${Sheet} open=${sheet?.type === 'grupo'} onClose=${() => setSheet(null)} title="Comida libre">
+        ${sheet?.type === 'grupo' && html`<${GrupoDetalle} logs=${logs.filter(l => l.grupo === sheet.grupo)} byId=${byId} foods=${foods}
+          onDone=${() => setSheetRaw(null)}
+          onAnadir=${() => { const l0 = logs.find(l => l.grupo === sheet.grupo); setSheetRaw({ type: 'anadir', mealId: l0?.mealId || 'extra', grupo: sheet.grupo, grupoNombre: l0?.grupoNombre }); }} />`}
       <//>
     </div>`;
 }
@@ -373,7 +376,7 @@ function Avisos({ lots, foods, byId, stock, basicos, prefs, plan, choice, logs, 
     </div>`;
 }
 
-function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlock, onLog, onRepetir, embebido }) {
+function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlock, onLog, onRepetir, embebido, onGrupo, onAnadir }) {
   const mealLogs = logs.filter(l => l.mealId === meal.id);
   const opt = meal.opciones?.find(o => o.id === option);
   const blocks = [
@@ -423,9 +426,12 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
           <span class="dot" style=${{ background: 'var(--muted)' }}></span>
           <div class="grow">
             <div class="b-name">Fuera del plan en esta comida</div>
-            ${sueltos.map(l => html`<button class="b-log" onClick=${() => onLog(l)}>${l.name}${l.g ? ` · ${fmt(l.g)} g` : ''} · ${fmt(l.n.kcal)} kcal</button>`)}
+            ${agrupar(sueltos).map(e => e.tipo === 'grupo'
+              ? html`<button class="b-log" onClick=${() => onGrupo?.(e.grupo)}>${e.nombre} · ${platosDe(e.logs)} platos · ${e.logs.some(l => l.aprox) ? '≈ ' : ''}${fmt(sumN(e.logs.map(l => l.n)).kcal)} kcal</button>`
+              : html`<button class="b-log" onClick=${() => onLog(e.log)}>${e.log.name}${e.log.g ? ` · ${fmt(e.log.g)} g` : ''} · ${fmt(e.log.n.kcal)} kcal</button>`)}
           </div>
         </div>`}
+      ${onAnadir && html`<button class="btn secondary anadir-en" onClick=${onAnadir}><${Icon} name="plus" size=${16} /> Añadir cualquier cosa a ${meal.nombre.toLowerCase()}</button>`}
     </section>`;
 }
 
@@ -438,14 +444,14 @@ function ComidaFila({ meal, plan, byId, prefs, logs, option, abierta, onToggle }
     .filter(b => blockFoods(b, plan).some(x => visibleFood(byId[x.id], prefs)));
   const hechos = blocks.filter(b => mealLogs.some(l => l.blockId === b.id)).length;
   const kcal = sumN(mealLogs.map(l => l.n)).kcal;
-  const estado = blocks.length && hechos >= blocks.length ? 'listo' : mealLogs.length ? 'medias' : 'pendiente';
-  const nombres = [...new Set(mealLogs.map(l => l.name.split(' · ')[0].split(' (')[0]))];
+  const estado = blocks.length && hechos >= blocks.length ? 'listo' : hechos > 0 ? 'medias' : mealLogs.length ? 'libre' : 'pendiente';
+  const nombres = [...new Set(agrupar(mealLogs).map(e => e.tipo === 'grupo' ? e.nombre : e.log.name.split(' · ')[0].split(' (')[0]))];
   return html`
     <button class=${'comida-fila ' + estado + (abierta ? ' abierta' : '')} onClick=${onToggle} aria-expanded=${abierta}>
       <span class=${'comida-ico ' + estado}><${Icon} name=${ICONO_COMIDA(meal.nombre)} size=${20} /></span>
       <span class="grow"><b>${meal.nombre} <i>${meal.hora}</i></b>
         <small>${nombres.length ? nombres.slice(0, 3).join(', ') + (nombres.length > 3 ? '…' : '') : 'Pendiente de registrar'}</small></span>
-      <span class="comida-estado">${estado === 'listo' ? html`<em>✓ Listo</em>` : estado === 'medias' ? `${hechos} de ${blocks.length}` : ''}
+      <span class="comida-estado">${estado === 'listo' ? html`<em>✓ Listo</em>` : estado === 'medias' ? `${hechos} de ${blocks.length}` : estado === 'libre' ? 'Fuera del plan' : ''}
         ${kcal ? html`<small>${fmt(kcal)} kcal</small>` : ''}</span>
     </button>`;
 }
@@ -586,14 +592,14 @@ function AmountForm({ food, defaultG, byId, stockG, onSave }) {
 }
 
 // Descontar de la despensa y apuntar el registro van juntos: o se hacen las dos cosas o ninguna
-export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods }) {
+export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods, extra = {} }) {
   await db.transaction('rw', db.lots, db.logs, async () => {
     const deducted = deduct ? await deductStock(candidateIds(food, foods), rawG) : [];
     const nr = Object.fromEntries(Object.entries(n).map(([k, v]) => [k, round1(v)]));
     await db.logs.add({
       date, mealId, optionId: optionId || null, blockId: blockId || null,
       foodId: food.id, name: food.name + (food.brand ? ` · ${food.brand}` : ''), group: food.group,
-      g, crudo, rawG: round1(rawG), n: nr, deducted, ts: Date.now(),
+      g, crudo, rawG: round1(rawG), n: nr, deducted, ts: Date.now(), ...extra,
     });
   });
 }
@@ -1072,4 +1078,18 @@ function AvisoNube({ go }) {
     <button class="card aviso warn copia-aviso" onClick=${() => go('mas')}>
       <span class="grow">${e.conflicto ? 'La nube necesita que elijas qué datos conservar.' : 'Faltan datos en este móvil respecto a la nube.'} Toca para verlo en Más → Nube.</span>
     </button>`;
+}
+
+// Registros de una comida: los sueltos uno a uno y las comidas de varios platos como una sola línea
+function ListaRegistros({ logs, onLog, onGrupo }) {
+  if (!logs.length) return html`<p class="muted small">Nada todavía.</p>`;
+  return agrupar(logs).map(e => e.tipo === 'grupo' ? html`
+    <button class="row" onClick=${() => onGrupo(e.grupo)}>
+      <span class="grow"><b>${e.nombre}</b> <span class="tag">${platosDe(e.logs)} platos</span></span>
+      <span class="muted">${e.logs.some(l => l.aprox) ? '≈ ' : ''}${fmt(sumN(e.logs.map(l => l.n)).kcal)} kcal</span>
+    </button>` : html`
+    <button class="row" onClick=${() => onLog(e.log)}>
+      <span class="grow">${e.log.name}${e.log.aprox && html` <span class="tag">aprox.</span>`}${e.log.g ? html`<small> · ${fmt(e.log.g)} g</small>` : ''}</span>
+      <span class="muted">${fmt(e.log.n.kcal)} kcal</span>
+    </button>`);
 }

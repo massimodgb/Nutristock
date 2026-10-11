@@ -176,6 +176,22 @@
     });
     await prueba('Entreno: unir ejercicios (alias)', () => En.alias([{ id: 'wall ball', uneCon: 'cal row' }, { id: 'x' }])['wall ball'] === 'cal row');
 
+    const An = await import('/js/views/anadir.js');
+    const PB = await import('/js/data/platos-buffet.js');
+    await prueba('Buffet: 2 platos pequeños de fideos (300 kcal el mediano) = 360 kcal aprox.', () => {
+      const c = An.calcularLinea({ tipo: 'plato', p: PB.PLATOS_BUFFET.find(x => x.n.startsWith('Fideos salteados')), n: 2, tam: 'pequeno' }, byId);
+      return Math.round(c.n.kcal) === 360 && c.aprox === true || c;
+    });
+    await prueba('Añadir alimento: 150 g de manzana = 78 kcal (exacto, no aprox.)', () => {
+      const c = An.calcularLinea({ tipo: 'food', food: byId['manzana'], porUnidad: false, g: 150 }, byId);
+      return Math.round(c.n.kcal) === 78 && !c.aprox || c;
+    });
+    await prueba('Comida libre: los platos de un mismo grupo se ven como una sola comida y cuentan los platos de verdad', () => {
+      const logs = [{ grupo: 'g1', grupoNombre: 'Buffet', ts: 1, racion: { n: 2 } }, { grupo: 'g1', ts: 2, racion: { n: 2 } }, { ts: 3 }];
+      const g = An.agrupar(logs);
+      return g.length === 2 && g[0].tipo === 'grupo' && An.platosDe(g[0].logs) === 4 || g;
+    });
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;

@@ -678,3 +678,37 @@ button:focus-visible, .btn:focus-visible, a:focus-visible, .fecha-picker:focus-w
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
 }
+
+/* ===== Añadir comida (v33) ===== */
+.anadir { display: flex; flex-direction: column; gap: 14px; }
+.anadir-comida { display: flex; flex-direction: column; gap: 6px; }
+.anadir-busca { display: flex; align-items: center; gap: 8px; background: var(--fill); border: 1px solid var(--borde); border-radius: 14px; padding: 0 12px; color: var(--muted); }
+.anadir-busca input { background: transparent; border: 0; padding: 13px 0; box-shadow: none; }
+.anadir-sec { display: flex; flex-direction: column; gap: 6px; }
+.anadir-sec h4 { margin: 0; font-size: 13px; color: var(--muted); }
+.mas-btn { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex-shrink: 0; }
+.platos-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.plato-btn { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-radius: var(--radius-s); background: var(--fill); border: 1px solid var(--borde); text-align: left; min-height: 64px; transition: transform var(--t-rapido) var(--curva), background var(--t-rapido); }
+.plato-btn span { font-size: 14px; font-weight: 600; line-height: 1.25; }
+.plato-btn small { color: var(--muted); font-size: 12px; }
+.plato-btn:active { transform: scale(0.96); background: var(--accent-soft); }
+.cesta { display: flex; flex-direction: column; gap: 8px; }
+.cesta h4 { margin: 0; }
+.linea-cesta { background: var(--card-2); border: 1px solid var(--borde); border-radius: var(--radius-s); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; animation: entra var(--t-medio) var(--curva); }
+.lc-top { display: flex; align-items: flex-start; gap: 8px; }
+.lc-top b { display: block; font-size: 15px; }
+.lc-top small { font-size: 12px; }
+.lc-cant { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.lc-g { width: 120px; }
+.lc-desc { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.lc-desc input { width: 18px; height: 18px; accent-color: var(--accent); -webkit-appearance: checkbox; appearance: checkbox; padding: 0; }
+.stepper.peq { gap: 8px; }
+.stepper.peq b { font-size: 17px; min-width: 26px; }
+.stepper.peq .icon-btn { width: 32px; height: 32px; font-size: 18px; }
+.cesta-total { position: sticky; bottom: calc(-24px - env(safe-area-inset-bottom)); margin: 0 -16px calc(-24px - env(safe-area-inset-bottom)); padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 12px; background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border-top: 1px solid var(--borde); }
+.cesta-total.estatico { position: static; margin: 0; padding: 12px; border-radius: var(--radius-s); border: 1px solid var(--borde); background: var(--card-2); }
+.cesta-total b { display: block; font-size: 22px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.cesta-total small { color: var(--muted); font-size: 12px; }
+.anadir-en { margin-top: 6px; }
+.comida-ico.libre { color: var(--fat); }
