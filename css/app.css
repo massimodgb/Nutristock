@@ -158,7 +158,7 @@ main { padding: env(safe-area-inset-top) 0 calc(var(--tabbar-h) + env(safe-area-
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .num { position: relative; display: flex; align-items: center; }
 .num input { padding-right: 52px; font-size: 18px; font-weight: 600; color: var(--text); }
-.num span { position: absolute; right: 12px; color: var(--muted); font-size: 14px; pointer-events: none; }
+.num span { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 14px; pointer-events: none; }
 .toggle-row { flex-direction: row !important; align-items: center; justify-content: space-between; gap: 12px; color: var(--text) !important; font-size: 16px !important; }
 .toggle-row > span { display: flex; flex-direction: column; }
 .toggle-row small { color: var(--muted); font-size: 13px; }
@@ -487,6 +487,9 @@ label.btn { display: flex; align-items: center; justify-content: center; gap: 8p
 .progreso .pg-fila .pg-num { grid-column: 1 / 3; grid-row: 1; justify-self: end; font-size: 15px; }
 .progreso .pg-track { grid-column: 1; grid-row: 2; position: relative; height: 8px; background: var(--fill); border-radius: 4px; }
 .progreso .pg-fill { height: 100%; border-radius: 4px; }
+.progreso .pg-supl { position: absolute; top: 0; border-radius: 0 4px 4px 0; background: repeating-linear-gradient(-45deg, var(--accent) 0 3px, color-mix(in srgb, var(--accent) 45%, transparent) 3px 6px); }
+.progreso .pg-supl-ley { display: flex; align-items: center; gap: 8px; }
+.progreso .pg-supl-muestra { flex: 0 0 auto; width: 22px; height: 8px; border-radius: 4px; background: repeating-linear-gradient(-45deg, var(--accent) 0 3px, color-mix(in srgb, var(--accent) 45%, transparent) 3px 6px); }
 .progreso .pg-meta { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--text); border-radius: 1px; opacity: .55; }
 .progreso .pg-pct { grid-column: 2; grid-row: 2; font-size: 13px; text-align: right; color: var(--muted); }
 .progreso .pg-pct.ok { color: var(--accent); font-weight: 600; }
@@ -542,6 +545,20 @@ button.card.whoop { width: 100%; text-align: left; color: var(--text); }
 .supl-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; }
 .supl-chip small { opacity: .75; font-size: 12px; }
 .supl-dosis { max-width: 90px; }
+.supl > small { line-height: 1.4; }
+.supl-row .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.supl-row small { font-size: 13px; }
+.supl-falta { color: var(--warn); }
+.supl-lista { margin-bottom: 12px; }
+.supl-paso { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+.supl-pegar { display: flex; flex-direction: column; gap: 8px; background: var(--fill); border-radius: 14px; padding: 12px; }
+.supl-pegar[open] { gap: 8px; }
+.supl-pegar summary { font-weight: 600; cursor: pointer; }
+.supl-pegar > * + * { margin-top: 8px; }
+.supl-valores .num { width: 100%; }
+.supl-aviso { margin: 0; padding: 10px 12px; border-radius: 14px; background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.supl-aviso.ok { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.supl-resumen { margin: 0; padding: 10px 12px; border-radius: 14px; background: color-mix(in srgb, var(--accent) 12%, transparent); font-size: 14px; }
 
 /* Mi lista: marcar y borrar cada cosa */
 .row.lista-item { gap: 6px; }

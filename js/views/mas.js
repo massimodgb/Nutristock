@@ -2,7 +2,8 @@
 import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getPrefs, setSetting } from '../db.js';
 import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar, decidirNube, nombreTabla } from '../nube.js';
-import { listaSupl, guardarListaSupl, idSupl } from '../suplementos.js';
+import { listaSupl, guardarListaSupl, idSupl, UNIDADES, NUTR_SUPL, textoCant, textoDosis, textoAporte, aporteSupl, cantHabitual, tieneDatos, parseEtiquetaSupl, buscarSuplemento } from '../suplementos.js';
+import { Escaner } from './biblioteca.js';
 import { estadoWhoop, conectarWhoop, comprobarWhoop, desconectarWhoop, sincronizarWhoop } from '../whoop.js';
 import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
@@ -172,36 +173,158 @@ function Nube() {
 }
 
 // ---------- Suplementos: tu lista ----------
+// Cada suplemento con su marca, cuánto tomas y lo que aporta (de la etiqueta), para sumarlo a las vitaminas y minerales
 function ListaSuplementos() {
   const lista = useLive(listaSupl, []);
-  const [nombre, setNombre] = useState('');
-  const [dosis, setDosis] = useState('');
+  const [editar, setEditar] = useState(null); // índice en la lista, o 'nuevo'
   if (!lista) return null;
-  const cambiar = (i, campo, v) => guardarListaSupl(lista.map((s, j) => (j === i ? { ...s, [campo]: v } : s)));
-  const anadir = () => {
-    const n = nombre.trim();
-    if (!n) return;
-    let id = idSupl(n);
-    while (lista.some(s => s.id === id)) id += '-2';
-    guardarListaSupl([...lista, { id, nombre: n, dosis: dosis.trim() }]);
-    setNombre(''); setDosis('');
+  const guardar = s => {
+    if (editar === 'nuevo') {
+      let id = idSupl(s.nombre);
+      while (lista.some(x => x.id === id)) id += '-2';
+      guardarListaSupl([...lista, { ...s, id }]);
+    } else guardarListaSupl(lista.map((x, j) => (j === editar ? { ...x, ...s, dosis: undefined } : x)));
+    setEditar(null);
+    toast('Suplemento guardado ✓');
+  };
+  const quitar = () => {
+    const s = lista[editar];
+    if (!confirm(`¿Quitar ${s.nombre} de tu lista? Los días que ya marcaste no se borran.`)) return;
+    guardarListaSupl(lista.filter((_, j) => j !== editar));
+    setEditar(null);
   };
   return html`
-    <section class="card form">
+    <section class="card">
       <h3>Suplementos</h3>
-      <p class="small muted">Los que tomas aparecen en Hoy para marcarlos con un toque. Tu nutricionista los verá en el informe.</p>
-      ${lista.map((s, i) => html`
-        <div class="inline" key=${s.id}>
-          <input aria-label="Nombre" value=${s.nombre} onChange=${e => e.target.value.trim() && cambiar(i, 'nombre', e.target.value.trim())} />
-          <input aria-label="Dosis" class="supl-dosis" placeholder="dosis" value=${s.dosis} onChange=${e => cambiar(i, 'dosis', e.target.value.trim())} />
-          <button class="icon-btn" aria-label=${'Quitar ' + s.nombre} onClick=${() => confirm(`¿Quitar ${s.nombre} de tu lista?`) && guardarListaSupl(lista.filter((_, j) => j !== i))}><${Icon} name="trash" size=${16} /></button>
-        </div>`)}
-      <div class="inline">
-        <input placeholder="Añadir (ej: Vitamina D)" value=${nombre} onInput=${e => setNombre(e.target.value)} onKeyDown=${e => e.key === 'Enter' && anadir()} />
-        <input class="supl-dosis" placeholder="dosis" value=${dosis} onInput=${e => setDosis(e.target.value)} onKeyDown=${e => e.key === 'Enter' && anadir()} />
-        <button class="btn small" disabled=${!nombre.trim()} onClick=${anadir}>Añadir</button>
+      <p class="small muted">Los que tomas aparecen en Hoy para marcarlos con un toque. Si pones lo que dice la etiqueta, su magnesio, potasio, vitamina D… se suman a lo que comes en Progreso y en el informe.</p>
+      <div class="list supl-lista">
+        ${lista.map((s, i) => html`
+          <button class="row supl-row" key=${s.id} onClick=${() => setEditar(i)}>
+            <span class="grow">
+              <b>${s.nombre}</b>${s.marca ? html` <span class="muted">· ${s.marca}</span>` : ''}
+              <small class="muted">${textoDosis(s) ? textoDosis(s) + ' al día' : 'Sin cantidad'}${tieneDatos(s) ? ' · ' + textoAporte(aporteSupl(s, cantHabitual(s)), 3) : ''}</small>
+              ${!tieneDatos(s) && s.id !== 'creatina' && html`<small class="supl-falta">Sin datos de la etiqueta: tócalo para añadirlos</small>`}
+            </span>
+            <${Icon} name="right" size=${18} />
+          </button>`)}
       </div>
+      <button class="btn secondary" onClick=${() => setEditar('nuevo')}><${Icon} name="plus" size=${18} /> Añadir suplemento</button>
+      <${Sheet} open=${editar != null} onClose=${() => setEditar(null)} title=${editar === 'nuevo' ? 'Nuevo suplemento' : 'Suplemento'}>
+        ${editar != null && html`<${FichaSupl} key=${editar} inicial=${editar === 'nuevo' ? null : lista[editar]}
+          onGuardar=${guardar} onQuitar=${editar === 'nuevo' ? null : quitar} />`}
+      <//>
     </section>`;
+}
+
+// Ficha de un suplemento: nombre, marca, lo que dice la etiqueta y cuánto tomas
+function FichaSupl({ inicial, onGuardar, onQuitar }) {
+  const [nombre, setNombre] = useState(inicial?.nombre || '');
+  const [marca, setMarca] = useState(inicial?.marca || '');
+  const [unidad, setUnidad] = useState(inicial?.unidad || 'capsula');
+  const [porcion, setPorcion] = useState(inicial?.porcion ?? 1);
+  const [habitual, setHabitual] = useState(inicial?.habitual ?? inicial?.porcion ?? 1);
+  const [valores, setValores] = useState(inicial?.valores || {});
+  const [notas, setNotas] = useState(inicial?.notas || inicial?.dosis || '');
+  const [etiqueta, setEtiqueta] = useState('');
+  const [leido, setLeido] = useState(null);
+  const [codigo, setCodigo] = useState(inicial?.codigo || null);
+  const [escanear, setEscanear] = useState(false);
+  const [buscando, setBuscando] = useState(false);
+  const [aviso, setAviso] = useState(null); // lo que encontró el código de barras
+
+  const [, uno, varios] = UNIDADES.find(u => u[0] === unidad);
+  const ficha = { nombre: nombre.trim(), marca: marca.trim(), unidad, porcion, habitual, valores, notas: notas.trim(), codigo };
+  const aporte = aporteSupl(ficha, habitual);
+  const leer = () => {
+    const r = parseEtiquetaSupl(etiqueta);
+    const n = Object.keys(r.valores).length;
+    if (n) setValores(antes => ({ ...antes, ...r.valores }));
+    if (r.porcion) { setPorcion(r.porcion); setUnidad(r.unidad); if (!inicial?.habitual) setHabitual(r.porcion); }
+    setLeido(n ? `He encontrado ${n} ${n === 1 ? 'dato' : 'datos'}${r.porcion ? ` por ${textoCant(r.porcion, r.unidad)}` : ''}. Revísalos abajo.` : 'No he encontrado números. Escríbelos abajo a mano.');
+  };
+  // Código de barras → Open Food Facts: nombre y marca casi siempre; los números, solo si los tiene
+  const leerCodigo = async cod => {
+    setEscanear(false);
+    setBuscando(true);
+    setAviso(null);
+    try {
+      const r = await buscarSuplemento(cod);
+      setCodigo(cod);
+      if (!r) { setAviso({ ok: false, texto: `El código ${cod} no está en la base de datos gratuita. Pega la etiqueta o escribe los números abajo.` }); return; }
+      if (r.marca) setMarca(r.marca);
+      if (r.nombre && !nombre.trim()) setNombre(r.nombre);
+      else if (r.nombre && !notas.trim()) setNotas(r.nombre);
+      const n = Object.keys(r.valores).length;
+      if (n) {
+        setValores(antes => ({ ...antes, ...r.valores }));
+        if (r.porcion) { setPorcion(r.porcion); setUnidad(r.unidad); if (!inicial?.habitual) setHabitual(r.porcion); }
+      }
+      const prod = [r.nombre, r.marca].filter(Boolean).join(' · ') || 'el producto';
+      setAviso(n
+        ? { ok: true, texto: `Encontrado: ${prod}. He puesto ${n} ${n === 1 ? 'dato' : 'datos'} de la base de datos: ${n === 1 ? 'compáralo' : 'compáralos'} con tu etiqueta.` }
+        : { ok: false, texto: `Encontrado: ${prod}, pero la base de datos no tiene sus números. Pega la etiqueta (abajo) o escríbelos a mano.` });
+    } catch {
+      setAviso({ ok: false, texto: 'No hay conexión para buscar el código. Inténtalo luego o pega la etiqueta.' });
+    } finally {
+      setBuscando(false);
+    }
+  };
+  const cambiarValor = (k, v) => setValores(antes => {
+    const nv = { ...antes };
+    if (v > 0) nv[k] = v; else delete nv[k];
+    return nv;
+  });
+
+  return html`
+    <div class="form supl-ficha">
+      <div class="grid2">
+        <label>Nombre<input value=${nombre} placeholder="Magnesio" onInput=${e => setNombre(e.target.value)} /></label>
+        <label>Marca<input value=${marca} placeholder="Ej.: Solgar" onInput=${e => setMarca(e.target.value)} /></label>
+      </div>
+
+      ${escanear
+        ? html`<${Escaner} onCode=${leerCodigo} /><button class="btn secondary" onClick=${() => setEscanear(false)}>Cancelar</button>`
+        : html`<button class="btn secondary" disabled=${buscando} onClick=${() => setEscanear(true)}><${Icon} name="scan" size=${18} /> ${buscando ? 'Buscando…' : codigo ? 'Escanear otra vez' : 'Escanear el código de barras'}</button>`}
+      ${aviso && html`<p class=${'small supl-aviso' + (aviso.ok ? ' ok' : '')} role="status">${aviso.texto}</p>`}
+
+      <details class="supl-pegar" open=${!inicial || !tieneDatos(inicial)}>
+        <summary>Pegar la etiqueta (lo más rápido)</summary>
+        <p class="small muted">En Fotos, mantén el dedo sobre la tabla de la etiqueta → Copiar, y pégala aquí.</p>
+        <textarea rows="5" value=${etiqueta} placeholder=${'Por dosis diaria (2 cápsulas)\nMagnesio 375 mg 100 %\nVitamina B6 1,4 mg'} onInput=${e => setEtiqueta(e.target.value)}></textarea>
+        <button class="btn secondary" disabled=${!etiqueta.trim()} onClick=${leer}>Leer la etiqueta</button>
+        ${leido && html`<p class="small" role="status">${leido}</p>`}
+      </details>
+
+      <div>
+        <p class="supl-paso">¿Cómo lo tomas?</p>
+        <div class="chips wrap">
+          ${UNIDADES.map(([k, u1, u2]) => html`<button class=${'chip' + (unidad === k ? ' on' : '')} aria-pressed=${unidad === k} onClick=${() => setUnidad(k)}>${u2}</button>`)}
+        </div>
+      </div>
+
+      <label>Los números de la etiqueta son por
+        <${Num} value=${porcion} onChange=${v => v > 0 && setPorcion(v)} suffix=${porcion === 1 ? uno : varios} />
+      </label>
+
+      <div>
+        <p class="supl-paso">Qué aporta esa cantidad</p>
+        <p class="small muted">Pon el mineral en sí ("magnesio", "de los cuales magnesio"), no el compuesto (bisglicinato, citrato…). Deja vacío lo que no traiga.</p>
+        <div class="grid2 supl-valores">
+          ${NUTR_SUPL.map(m => html`
+            <label key=${m.k}>${m.name}<${Num} value=${valores[m.k] ?? null} placeholder="—" onChange=${v => cambiarValor(m.k, v)} suffix=${m.unit} /></label>`)}
+        </div>
+      </div>
+
+      <label>Cuánto tomas normalmente al día
+        <${Num} value=${habitual} onChange=${v => v > 0 && setHabitual(v)} suffix=${habitual === 1 ? uno : varios} />
+      </label>
+      ${aporte && html`<p class="supl-resumen">Cada día te aporta: ${textoAporte(aporte)}</p>`}
+
+      <label>Notas (opcional)<input value=${notas} placeholder="Ej.: bisglicinato, por la noche" onInput=${e => setNotas(e.target.value)} /></label>
+
+      <button class="btn" disabled=${!nombre.trim()} onClick=${() => onGuardar(ficha)}>Guardar</button>
+      ${onQuitar && html`<button class="btn danger" onClick=${onQuitar}>Quitar de mi lista</button>`}
+    </div>`;
 }
 
 // ---------- Whoop ----------

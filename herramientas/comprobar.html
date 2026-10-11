@@ -81,6 +81,33 @@
       return n.kcal === 250 && n.sat === 2.5 && n.prot === 12 && n.salt === 1.2 || n;
     });
 
+    // Suplementos (v35): etiqueta pegada, cantidades y lo que aportan
+    const S = await import('/js/suplementos.js');
+    await prueba('Suplemento: lee la etiqueta de un magnesio (mineral, no el compuesto) por 2 cápsulas', () => {
+      const r = S.parseEtiquetaSupl('Por dosis diaria (2 cápsulas)\nBisglicinato de magnesio 1500 mg\nde los cuales magnesio 300 mg 80 %\nVitamina B6 1,4 mg');
+      return r.valores.mg === 300 && r.porcion === 2 && r.unidad === 'capsula' || r;
+    });
+    await prueba('Suplemento: vitamina D en UI, EPA + DHA por separado, sal → sodio, y "Vitamina C (ascorbato de sodio)" no cuenta como sodio', () => {
+      const r = S.parseEtiquetaSupl('Por sobre\nVitamina D3 1000 UI\nEPA 360 mg\nDHA 240 mg\nVitamina C (ascorbato de sodio) 80 mg\nSal 1 g');
+      return r.valores.vd === 25 && r.valores.o3 === 600 && r.valores.vc === 80 && r.valores.na === 400 && r.unidad === 'sobre' || r;
+    });
+    await prueba('Suplemento: texto en inglés de una sola línea (Solgar Fish Omega-3) → EPA 60 + DHA 100 por cápsula', () => {
+      const r = S.parseEtiquetaSupl('each softgel provides: fish oil concentrate... 1000 mg providing: ecosapentaenoic acid (epa)†.. 60 mg docosahexaenoic acid (dha)†.... 100 mg softgel capsule shell: gelatin');
+      return r.valores.o3 === 160 && r.porcion === 1 && r.unidad === 'capsula' || r;
+    });
+    await prueba('Suplemento: varios en una línea ("Calcio 800 mg Magnesio 300 mg Zinc 10 mg") y la ración "2 capsules"', () => {
+      const r = S.parseEtiquetaSupl('Calcio 800 mg Magnesio 300 mg Zinc 10 mg');
+      const p = S.porcionDeTexto('2 capsules');
+      return r.valores.ca === 800 && r.valores.mg === 300 && r.valores.zn === 10 && p.porcion === 2 && p.unidad === 'capsula' || { r, p };
+    });
+    await prueba('Suplemento: 1 cápsula de una etiqueta por 2 aporta la mitad, y las marcas antiguas cuentan como lo habitual', () => {
+      const s = { id: 'mg', nombre: 'Magnesio', unidad: 'capsula', porcion: 2, habitual: 1, valores: { mg: 300 } };
+      const viejo = { id: 'o3', nombre: 'Omega 3', dosis: '1' };
+      const dia = S.aporteDia([s, viejo], { mg: 1728000000000, o3: 1728000000000 });
+      const medio = S.aporteMedio([s], { '2026-10-10': { mg: { cant: 2 } }, '2026-10-11': {} }, ['2026-10-10', '2026-10-11']);
+      return dia.mg === 150 && Object.keys(dia).length === 1 && medio.mg === 150 && S.textoCant(2, 'capsula') === '2 cápsulas' || { dia, medio };
+    });
+
     const C = await import('/js/copias.js');
     await prueba('Una copia dañada NO se acepta', () => C.validarCopia({ app: 'otra' }).ok === false);
     await prueba('Una copia con partes rotas se rechaza sin fallar', () => C.validarCopia({ app: 'nutristock', foods: [], logs: 'roto' }).ok === false);

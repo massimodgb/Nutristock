@@ -15,7 +15,7 @@ import { leer } from './entreno.js';
 import { estadoCompra, textoStock } from './stock.js';
 import { exportarCopia, estadoCopia } from '../copias.js';
 import { resumenWhoop, colorRecuperacion, estadoWhoop } from '../whoop.js';
-import { listaSupl, tomadosDia, marcarSupl } from '../suplementos.js';
+import { listaSupl, tomadosDia, marcarSupl, cantHabitual, cantTomada, aporteDia, aporteSupl, textoAporte, textoCant, textoDosis, nombreUnidad } from '../suplementos.js';
 import { estadoNube, escucharNube } from '../nube.js';
 import { AnadirComida, GrupoDetalle, agrupar, platosDe } from './anadir.js';
 
@@ -1050,23 +1050,60 @@ function WhoopHoy({ date, comido, isToday, go }) {
     </button>`;
 }
 
-// Suplementos del día: un toque para marcar que lo tomaste
+// Suplementos del día: un toque marca que tomaste lo habitual; tocar uno ya marcado deja cambiar la cantidad o quitarlo
 function Suplementos({ date }) {
   const lista = useLive(listaSupl, []);
   const tomados = useLive(() => tomadosDia(date), [date]);
+  const [cambiar, setCambiar] = useState(null); // el suplemento que estás cambiando
   if (!lista || !tomados || !lista.length) return null;
   const n = lista.filter(s => tomados[s.id]).length;
+  const aporte = aporteDia(lista, tomados);
+  const tocar = s => {
+    if (hojaRecienCerrada()) return;
+    if (tomados[s.id]) setCambiar(s);
+    else marcarSupl(date, s.id, cantHabitual(s));
+  };
   return html`
     <section class="card supl">
       <div class="supl-top"><span>Suplementos</span><small class="muted">${n} de ${lista.length}</small></div>
       <div class="chips wrap">
-        ${lista.map(s => html`
-          <button class=${'chip supl-chip' + (tomados[s.id] ? ' on' : '')} aria-pressed=${!!tomados[s.id]}
-            onClick=${() => marcarSupl(date, s.id, !tomados[s.id])}>
-            ${tomados[s.id] ? '✓ ' : ''}${s.nombre}${s.dosis ? html` <small>${s.dosis}</small>` : ''}
-          </button>`)}
+        ${lista.map(s => {
+          const cant = cantTomada(s, tomados[s.id]);
+          const dosis = cant && s.unidad ? textoCant(cant, s.unidad) : textoDosis(s);
+          return html`
+            <button class=${'chip supl-chip' + (tomados[s.id] ? ' on' : '')} aria-pressed=${!!tomados[s.id]} onClick=${() => tocar(s)}>
+              ${tomados[s.id] ? '✓ ' : ''}${s.nombre}${dosis ? html` <small>${dosis}</small>` : ''}
+            </button>`;
+        })}
       </div>
+      ${Object.keys(aporte).length > 0 && html`<small class="muted">Hoy te aportan: ${textoAporte(aporte)}</small>`}
+      <${Sheet} open=${!!cambiar} onClose=${() => setCambiar(null)} title=${cambiar?.nombre || ''}>
+        ${cambiar && html`<${TomaSupl} s=${cambiar} cant=${cantTomada(cambiar, tomados[cambiar.id])}
+          onGuardar=${async c => { await marcarSupl(date, cambiar.id, c); setCambiar(null); }} />`}
+      <//>
     </section>`;
+}
+
+// Cuánto tomaste hoy de un suplemento (ya marcado)
+function TomaSupl({ s, cant, onGuardar }) {
+  const [c, setC] = useState(cant);
+  const unidad = s.unidad || 'capsula';
+  const base = cantHabitual(s);
+  // Atajos: la mitad, lo habitual, el doble y el triple (en cápsulas, sobres… solo números enteros)
+  const atajos = [...new Set([base / 2, base, base * 2, base * 3])].filter(x => x > 0 && (['g', 'ml'].includes(unidad) || Number.isInteger(x)));
+  const a = aporteSupl(s, c);
+  return html`
+    <div class="form">
+      <p class="small muted">${s.marca ? s.marca + ' · ' : ''}Lo habitual: ${textoDosis(s) || 'sin cantidad'}</p>
+      ${s.unidad && html`
+        <label>¿Cuánto tomaste hoy?<${Num} value=${c} onChange=${v => setC(v)} suffix=${nombreUnidad(c, unidad)} /></label>
+        <div class="chips wrap">
+          ${atajos.map(x => html`<button class=${'chip' + (c === x ? ' on' : '')} aria-pressed=${c === x} onClick=${() => setC(x)}>${textoCant(x, unidad)}</button>`)}
+        </div>`}
+      ${a && html`<p class="supl-resumen">Te aporta: ${textoAporte(a)}</p>`}
+      ${s.unidad && html`<button class="btn" disabled=${!(c > 0)} onClick=${() => onGuardar(c)}>Guardar</button>`}
+      <button class="btn danger" onClick=${() => onGuardar(0)}>No lo tomé: quitarlo de hoy</button>
+    </div>`;
 }
 
 // Si la nube necesita que elijas algo (datos en dos sitios, o datos que faltan), se avisa aquí

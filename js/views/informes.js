@@ -9,7 +9,7 @@ import { textoFormato } from '../entreno/parser.js';
 import { mejorRM, nombreRM } from '../entreno/rm.js';
 import { BENCHMARKS } from '../entreno/datos.js';
 import { resumenWhoop } from '../whoop.js';
-import { listaSupl, tomadosEntre } from '../suplementos.js';
+import { listaSupl, tomadosEntre, cantTomada, textoCant, textoDosis, aporteDia, aporteMedio, aporteSupl, cantHabitual, textoAporte, tieneDatos, NUTR_SUPL, SUPL_EXTRA } from '../suplementos.js';
 import { MICROS, microsMedios } from '../data/micros.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -63,7 +63,8 @@ async function reunir(desde, hasta) {
       agua: agua[date] || 0, peso: pesos[date] ?? null,
       entreno: ws.length > 0, rpe: rpes.length ? rpes.reduce((a, b) => a + b, 0) / rpes.length : null,
       w: whoop[date] || null,
-      supl: supl.filter(x => suplTomados[date]?.[x.id]).map(x => x.nombre),
+      supl: supl.filter(x => suplTomados[date]?.[x.id]).map(x => x.nombre + (x.unidad ? ` (${textoCant(cantTomada(x, suplTomados[date][x.id]), x.unidad)})` : '')),
+      suplN: aporteDia(supl, suplTomados[date]),
     };
   });
   const conDatos = dias.filter(d => d.registros);
@@ -97,6 +98,7 @@ async function reunir(desde, hasta) {
   const whoopMedias = { rec: mediaW('recuperacion'), horas: mediaW('horas'), sueno: mediaW('sueno'), strain: mediaW('strain'), kcal: mediaW('kcal', true), hrv: mediaW('hrv'), fc: mediaW('fcReposo'), dias: dias.filter(d => d.w?.recuperacion != null).length };
   const suplResumen = supl.map(x => ({ ...x, dias: dias.filter(d => suplTomados[d.date]?.[x.id]).length }));
   const micros = microsMedios(logs, byId);
+  micros.supl = aporteMedio(supl, suplTomados, Object.keys(micros.porDia));
   return { desde, hasta, logs, dias, conDatos, medias, ref, plan, byId, porComida, masFrecuentes, balance, pesosPeriodo, workouts, marcas, perfil, whoopMedias, suplResumen, micros };
 }
 
@@ -242,23 +244,30 @@ function htmlWhoop(D, nutricion) {
   </table>`;
 }
 
-// Vitaminas y minerales (media de los días registrados)
+// Vitaminas y minerales (media de los días registrados): comida + suplementos
 function htmlMicros(D) {
   const M = D.micros;
   if (!M?.dias) return '';
-  return `<h2>Vitaminas y minerales (media diaria, sin suplementos)</h2>
-  <table><tr><th></th><th>Media diaria</th><th>Referencia EFSA (hombre adulto)</th><th>%</th></tr>
-  ${MICROS.map(m => `<tr><td>${m.name}</td><td>${n1(M.media[m.k], m.dec)} ${m.unit}</td><td>${n1(m.ref)} ${m.unit}</td><td>${n1(M.media[m.k] / m.ref * 100)} %</td></tr>`).join('')}
+  const S = M.supl || {};
+  const conSupl = NUTR_SUPL.some(m => S[m.k] > 0);
+  const extras = SUPL_EXTRA.filter(m => S[m.k] > 0);
+  return `<h2>Vitaminas y minerales (media diaria)</h2>
+  <table><tr><th></th><th>Comida</th>${conSupl ? '<th>Suplementos</th><th>Total</th>' : ''}<th>Referencia EFSA (hombre adulto)</th><th>%</th></tr>
+  ${MICROS.map(m => {
+    const total = M.media[m.k] + (S[m.k] || 0);
+    return `<tr><td>${m.name}</td><td>${n1(M.media[m.k], m.dec)} ${m.unit}</td>${conSupl ? `<td>${S[m.k] ? n1(S[m.k], m.dec) + ' ' + m.unit : '—'}</td><td>${n1(total, m.dec)} ${m.unit}</td>` : ''}<td>${n1(m.ref)} ${m.unit}</td><td>${n1(total / m.ref * 100)} %</td></tr>`;
+  }).join('')}
+  ${extras.map(m => `<tr><td>${m.name}</td><td>—</td><td>${n1(S[m.k], m.dec)} ${m.unit}</td><td>${n1(S[m.k], m.dec)} ${m.unit}</td><td></td><td></td></tr>`).join('')}
   </table>
-  <p class="nota">Calculado con el ${n1(M.cobertura * 100)} % de las calorías registradas (los platos aproximados fuera del plan no traen estos datos). Valores de tablas USDA/BEDCA o de la etiqueta.</p>`;
+  <p class="nota">Comida: calculado con el ${n1(M.cobertura * 100)} % de las calorías registradas (los platos aproximados fuera del plan no traen estos datos). Valores de tablas USDA/BEDCA o de la etiqueta.${conSupl ? ' Suplementos: según su etiqueta y lo que marcó cada día.' : ''}</p>`;
 }
 
-// Suplementos: cuántos días tomó cada uno
+// Suplementos: marca, cuánto toma, qué aporta y cuántos días lo tomó
 function htmlSupl(D) {
   if (!D.suplResumen.length) return '';
   return `<h2>Suplementos</h2>
-  <table><tr><th>Suplemento</th><th>Dosis</th><th>Días tomado</th></tr>
-  ${D.suplResumen.map(x => `<tr><td>${esc(x.nombre)}</td><td>${esc(x.dosis || '')}</td><td>${x.dias} de ${D.dias.length}</td></tr>`).join('')}
+  <table><tr><th>Suplemento</th><th>Marca</th><th>Toma habitual</th><th>Aporta al día</th><th>Días tomado</th></tr>
+  ${D.suplResumen.map(x => `<tr><td>${esc(x.nombre)}${x.notas ? `<br><small>${esc(x.notas)}</small>` : ''}</td><td>${esc(x.marca || '')}</td><td>${esc(textoDosis(x))}</td><td>${tieneDatos(x) ? esc(textoAporte(aporteSupl(x, cantHabitual(x)))) : '—'}</td><td>${x.dias} de ${D.dias.length}</td></tr>`).join('')}
   </table>`;
 }
 
@@ -275,8 +284,8 @@ const csv = (cab, filas) => '﻿' + [cab, ...filas].map(f => f.map(celda).join('
 function csvNutricion(D) {
   const { plan, dias, logs } = D;
   return [
-    ['nutricion_por_dia.csv', csv(['fecha', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'agua_ml', 'peso_kg', 'fuera_plan_kcal', 'cumplimiento_plan_pct', 'entreno', 'rpe_medio', 'recuperacion_pct', 'sueno_h', 'esfuerzo', 'gasto_whoop_kcal', 'suplementos', ...MICROS.map(m => `${m.name.toLowerCase().replace(/ /g, '_')}_${m.unit === 'µg' ? 'ug' : m.unit}`)],
-      dias.map(d => [d.date, d.registros ? d.n.kcal : null, d.registros ? d.n.prot : null, d.registros ? d.n.carb : null, d.registros ? d.n.fat : null, d.registros ? d.n.fib : null, d.registros ? d.n.sug : null, d.registros ? d.n.sat : null, d.registros ? d.n.salt : null, d.agua || null, d.peso, d.fuera || null, d.cumplimiento != null ? d.cumplimiento * 100 : null, d.entreno ? 'si' : '', d.rpe, d.w?.recuperacion ?? null, d.w?.horas ?? null, d.w?.strain ?? null, d.w?.kcal && !d.w.enCurso ? d.w.kcal : null, d.supl.join(', '), ...MICROS.map(m => D.micros.porDia[d.date]?.[m.k] ?? null)]))],
+    ['nutricion_por_dia.csv', csv(['fecha', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'agua_ml', 'peso_kg', 'fuera_plan_kcal', 'cumplimiento_plan_pct', 'entreno', 'rpe_medio', 'recuperacion_pct', 'sueno_h', 'esfuerzo', 'gasto_whoop_kcal', 'suplementos', ...MICROS.map(m => `${m.name.toLowerCase().replace(/ /g, '_')}_${m.unit === 'µg' ? 'ug' : m.unit}`), ...NUTR_SUPL.map(m => `${m.name.toLowerCase().replace(/[^a-z0-9áéíóúñ]+/g, '_').replace(/_$/, '')}_suplementos_${m.unit === 'µg' ? 'ug' : m.unit}`)],
+      dias.map(d => [d.date, d.registros ? d.n.kcal : null, d.registros ? d.n.prot : null, d.registros ? d.n.carb : null, d.registros ? d.n.fat : null, d.registros ? d.n.fib : null, d.registros ? d.n.sug : null, d.registros ? d.n.sat : null, d.registros ? d.n.salt : null, d.agua || null, d.peso, d.fuera || null, d.cumplimiento != null ? d.cumplimiento * 100 : null, d.entreno ? 'si' : '', d.rpe, d.w?.recuperacion ?? null, d.w?.horas ?? null, d.w?.strain ?? null, d.w?.kcal && !d.w.enCurso ? d.w.kcal : null, d.supl.join(', '), ...MICROS.map(m => D.micros.porDia[d.date]?.[m.k] ?? null), ...NUTR_SUPL.map(m => d.suplN[m.k] ?? null)]))],
     ['nutricion_registros.csv', csv(['fecha', 'hora', 'comida', 'alimento', 'gramos', 'pesado_en', 'gramos_crudo', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'aproximado'],
       [...logs].sort((a, b) => a.date.localeCompare(b.date) || (a.ts || 0) - (b.ts || 0)).map(l => [l.date, l.ts > 1e12 ? new Date(l.ts).toTimeString().slice(0, 5) : '', COMIDA_NOMBRE(plan, l.mealId), l.name, l.g, l.g ? (l.crudo ? 'crudo' : 'cocido') : '', l.rawG, l.n.kcal, l.n.prot, l.n.carb, l.n.fat, l.n.fib, l.n.sug, l.n.sat, l.n.salt, l.aprox ? 'si' : '']))],
     ['peso.csv', csv(['fecha', 'peso_kg'], D.pesosPeriodo.map(w => [w.date, w.kg]))],

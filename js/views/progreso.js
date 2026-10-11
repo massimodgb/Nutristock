@@ -9,7 +9,7 @@ import { Seg, Empty } from '../ui.js';
 import { resumenWhoop, colorRecuperacion } from '../whoop.js';
 import { FACTORES, MIN_DIAS, paresCruce, compararMitades, fraseCruce, textoValor } from '../cruces.js';
 import { MICROS, microsMedios } from '../data/micros.js';
-import { listaSupl } from '../suplementos.js';
+import { listaSupl, tomadosEntre, aporteMedio, tieneDatos, SUPL_EXTRA } from '../suplementos.js';
 
 const DIAS_CRUCES = 60;
 const MACROS = [
@@ -401,28 +401,38 @@ function Dispersion({ pares, factor, umbral, sel, onSel }) {
 }
 
 // ---------- Vitaminas y minerales ----------
-const SUPL_MICRO = [[/magnes/i, 'mg'], [/electrol/i, 'k'], [/potas/i, 'k'], [/hierro/i, 'fe'], [/calcio/i, 'ca'], [/vitamina ?d|vit\.? ?d\b/i, 'vd'], [/b12/i, 'b12'], [/vitamina ?c\b/i, 'vc']];
+// Lo que comes + lo que aportan tus suplementos (si tienen los datos de la etiqueta), los mismos días
 function Micros({ logs, byId }) {
+  const fechas = [...new Set(logs.map(l => l.date))].sort();
+  const desde = fechas[0] || '', hasta = fechas[fechas.length - 1] || '';
   const supl = useLive(listaSupl, []);
-  if (!supl) return null;
+  const tomados = useLive(async () => (desde ? tomadosEntre(desde, hasta) : {}), [desde, hasta]);
+  if (!supl || !tomados) return null;
   const r = microsMedios(logs, byId);
   if (!r.dias) return null;
-  const tomas = supl.filter(s => SUPL_MICRO.some(([re]) => re.test(s.nombre)));
-  const bajos = MICROS.filter(m => r.media[m.k] / m.ref < 0.6);
+  const deSupl = aporteMedio(supl, tomados, Object.keys(r.porDia));
+  const total = k => r.media[k] + (deSupl[k] || 0);
+  const sinDatos = supl.filter(s => !tieneDatos(s) && s.id !== 'creatina');
+  const hayDeSupl = MICROS.some(m => deSupl[m.k] > 0);
+  const extras = SUPL_EXTRA.filter(m => deSupl[m.k] > 0);
+  const bajos = MICROS.filter(m => total(m.k) / m.ref < 0.6);
   return html`
     <section class="card">
       <h3>Vitaminas y minerales</h3>
-      <p class="small muted">Media al día de lo que comes frente a lo recomendado para un hombre adulto (EFSA).${bajos.length ? ` Por debajo: ${bajos.map(m => m.name.charAt(0).toLowerCase() + m.name.slice(1)).join(', ')}.` : ''}</p>
+      <p class="small muted">Media al día de lo que comes${hayDeSupl ? ' y tus suplementos' : ''} frente a lo recomendado para un hombre adulto (EFSA).${bajos.length ? ` Por debajo: ${bajos.map(m => m.name.charAt(0).toLowerCase() + m.name.slice(1)).join(', ')}.` : ''}</p>
       <div class="pg-ledger">
         ${MICROS.map(m => {
-          const pct = r.media[m.k] / m.ref;
+          const pct = total(m.k) / m.ref;
+          const ancho = x => Math.min(x / m.ref / 1.3, 1) * 100;
+          const comida = ancho(r.media[m.k]);
           const estado = pct >= 0.9 ? 'ok' : pct < 0.6 ? 'alto' : '';
           return html`
             <div class="pg-fila">
-              <span class="pg-nombre">${m.name}</span>
-              <span class="pg-num"><b>${fmt(r.media[m.k], m.dec)}</b><span class="muted"> / ${fmt(m.ref)} ${m.unit}</span></span>
+              <span class="pg-nombre">${m.name}${deSupl[m.k] > 0 && html`<small class="muted"> · ${fmt(deSupl[m.k], m.dec)} de suplementos</small>`}</span>
+              <span class="pg-num"><b>${fmt(total(m.k), m.dec)}</b><span class="muted"> / ${fmt(m.ref)} ${m.unit}</span></span>
               <div class="pg-track" aria-hidden="true">
-                <div class="pg-fill" style=${{ width: Math.min(pct / 1.3, 1) * 100 + '%', background: pct >= 0.9 ? 'var(--accent)' : pct < 0.6 ? 'var(--warn)' : 'var(--fat)' }}></div>
+                <div class="pg-fill" style=${{ width: comida + '%', background: pct >= 0.9 ? 'var(--accent)' : pct < 0.6 ? 'var(--warn)' : 'var(--fat)' }}></div>
+                ${deSupl[m.k] > 0 && html`<div class="pg-fill pg-supl" style=${{ left: comida + '%', width: Math.max(ancho(total(m.k)) - comida, 0) + '%' }}></div>`}
                 <div class="pg-meta" style=${{ left: (1 / 1.3) * 100 + '%' }}></div>
               </div>
               <span class=${'pg-pct ' + estado}>${fmt(pct * 100)} %</span>
@@ -430,7 +440,9 @@ function Micros({ logs, byId }) {
         })}
       </div>
       ${r.cobertura < 0.9 && html`<p class="small muted">Calculado con el ${fmt(r.cobertura * 100)} % de lo que comiste: lo de fuera del plan y los platos aproximados no traen estos datos.</p>`}
-      ${tomas.length > 0 && html`<p class="small muted">No incluye tus suplementos (${tomas.map(s => s.nombre).join(', ')}), que suman a lo de aquí.</p>`}
+      ${hayDeSupl && html`<p class="small muted pg-supl-ley"><span class="pg-supl-muestra" aria-hidden="true"></span> Parte rayada: lo que aportan tus suplementos los días que los marcaste.</p>`}
+      ${extras.length > 0 && html`<p class="small muted">Además, de tus suplementos: ${extras.map(m => `${m.name.charAt(0).toLowerCase() + m.name.slice(1)} ${fmt(deSupl[m.k], m.dec)} ${m.unit}`).join(' · ')} al día de media.</p>`}
+      ${sinDatos.length > 0 && html`<p class="small muted">Sin datos de la etiqueta (no suman): ${sinDatos.map(s => s.nombre).join(', ')}. Añádelos en Más → Suplementos.</p>`}
       <details class="porque">
         <summary>¿Por qué importan para entrenar?</summary>
         <ul>
