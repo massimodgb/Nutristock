@@ -45,10 +45,10 @@ function App() {
   const { View } = actual;
 
   return html`
-    <main><${View} go=${go} /></main>
+    <main key=${actual.id} class="vista"><${View} go=${go} /></main>
     <nav class="tabbar">
       ${TABS.filter(t => !t.oculta).map(t => html`
-        <button class=${t.id === (actual.padre || actual.id) ? 'on' : ''} onClick=${() => go(t.id)}>
+        <button class=${t.id === (actual.padre || actual.id) ? 'on' : ''} aria-current=${t.id === (actual.padre || actual.id) ? 'page' : null} onClick=${() => go(t.id)}>
           <${Icon} name=${t.icon} /><span>${t.label}</span>
         </button>`)}
     </nav>`;

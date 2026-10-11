@@ -29,6 +29,7 @@ export function Hoy({ go }) {
   const elecciones = useLive(() => getSetting('opciones:' + date, {}), [date]);
   const ayer = useLive(() => db.logs.where('date').equals(addDays(date, -1)).toArray(), [date]);
   const [sheet, setSheetRaw] = useState(null);
+  const [abierta, setAbierta] = useState(null); // comida desplegada en "Tus comidas"
   // En el iPhone, el toque que cierra una hoja puede "atravesarla" y abrir otra: lo ignoramos
   const setSheet = v => { if (v && hojaRecienCerrada()) return; setSheetRaw(v); };
 
@@ -55,34 +56,29 @@ export function Hoy({ go }) {
 
   return html`
     <div class="page">
-      <header class="top">
-        <button class="icon-btn" onClick=${() => setDate(addDays(date, -1))} aria-label="Día anterior"><${Icon} name="left" /></button>
-        <label class="top-title fecha-picker">
-          ${isToday ? 'Hoy' : fmtDate(date, { weekday: 'long' })}
-          <small class="fecha-txt"><${Icon} name="hoy" size=${13} /> ${fmtDate(date, { day: 'numeric', month: 'long' })} ▾</small>
-          <input type="date" aria-label="Elegir fecha" value=${date}
-            onChange=${e => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && setDate(e.target.value)} />
-        </label>
-        <button class="icon-btn" onClick=${() => setDate(addDays(date, 1))} aria-label="Día siguiente"><${Icon} name="right" /></button>
+      <header class="hoy-cab">
+        <div class="hoy-tit">
+          <h1>${isToday ? 'Hoy' : fmtDate(date, { weekday: 'long' })}</h1>
+          <label class="fecha-picker hoy-fecha">
+            <${Icon} name="hoy" size=${14} /> ${fmtDate(date, { day: 'numeric', month: 'long' })} <span aria-hidden="true">▾</span>
+            <input type="date" aria-label="Elegir fecha" value=${date}
+              onChange=${e => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && setDate(e.target.value)} />
+          </label>
+        </div>
+        <div class="hoy-nav">
+          <button class="icon-btn suave" onClick=${() => setDate(addDays(date, -1))} aria-label="Día anterior"><${Icon} name="left" size=${18} /></button>
+          <button class="icon-btn suave" onClick=${() => setDate(addDays(date, 1))} aria-label="Día siguiente"><${Icon} name="right" size=${18} /></button>
+        </div>
       </header>
 
       ${!isToday && html`<button class="chip volver-hoy" onClick=${() => setDate(todayStr())}>Volver a hoy</button>`}
       ${isToday && html`<${AvisoNube} go=${go} />`}
       ${isToday && html`<${RecordatorioCopia} />`}
-      <${Resumen} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
+      <${Hero} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
+      <${MacroTiles} total=${total} objetivo=${ref} />
       <${Rapido} date=${date} logs=${logs} ayer=${ayer}
         onCopiar=${(titulo, entradas) => setSheet({ type: 'copiar', titulo, entradas })}
         onOtroDia=${() => setSheet({ type: 'otrodia' })} />
-      <${Agua} date=${date} prefs=${prefs} />
-      <${Suplementos} date=${date} />
-      ${isToday && html`<${PesoHoy} date=${date} />`}
-      <${WhoopHoy} date=${date} comido=${total.kcal} isToday=${isToday} go=${go} />
-      <${EntrenoHoy} date=${date} go=${go} />
-      ${isToday && plan && html`
-        <button class="card idea-link" onClick=${() => go('ideas')}>
-          <${Icon} name="bolt" size=${20} /><span class="grow"><b>Ideas y recetas</b><br /><small class="muted">Qué cocinar con lo que tienes en casa y tu plan</small></span><${Icon} name="right" size=${16} />
-        </button>`}
-      ${isToday && html`<${Avisos} ...${ctx} basicos=${basicos} choice=${choice} logs=${logs} go=${go} />`}
 
       ${!plan && html`
         <div class="card">
@@ -90,30 +86,56 @@ export function Hoy({ go }) {
           <button class="btn" onClick=${() => go('plan')}>Cargar plan</button>
         </div>`}
 
-      ${plan?.comidas.map(m => html`
-        <${MealCard} key=${m.id} meal=${m} ...${ctx} logs=${logs} option=${choice[m.id]}
-          ayer=${ayer.filter(l => l.mealId === m.id && l.foodId)}
-          onRepetir=${ayerLogs => setSheet({ type: 'copiar', titulo: `${m.nombre} de ayer`, entradas: ayerLogs.map(plantilla) })}
-          onOption=${o => setChoice(m.id, o)}
-          onBlock=${(block, optionId) => setSheet({ type: 'block', meal: m, block, optionId })}
-          onLog=${log => setSheet({ type: 'log', log })} />
-        ${plan.entreno?.despuesDe === m.id && html`
-          <div class="training"><${Icon} name="bolt" size=${16} /> ${plan.entreno.texto}</div>`}
-      `)}
-
-      <section class="card meal">
-        <header class="meal-head">
-          <div><h3>Fuera del plan</h3><small>Comidas libres, restaurante, extras</small></div>
-          <button class="icon-btn accent" onClick=${() => setSheet({ type: 'extra' })} aria-label="Añadir"><${Icon} name="plus" /></button>
-        </header>
-        ${extras.length === 0 && html`<p class="muted small">Nada registrado.</p>`}
-        ${extras.map(l => html`
-          <button class="row" onClick=${() => setSheet({ type: 'log', log: l })}>
-            <span class="grow">${l.name}${l.aprox && html` <span class="tag">aprox.</span>`}
-              ${l.g ? html`<small> · ${fmt(l.g)} g</small>` : ''}</span>
-            <span class="muted">${fmt(l.n.kcal)} kcal</span>
-          </button>`)}
+      <section class="card comidas" aria-label="Tus comidas">
+        <header class="sec-head"><h2>Tus comidas</h2>${plan && html`<button class="link small" onClick=${() => go('plan')}>Ver plan</button>`}</header>
+        ${plan?.comidas.map((m, i) => html`
+          <${ComidaFila} key=${m.id} meal=${m} indice=${i} ...${ctx} logs=${logs} option=${choice[m.id]}
+            abierta=${abierta === m.id} onToggle=${() => setAbierta(abierta === m.id ? null : m.id)} />
+          ${abierta === m.id && html`
+            <${MealCard} meal=${m} ...${ctx} logs=${logs} option=${choice[m.id]} embebido=${true}
+              ayer=${ayer.filter(l => l.mealId === m.id && l.foodId)}
+              onRepetir=${ayerLogs => setSheet({ type: 'copiar', titulo: `${m.nombre} de ayer`, entradas: ayerLogs.map(plantilla) })}
+              onOption=${o => setChoice(m.id, o)}
+              onBlock=${(block, optionId) => setSheet({ type: 'block', meal: m, block, optionId })}
+              onLog=${log => setSheet({ type: 'log', log })} />`}
+          ${plan.entreno?.despuesDe === m.id && html`
+            <div class="training"><${Icon} name="bolt" size=${14} /> ${plan.entreno.texto}</div>`}
+        `)}
+        <button class=${'comida-fila' + (abierta === 'extra' ? ' abierta' : '')} onClick=${() => setAbierta(abierta === 'extra' ? null : 'extra')} aria-expanded=${abierta === 'extra'}>
+          <span class="comida-ico extra"><${Icon} name="plus" size=${20} /></span>
+          <span class="grow"><b>Extras y comidas libres</b><small>${extras.length ? extras.map(l => l.name.split(' (')[0]).slice(0, 3).join(', ') : 'Snacks, restaurante, caprichos'}</small></span>
+          <span class="comida-estado">${extras.length ? `${fmt(sumN(extras.map(l => l.n)).kcal)} kcal` : ''}</span>
+        </button>
+        ${abierta === 'extra' && html`
+          <div class="meal embebido">
+            ${extras.map(l => html`
+              <button class="row" onClick=${() => setSheet({ type: 'log', log: l })}>
+                <span class="grow">${l.name}${l.aprox && html` <span class="tag">aprox.</span>`}
+                  ${l.g ? html`<small> · ${fmt(l.g)} g</small>` : ''}</span>
+                <span class="muted">${fmt(l.n.kcal)} kcal</span>
+              </button>`)}
+            <button class="btn secondary" onClick=${() => setSheet({ type: 'extra' })}><${Icon} name="plus" size=${18} /> Añadir algo fuera del plan</button>
+          </div>`}
       </section>
+
+      <div class="sec-titulo">Entreno y recuperación</div>
+      <${WhoopHoy} date=${date} comido=${total.kcal} isToday=${isToday} go=${go} />
+      <${EntrenoHoy} date=${date} go=${go} />
+
+      <div class="sec-titulo">Hábitos</div>
+      <${Agua} date=${date} prefs=${prefs} />
+      <${Suplementos} date=${date} />
+      ${isToday && html`<${PesoHoy} date=${date} />`}
+
+      ${isToday && html`
+        <div class="sec-titulo">En casa</div>
+        <${EnCasa} ...${ctx} basicos=${basicos} choice=${choice} logs=${logs} go=${go} />`}
+      ${isToday && plan && html`
+        <button class="card idea-link" onClick=${() => go('ideas')}>
+          <${Icon} name="bolt" size=${20} /><span class="grow"><b>Ideas y recetas</b><br /><small class="muted">Qué cocinar con lo que tienes en casa y tu plan</small></span><${Icon} name="right" size=${16} />
+        </button>`}
+
+      <button class="fab" aria-label="Añadir alimento" onClick=${() => setSheet({ type: 'extra' })}><${Icon} name="plus" size=${26} /></button>
 
       <${Sheet} open=${sheet?.type === 'desglose'} onClose=${() => setSheet(null)} title="Desglose del día">
         ${sheet?.type === 'desglose' && html`<${Desglose} ...${ctx} logs=${logs} choice=${choice} total=${total} objetivo=${ref} />`}
@@ -133,6 +155,50 @@ export function Hoy({ go }) {
       <${Sheet} open=${sheet?.type === 'extra'} onClose=${() => setSheet(null)} title="Fuera del plan">
         ${sheet?.type === 'extra' && html`<${ExtraSheet} ...${ctx} onDone=${() => setSheet(null)} />`}
       <//>
+    </div>`;
+}
+
+// Cifras con punto de miles (1.632), como en una app de banco: se leen de un vistazo
+export const miles = x => Math.round(x || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+
+// Lo más importante del día: calorías comidas frente al objetivo
+function Hero({ total, objetivo: ref, onClick }) {
+  const pct = ref?.kcal ? (total.kcal / ref.kcal) * 100 : 0;
+  const quedan = ref ? ref.kcal - total.kcal : null;
+  const pasado = quedan != null && quedan < 0;
+  return html`
+    <button class="card hero" onClick=${onClick} aria-label="Ver el desglose del día">
+      <div class="hero-top">
+        <span class="hero-eti">Calorías consumidas</span>
+        ${ref && html`<span class=${'hero-pct' + (pct > 110 ? ' mal' : '')}>${fmt(pct)} % del objetivo</span>`}
+      </div>
+      <div class="hero-num"><b>${miles(total.kcal)}</b>${ref ? html`<span>/ ${miles(ref.kcal)} kcal</span>` : html`<span>kcal</span>`}</div>
+      ${ref && html`
+        <div class="hero-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(pct)}>
+          <i style=${{ transform: `scaleX(${Math.min(1, pct / 100)})`, background: pct > 110 ? 'var(--danger)' : 'var(--accent)' }}></i>
+        </div>
+        <div class="hero-pie"><span>${pasado ? html`<b class="mal">${miles(-quedan)} kcal</b> por encima` : html`<b>${miles(quedan)} kcal</b> restantes`}</span><span class="muted">Ver desglose ›</span></div>`}
+    </button>`;
+}
+
+const MACRO_TILES = [
+  { k: 'prot', name: 'Proteína', color: 'var(--prot)' },
+  { k: 'carb', name: 'Carbos', color: 'var(--carb)' },
+  { k: 'fat', name: 'Grasas', color: 'var(--fat)' },
+];
+function MacroTiles({ total, objetivo: ref }) {
+  return html`
+    <div class="macro-tiles">
+      ${MACRO_TILES.map(m => {
+        const pct = ref?.[m.k] ? Math.min(1, total[m.k] / ref[m.k]) : 0;
+        return html`
+          <div class="macro-tile">
+            <span class="mt-name"><span class="dot" style=${{ background: m.color }}></span>${m.name}</span>
+            <b>${fmt(total[m.k])}<small> g</small></b>
+            ${ref && html`<small class="muted">de ${fmt(ref[m.k])} g</small>
+              <div class="mt-bar"><i style=${{ transform: `scaleX(${pct})`, background: m.color }}></i></div>`}
+          </div>`;
+      })}
     </div>`;
 }
 
@@ -247,6 +313,22 @@ function ProtKg({ total, objetivo: ref }) {
   return html`llevas ${fmt(total.prot / w.kg, 1)} g/kg, el plan da ${fmt(ref.prot / w.kg, 1)} g/kg (con ${fmt(w.kg, 1)} kg).`;
 }
 
+// En casa: lo que tienes, lo que se acaba y lo que caduca (y qué podrías comer ahora)
+function EnCasa(props) {
+  const { lots, foods, go } = props;
+  const conStock = new Set(lots.filter(l => l.g > 0).map(l => l.foodId)).size;
+  return html`
+    <section class="card en-casa">
+      <button class="en-casa-top" onClick=${() => go('despensa')}>
+        <span class="comida-ico"><${Icon} name="casa" size=${20} /></span>
+        <span class="grow"><b>${conStock} ${conStock === 1 ? 'producto' : 'productos'} en tu despensa</b>
+          <small>${foods.filter(f => estadoCompra(f, lots).necesita).length ? `${foods.filter(f => estadoCompra(f, lots).necesita).length} en la lista de la compra` : 'Nada se está acabando'}</small></span>
+        <${Icon} name="right" size=${16} />
+      </button>
+      <${Avisos} ...${props} />
+    </section>`;
+}
+
 function Avisos({ lots, foods, byId, stock, basicos, prefs, plan, choice, logs, go }) {
   const items = [];
   for (const l of lots) {
@@ -283,15 +365,15 @@ function Avisos({ lots, foods, byId, stock, basicos, prefs, plan, choice, logs, 
   }
   if (!items.length) return null;
   return html`
-    <section class="card avisos">
-      ${items.slice(0, 6).map(a => html`
+    <div class="avisos">
+      ${items.slice(0, 5).map(a => html`
         <button class=${'aviso ' + a.tipo} onClick=${() => a.to && go(a.to)}>
           <${Icon} name="bell" size=${16} /><span>${a.txt}</span>
         </button>`)}
-    </section>`;
+    </div>`;
 }
 
-function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlock, onLog, onRepetir }) {
+function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlock, onLog, onRepetir, embebido }) {
   const mealLogs = logs.filter(l => l.mealId === meal.id);
   const opt = meal.opciones?.find(o => o.id === option);
   const blocks = [
@@ -301,12 +383,14 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
   const doneCount = blocks.filter(({ b }) => mealLogs.some(l => l.blockId === b.id)).length;
   const kcal = sumN(mealLogs.map(l => l.n)).kcal;
 
+  const sueltos = mealLogs.filter(l => !l.blockId || !blocks.some(({ b }) => b.id === l.blockId));
   return html`
-    <section class="card meal">
-      <header class="meal-head">
-        <div><h3>${meal.nombre}</h3><small>${meal.hora}</small></div>
-        <span class="muted small">${kcal ? `${fmt(kcal)} kcal · ` : ''}${doneCount}/${blocks.length}</span>
-      </header>
+    <section class=${embebido ? 'meal embebido' : 'card meal'}>
+      ${!embebido && html`
+        <header class="meal-head">
+          <div><h3>${meal.nombre}</h3><small>${meal.hora}</small></div>
+          <span class="muted small">${kcal ? `${fmt(kcal)} kcal · ` : ''}${doneCount}/${blocks.length}</span>
+        </header>`}
       ${mealLogs.length === 0 && ayer.length > 0 && html`
         <button class="chip repetir" onClick=${() => onRepetir(ayer)}>
           <${Icon} name="repeat" size=${15} /> Repetir lo de ayer (${ayer.map(l => l.name.split(' · ')[0]).join(', ')})
@@ -334,7 +418,36 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
             <span class="b-state">${bl.length ? html`<${Icon} name="check" size=${18} />` : vis ? html`<${Icon} name="plus" size=${18} />` : ''}</span>
           </div>`;
       })}
+      ${sueltos.length > 0 && html`
+        <div class="block sueltos">
+          <span class="dot" style=${{ background: 'var(--muted)' }}></span>
+          <div class="grow">
+            <div class="b-name">Fuera del plan en esta comida</div>
+            ${sueltos.map(l => html`<button class="b-log" onClick=${() => onLog(l)}>${l.name}${l.g ? ` · ${fmt(l.g)} g` : ''} · ${fmt(l.n.kcal)} kcal</button>`)}
+          </div>
+        </div>`}
     </section>`;
+}
+
+// Una fila de "Tus comidas": icono, qué llevas, y su estado (pendiente / a medias / listo). Al tocarla se despliega.
+const ICONO_COMIDA = n => /desayun/i.test(n) ? 'sol' : /media|tentempi|snack/i.test(n) ? 'manzana' : /merienda/i.test(n) ? 'taza' : /cena/i.test(n) ? 'luna' : 'plato';
+function ComidaFila({ meal, plan, byId, prefs, logs, option, abierta, onToggle }) {
+  const mealLogs = logs.filter(l => l.mealId === meal.id);
+  const opt = meal.opciones?.find(o => o.id === option) || meal.opciones?.[0];
+  const blocks = [...(meal.bloques || []), ...(opt?.bloques || [])]
+    .filter(b => blockFoods(b, plan).some(x => visibleFood(byId[x.id], prefs)));
+  const hechos = blocks.filter(b => mealLogs.some(l => l.blockId === b.id)).length;
+  const kcal = sumN(mealLogs.map(l => l.n)).kcal;
+  const estado = blocks.length && hechos >= blocks.length ? 'listo' : mealLogs.length ? 'medias' : 'pendiente';
+  const nombres = [...new Set(mealLogs.map(l => l.name.split(' · ')[0].split(' (')[0]))];
+  return html`
+    <button class=${'comida-fila ' + estado + (abierta ? ' abierta' : '')} onClick=${onToggle} aria-expanded=${abierta}>
+      <span class=${'comida-ico ' + estado}><${Icon} name=${ICONO_COMIDA(meal.nombre)} size=${20} /></span>
+      <span class="grow"><b>${meal.nombre} <i>${meal.hora}</i></b>
+        <small>${nombres.length ? nombres.slice(0, 3).join(', ') + (nombres.length > 3 ? '…' : '') : 'Pendiente de registrar'}</small></span>
+      <span class="comida-estado">${estado === 'listo' ? html`<em>✓ Listo</em>` : estado === 'medias' ? `${hechos} de ${blocks.length}` : ''}
+        ${kcal ? html`<small>${fmt(kcal)} kcal</small>` : ''}</span>
+    </button>`;
 }
 
 // Elegir alimento(s) para un bloque del plan. Se pueden COMBINAR varios (200 g de carne picada + ricotta):
@@ -736,19 +849,19 @@ function Rapido({ date, logs, ayer, onCopiar, onOtroDia }) {
   const habitual = useLive(() => getSetting('diaHabitual', null), []);
   if (habitual === undefined) return null;
   return html`
-    <section class="card rapido">
-      <div class="chips wrap">
+    <section class="rapido">
+      <div class="chips">
         ${ayer.length > 0 && html`<button class="chip" onClick=${() => onCopiar('Copiar ayer', ayer.map(plantilla))}>
           <${Icon} name="repeat" size=${14} /> Copiar ayer (${ayer.length})</button>`}
         ${habitual?.length > 0 && html`<button class="chip" onClick=${() => onCopiar('Mi día habitual', habitual)}>
           <${Icon} name="check" size=${14} /> Mi día habitual (${habitual.length})</button>`}
-        <button class="chip" onClick=${onOtroDia}>Otro día…</button>
+        <button class="chip" onClick=${onOtroDia}><${Icon} name="hoy" size=${14} /> Copiar otro día</button>
+        ${logs.length > 0 && html`
+          <button class="chip" onClick=${async () => {
+            await setSetting('diaHabitual', logs.map(plantilla));
+            toast('Guardado como tu día habitual ✓');
+          }}>Guardar como día habitual</button>`}
       </div>
-      ${logs.length > 0 && html`
-        <button class="link small" onClick=${async () => {
-          await setSetting('diaHabitual', logs.map(plantilla));
-          toast('Guardado como tu día habitual ✓');
-        }}>Guardar ${date === todayStr() ? 'hoy' : 'este día'} como mi día habitual</button>`}
     </section>`;
 }
 

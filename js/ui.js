@@ -132,6 +132,14 @@ const P = {
   pesa: 'M6 7v10M3 9v6M18 7v10M21 9v6M6 12h12',
   repeat: 'M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4',
   drop: 'M12 3s6 7 6 11a6 6 0 0 1-12 0c0-4 6-11 6-11z',
+  sol: 'M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+  luna: 'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',
+  plato: 'M12 6a6 6 0 1 0 0 12a6 6 0 1 0 0-12M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6M3 4v6M3 10v10M21 4c-2 2-2 6 0 8v8',
+  taza: 'M5 8h11v6a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5zM16 10h2a2 2 0 0 1 0 4h-2M8 3v2M11 3v2',
+  manzana: 'M12 7c-2-1.5-6-1-6 4 0 4 3 9 6 8 3 1 6-4 6-8 0-5-4-5.5-6-4zM12 7c0-2 1-3.5 3-4',
+  casa: 'M4 11l8-7 8 7v9H4zM10 20v-6h4v6',
+  extra: 'M12 4v16M4 12h16M7 7l10 10M17 7L7 17',
+  flecha: 'M7 17L17 7M9 7h8v8',
 };
 export const Icon = ({ name, size = 22 }) => html`
   <svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
