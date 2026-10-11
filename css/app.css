@@ -113,7 +113,7 @@ main { padding: env(safe-area-inset-top) 0 calc(var(--tabbar-h) + env(safe-area-
 .row:last-child { border-bottom: 0; }
 .row:active { opacity: 0.65; }
 .row.done .grow { text-decoration: line-through; color: var(--muted); }
-.group-title { display: flex; align-items: center; gap: 8px; padding: 8px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.group-title { display: flex; align-items: center; gap: 8px; padding: 10px 0 4px; font-size: 13px; font-weight: 700; color: var(--muted); }
 .dot { width: 10px; height: 10px; border-radius: 5px; flex-shrink: 0; display: inline-block; }
 .tag { font-size: 11px; padding: 2px 7px; border-radius: 8px; background: var(--fill); color: var(--muted); white-space: nowrap; font-weight: 500; }
 .tag.ok { background: var(--accent-soft); color: var(--accent); }
@@ -712,3 +712,7 @@ button:focus-visible, .btn:focus-visible, a:focus-visible, .fecha-picker:focus-w
 .cesta-total small { color: var(--muted); font-size: 12px; }
 .anadir-en { margin-top: 6px; }
 .comida-ico.libre { color: var(--fat); }
+
+/* Al registrar algo, la cifra de calorías da un pequeño salto para que se note el cambio */
+.hero-num b.cambia { animation: salto 420ms var(--curva); display: inline-block; }
+@keyframes salto { 0% { transform: scale(1); } 35% { transform: scale(1.06); color: var(--accent); } 100% { transform: scale(1); } }

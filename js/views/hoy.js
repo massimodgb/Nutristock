@@ -175,7 +175,7 @@ function Hero({ total, objetivo: ref, onClick }) {
         <span class="hero-eti">Calorías consumidas</span>
         ${ref && html`<span class=${'hero-pct' + (pct > 110 ? ' mal' : '')}>${fmt(pct)} % del objetivo</span>`}
       </div>
-      <div class="hero-num"><b>${miles(total.kcal)}</b>${ref ? html`<span>/ ${miles(ref.kcal)} kcal</span>` : html`<span>kcal</span>`}</div>
+      <div class="hero-num"><b key=${Math.round(total.kcal)} class=${total.kcal > 0 ? 'cambia' : ''}>${miles(total.kcal)}</b>${ref ? html`<span>/ ${miles(ref.kcal)} kcal</span>` : html`<span>kcal</span>`}</div>
       ${ref && html`
         <div class="hero-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow=${Math.round(pct)}>
           <i style=${{ transform: `scaleX(${Math.min(1, pct / 100)})`, background: pct > 110 ? 'var(--danger)' : 'var(--accent)' }}></i>
