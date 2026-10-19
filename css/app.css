@@ -758,3 +758,40 @@ details.revisar summary { cursor: pointer; font-weight: 600; padding: 10px 0; co
 .rv-top b.grow { font-weight: 600; overflow-wrap: anywhere; }
 .rv-fila .falta { color: var(--warn); }
 .rv-total { background: var(--accent-soft); }
+
+/* ---------- v3 · Fase 2: comidas preparadas (meal prep) ---------- */
+:root { --prep: #3b6fd8; --prep-soft: #e6eefc; }
+@media (prefers-color-scheme: dark) { :root { --prep: #8db4ff; --prep-soft: #142036; } }
+/* Hoy: lo preparado se ve aparte y no suma */
+.hero-prep { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--muted); text-align: left; }
+.hero-prep i { width: 18px; height: 6px; border-radius: 3px; flex-shrink: 0; background: repeating-linear-gradient(45deg, var(--prep) 0 3px, transparent 3px 6px); }
+.comida-ico.preparada { background: var(--prep-soft); color: var(--prep); }
+.comida-estado em.prep { color: var(--prep); }
+.block.preparado .b-state { color: var(--prep); }
+.prep-tag { color: var(--prep); font-size: 12px; font-weight: 600; }
+.prep-caja { display: flex; flex-direction: column; gap: 6px; padding: 12px; margin-bottom: 10px; border-radius: var(--radius-s); border: 1px dashed var(--prep); background: var(--prep-soft); }
+.prep-cab { display: flex; flex-direction: column; gap: 2px; }
+.prep-cab b { color: var(--prep); }
+.prep-linea { text-align: left; }
+.prep-ok { min-height: 48px; }
+/* Pantalla Preparar comidas */
+.preparar .prep-dia { display: flex; flex-direction: column; gap: 6px; }
+.preparar .prep-otro { display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
+.preparar .prep-otro input { flex: 1; min-width: 0; }
+.prep-item { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-s); background: var(--fill); }
+.prep-item .chips.wrap { flex-wrap: wrap; }
+.prep-gramos { display: flex; flex-direction: column; gap: 6px; }
+.prep-g { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.prep-num { width: 116px; flex-shrink: 0; }
+.prep-resumen { display: flex; flex-direction: column; gap: 6px; padding: 12px; border-radius: var(--radius-s); background: var(--prep-soft); font-size: 14px; }
+/* Factores medidos de un producto */
+.factores-medidos { display: flex; flex-direction: column; gap: 8px; }
+.factor-medido { align-items: center; }
+.factor-num { width: 104px; flex-shrink: 0; }
+/* Despensa de un vistazo */
+.vistazo { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 4px; }
+.vz { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px; border-radius: var(--radius-s); border: 1px solid var(--borde); background: var(--card); color: var(--text); font: inherit; cursor: pointer; text-align: left; min-width: 0; }
+.vz b { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.vz small { font-size: 12px; color: var(--muted); line-height: 1.2; }
+.vz.on { border-color: var(--accent); background: var(--accent-soft); }
+.vz.cero b { color: var(--muted); }

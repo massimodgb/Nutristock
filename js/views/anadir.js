@@ -5,7 +5,7 @@
 import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getSetting, deleteLog, round1 } from '../db.js';
 import { sumN, nutrFor, toRaw, visibleFood, fmt, todayStr, addDays, cookFactor } from '../nutri.js';
-import { raizDe, nombreMetodo } from '../precision.js';
+import { medidasDe, nombreMetodo } from '../precision.js';
 import { Num, Seg, Dot, Icon, toast } from '../ui.js';
 import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
@@ -99,13 +99,15 @@ export function AnadirComida({ plan, foods, byId, stock, prefs, date, mealId: me
   };
   // Formas de cocinarlo: la de la tabla y las que hayas medido tú (se propone la última que usaste)
   const metodosDe = f => {
-    const tabla = cookFactor(f, byId), c = coccion[raizDe(f)] || {};
+    if (f.source === 'receta') return null; // un táper ya está cocinado
+    const tabla = cookFactor(f, byId), { propias, base } = medidasDe(f, coccion);
     const list = [...(tabla != null ? [{ id: '', label: `Cocinado (tabla ×${fmt(tabla, 2)})`, factor: null }] : []),
-      ...Object.entries(c.metodos || {}).map(([m, x]) => ({ id: m, label: `${nombreMetodo(m)} ×${fmt(x, 2)}`, factor: x }))];
+      ...Object.entries(propias).map(([m, x]) => ({ id: m, label: `${nombreMetodo(m)} ×${fmt(x, 2)}`, factor: x })),
+      ...Object.entries(base).filter(([m]) => !propias[m]).map(([m, x]) => ({ id: m, label: `${nombreMetodo(m)} ×${fmt(x, 2)} (de ${byId[f.genericId]?.name || 'su base'})`, factor: x }))];
     return list.length ? [...list, { id: 'crudo', label: 'Pesado en crudo', factor: null }] : null;
   };
   const addFood = f => {
-    const metodos = metodosDe(f), ult = coccion[raizDe(f)]?.ultimo, m = metodos?.find(x => x.id === ult);
+    const metodos = metodosDe(f), ult = medidasDe(f, coccion).ultimo, m = ult && metodos?.find(x => x.id === ult);
     anadir({ tipo: 'food', food: f, porUnidad: !!f.unitG, n: 1, g: gramosPorDefecto(f), descontar: (stock[f.id]?.g || 0) > 0,
       metodos, metodo: m?.id || null, factor: m?.factor || null });
   };

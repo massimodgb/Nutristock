@@ -8,6 +8,8 @@ import { Sheet, Seg, Dot, Empty, Icon, Num, toast } from '../ui.js';
 import { Escaner, resolverCodigo, FoodForm, NoEncontrado, PegarEtiqueta } from './biblioteca.js';
 import { Receta, Preparacion } from './receta.js';
 import { CantidadStock, FichaStock, textoStock, estadoCompra, plural, nombreEnvase, anadirStock } from './stock.js';
+import { asignadoPorLote } from '../mealprep.js';
+import { nombreComidaDia } from './preparar.js';
 
 export function Despensa({ go }) {
   const [tab, setTab] = useState('stock');
@@ -27,13 +29,14 @@ export function Despensa({ go }) {
   const ocultos = useLive(() => getSetting('compraOculta', {}), []);
   const ajustes = useLive(() => getSetting('compraAjuste', {}), []);
   const forzados = useLive(() => getSetting('compraForzada', {}), []);
+  const porciones = useLive(() => db.porciones.toArray(), []);
   // Lo que antes se añadía a "Mi lista" desde el plan ya está en la lista única: se limpia una vez
   useEffect(() => { db.shopping.filter(x => !!x.dePlan).delete(); }, []);
 
-  if ([foods, lots, basicos, shopping, prefs, plan, logs, elecciones, ocultos, ajustes, forzados].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
+  if ([foods, lots, basicos, shopping, prefs, plan, logs, elecciones, ocultos, ajustes, forzados, porciones].includes(undefined)) return html`<div class="loading">Cargando…</div>`;
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
   const lista = construirLista({ plan, foods, lots, logs, elecciones, prefs, dias, ocultos, ajustes, forzados, hoy });
-  const ctx = { foods, byId, lots, basicos, shopping, prefs, setSheet, plan, lista, dias, setDias, ocultos, ajustes };
+  const ctx = { foods, byId, lots, basicos, shopping, prefs, setSheet, plan, lista, dias, setDias, ocultos, ajustes, porciones, setTab };
   const manuales = shopping.filter(x => !x.dePlan);
   const enCompra = lista.length + basicos.filter(b => b.status !== 'tengo').length + manuales.filter(x => !x.done).length;
 
@@ -58,24 +61,84 @@ export function Despensa({ go }) {
         ${sheet?.type === 'comprar' && html`<${Comprado} item=${sheet.item} foods=${foods} lots=${lots} dias=${dias} onDone=${() => setSheet(null)} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'food'} onClose=${() => setSheet(null)} title=${sheet?.food?.name}>
-        ${sheet?.type === 'food' && html`<${FichaStock} food=${byId[sheet.food.id] || sheet.food} lots=${lots} onAdd=${() => setSheet({ type: 'add', food: byId[sheet.food.id] || sheet.food })} onQuitar=${() => setSheet(null)} />`}
+        ${sheet?.type === 'food' && html`<${FichaStock} food=${byId[sheet.food.id] || sheet.food} lots=${lots} onAdd=${() => setSheet({ type: 'add', food: byId[sheet.food.id] || sheet.food })} onQuitar=${() => setSheet(null)}
+          onParecido=${sheet.food.source !== 'receta' ? () => setSheet({ type: 'parecido', food: byId[sheet.food.id] || sheet.food }) : null} />`}
+      <//>
+      <${Sheet} open=${sheet?.type === 'parecido'} onClose=${() => setSheet(null)} title="Compré otro parecido">
+        ${sheet?.type === 'parecido' && html`<${Parecido} food=${sheet.food} foods=${foods} onDone=${() => setSheet(null)} />`}
       <//>
     </div>`;
 }
 
-function Stock({ foods, lots, setSheet }) {
+// De un vistazo: qué tienes, qué está abierto, qué se acaba o caduca, lo preparado y lo que te faltará para el plan.
+// Un toque en cada cifra filtra la lista.
+function Stock({ foods, lots, setSheet, porciones, lista, plan, setTab }) {
+  const [filtro, setFiltro] = useState('todo');
+  const [q, setQ] = useState('');
   const conStock = new Set(lots.filter(l => l.g > 0).map(l => l.foodId));
-  // Lo que tienes + lo que vigilas (con aviso) aunque se haya acabado
-  const items = foods.filter(f => conStock.has(f.id));
+  const asignado = asignadoPorLote(porciones);
+  const tapers = foods.filter(f => f.source === 'receta' && conStock.has(f.id));
+  // Lo que tienes (sin los tápers, que van arriba aparte)
+  const todos = foods.filter(f => conStock.has(f.id) && f.source !== 'receta');
   // Lo que se acabó pero vigilas para la compra va aparte, al final
-  const acabados = foods.filter(f => !conStock.has(f.id) && (f.aviso != null || f.minG));
-  if (!items.length && !acabados.length) return html`
+  const acabados = foods.filter(f => !conStock.has(f.id) && f.source !== 'receta' && (f.aviso != null || f.minG));
+  if (!todos.length && !tapers.length && !acabados.length) return html`
     <${Empty}>
       Tu despensa está vacía. Escanea los productos o elígelos de tu biblioteca; también cosas de casa (toallitas, papel…).
       <br /><button class="btn" style=${{ marginTop: '12px' }} onClick=${() => setSheet({ type: 'add' })}><${Icon} name="plus" size=${18} /> Añadir mi primera compra</button>
     <//>`;
+  // Un táper recién hecho dura 3-5 días: solo avisa cuando le queda 1 día; lo demás, con 3 días
+  const caducaPronto = f => lots.some(l => l.foodId === f.id && l.g > 0 && l.expiry && daysUntil(l.expiry) <= (f.source === 'receta' ? 1 : 3));
+  const abierto = f => resumenStock(f, lots).abiertos.length > 0 && f.group !== 'hogar';
+  const seAcaba = f => estadoCompra(f, lots).necesita;
+  const paraPlan = lista.filter(x => x.motivos.includes('plan')).length;
+  const FILTROS = [
+    { id: 'preparado', label: 'Preparado', n: tapers.length },
+    { id: 'abiertos', label: 'Abiertos', n: todos.filter(abierto).length },
+    { id: 'acaba', label: 'Se acaban', n: todos.filter(seAcaba).length + acabados.length },
+    { id: 'caduca', label: 'Caducan pronto', n: todos.filter(caducaPronto).length + tapers.filter(caducaPronto).length },
+  ];
+  const nq = norm(q.trim());
+  const pasa = f => (!nq || norm(`${f.name} ${f.brand || ''}`).includes(nq))
+    && (filtro === 'todo' || (filtro === 'abiertos' && abierto(f)) || (filtro === 'acaba' && seAcaba(f)) || (filtro === 'caduca' && caducaPronto(f)));
+  const items = filtro === 'preparado' ? [] : todos.filter(pasa);
+  const verTapers = (filtro === 'todo' || filtro === 'preparado' || filtro === 'caduca') ? tapers.filter(f => (!nq || norm(f.name).includes(nq)) && (filtro !== 'caduca' || caducaPronto(f))) : [];
+
+  const cabecera = html`
+    <div class="vistazo">
+      ${FILTROS.map(x => html`
+        <button class=${'vz' + (filtro === x.id ? ' on' : '') + (x.n ? '' : ' cero')} aria-pressed=${filtro === x.id} onClick=${() => setFiltro(filtro === x.id ? 'todo' : x.id)}>
+          <b>${x.n}</b><small>${x.label}</small></button>`)}
+    </div>
+    ${plan && paraPlan > 0 && html`
+      <button class="aviso info aviso-faltan" onClick=${() => setTab('compra')}>
+        <span class="grow">Para tu plan de los próximos días te faltarán ${paraPlan} ${paraPlan === 1 ? 'cosa' : 'cosas'}.</span><small>Ver la compra</small></button>`}
+    <input class="search" placeholder="Buscar en tu despensa" value=${q} onInput=${e => setQ(e.target.value)} />`;
+
+  const filaTaper = f => {
+    const total = lots.filter(l => l.foodId === f.id).reduce((s, l) => s + Math.max(0, l.g), 0);
+    const asig = asignado[f.id] || 0, libre = Math.max(0, total - asig);
+    const ps = porciones.filter(p => p.foodId === f.id).sort((a, b) => a.date.localeCompare(b.date));
+    const exp = lots.filter(l => l.foodId === f.id && l.g > 0).map(l => l.expiry).filter(Boolean).sort()[0];
+    const d = exp ? daysUntil(exp) : null;
+    return html`
+      <button class="row" key=${f.id} onClick=${() => setSheet({ type: 'food', food: f })}>
+        <span class="grow">${f.name} <small class="muted">${f.brand || ''}</small>
+          ${d != null && d <= 1 && html` <span class=${'tag ' + (d < 0 ? 'bad' : 'warn')}>${d < 0 ? 'caducado' : d === 0 ? 'caduca hoy' : 'mañana'}</span>`}
+          <br /><small>${fmtG(total)} · ${asig ? html`<span class="prep-tag">${fmtG(asig)} asignados</span> · ` : ''}${fmtG(libre)} libres</small>
+          ${ps.length > 0 && html`<br /><small class="muted">${ps.map(p => `${nombreComidaDia(p.date, p.mealId, plan)} ${fmt(p.g)} g`).join(' · ')}</small>`}</span>
+        <${Icon} name="right" size=${16} />
+      </button>`;
+  };
+  if (!items.length && !verTapers.length) return html`${cabecera}<p class="muted">Nada con ese filtro.</p>${filtro === 'acaba' ? acabadosHtml(acabados, setSheet) : ''}`;
   const grupos = Object.keys(GROUPS).filter(g => items.some(f => (f.group || 'otro') === g));
-  return html`${grupos.map(g => html`
+  return html`${cabecera}
+    ${verTapers.length > 0 && html`
+      <section class="card list">
+        <h3 class="group-title"><span class="dot" style=${{ background: 'var(--prep)' }}></span> Preparado (tápers)</h3>
+        ${verTapers.map(filaTaper)}
+      </section>`}
+    ${grupos.map(g => html`
     <section class="card list">
       <h3 class="group-title"><${Dot} group=${g} /> ${GROUPS[g].name}</h3>
       ${items.filter(f => (f.group || 'otro') === g).sort((a, b) => a.name.localeCompare(b.name)).map(f => {
@@ -93,14 +156,61 @@ function Stock({ foods, lots, setSheet }) {
           </button>`;
       })}
     </section>`)}
-    ${acabados.length > 0 && html`
-      <details class="card acabados">
-        <summary>Se acabaron (${acabados.length}) · están en tu lista de la compra</summary>
-        <div class="list">${acabados.map(f => html`
-          <button class="row" onClick=${() => setSheet({ type: 'food', food: f })}>
-            <span class="grow">${f.name}</span><small class="muted">no queda</small>
-          </button>`)}</div>
-      </details>`}`;
+    ${(filtro === 'todo' || filtro === 'acaba') && acabadosHtml(acabados, setSheet)}`;
+}
+
+const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+function acabadosHtml(acabados, setSheet) {
+  if (!acabados.length) return '';
+  return html`
+    <details class="card acabados">
+      <summary>Se acabaron (${acabados.length}) · están en tu lista de la compra</summary>
+      <div class="list">${acabados.map(f => html`
+        <button class="row" onClick=${() => setSheet({ type: 'food', food: f })}>
+          <span class="grow">${f.name}</span><small class="muted">no queda</small>
+        </button>`)}</div>
+    </details>`;
+}
+
+// "Se acabó y compré otro parecido" (yogur de fresa → de stracciatella): una ficha NUEVA que hereda lo práctico
+// (familia del plan, grupo, envase, aviso de compra) pero con SUS propios valores (nunca se mezclan).
+export function plantillaParecido(f) {
+  return {
+    name: f.name, brand: f.brand || '', group: f.group, genericId: f.genericId || '', factor: f.factor || null, mar: !!f.mar,
+    packG: f.packG || null, envase: f.envase || '', unitG: f.unitG || null, unitName: f.unitName || '',
+    aviso: f.aviso ?? null, comprar: f.comprar ?? null, minG: f.minG ?? null, n: {},
+  };
+}
+function Parecido({ food, foods, onDone }) {
+  const [modo, setModo] = useState('elegir'); // elegir | escanear | cargando | ficha | cantidad
+  const [draft, setDraft] = useState(null);
+  const [nuevo, setNuevo] = useState(null);
+  const [aviso, setAviso] = useState('');
+  const base = plantillaParecido(food);
+  const escaneado = async code => {
+    setModo('cargando');
+    const r = await resolverCodigo(code, foods);
+    if (r.food) { setNuevo(r.food); setModo('cantidad'); toast(`${r.food.name}: ya lo tenías`); return; }
+    // Lo práctico del anterior + lo que diga Open Food Facts del nuevo (nombre, valores, envase)
+    const d = r.draft || {};
+    setDraft({ ...base, ...Object.fromEntries(Object.entries(d).filter(([, v]) => v != null && v !== '')), n: { ...(d.n || {}) }, barcode: code });
+    setAviso(r.estado === 'off' ? 'Encontrado en Open Food Facts: revisa el nombre (sabor) y los valores.' : 'No lo encontré: escribe el sabor y pega o rellena sus valores.');
+    setModo('ficha');
+  };
+  if (modo === 'escanear') return html`<${Escaner} onCode=${escaneado} />`;
+  if (modo === 'cargando') return html`<p class="muted">Buscando el producto…</p>`;
+  if (modo === 'cantidad' && nuevo) return html`<${CantidadStock} food=${nuevo} onDone=${onDone} />`;
+  if (modo === 'ficha') {
+    return html`<${FoodForm} initial=${draft} aviso=${aviso} foods=${foods} copiarDe=${food}
+      onSaved=${f => { setNuevo(f); setModo('cantidad'); }} onDone=${() => {}} />`;
+  }
+  return html`
+    <div class="form">
+      <p class="small">Se crea una ficha nueva con lo práctico de <b>${food.name}</b> (a qué cuenta en tu plan, envase y aviso de compra). Sus calorías y macros son las del nuevo: no se mezclan.</p>
+      <button class="btn" onClick=${() => setModo('escanear')}><${Icon} name="scan" size=${18} /> Escanear el código del nuevo</button>
+      <button class="btn secondary" onClick=${() => { setDraft({ ...base, name: '' }); setAviso(`Escribe el nombre (por ejemplo, el sabor) y sus valores. Si son iguales que los de ${food.name}, toca el botón de abajo.`); setModo('ficha'); }}>
+        <${Icon} name="pen" size=${18} /> Escribirlo yo</button>
+    </div>`;
 }
 
 function AddStock({ foods, lots, prefs, food: inicial, onDone }) {
@@ -146,7 +256,6 @@ function AddStock({ foods, lots, prefs, food: inicial, onDone }) {
     .filter(f => f.source === 'receta' && (f.ingredientes?.length || 0) > 1)
     .reduce((acc, f) => { const k = f.recetaDe || f.id; if (!acc[k] || f.id > acc[k].id) acc[k] = f; return acc; }, {}));
 
-  const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const res = foods.filter(f => (f.group === 'hogar' || !(prefs.excluirMar && f.mar)) && norm(`${f.name} ${f.brand || ''}`).includes(norm(q)))
     .sort((a, b) => (a.source === 'base') - (b.source === 'base')).slice(0, 40);
   return html`

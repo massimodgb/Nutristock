@@ -3,6 +3,7 @@ import { html, useState, useEffect, useMemo, useRef } from '../lib.js';
 import { db, useLive, getPrefs, round1 } from '../db.js';
 import { NUTRS, GROUPS, fmt, parseNum, todayStr } from '../nutri.js';
 import { Sheet, Num, Toggle, Dot, Empty, Icon, toast } from '../ui.js';
+import { FactoresMedidos } from './coccion.js';
 import { buscarCodigo, parseEtiquetaInfo, iniciarEscaner, leerCodigoDeFoto } from '../importar.js';
 import { CantidadStock } from './stock.js';
 import { alimentoPorNombre } from '../plan-pdf.js';
@@ -208,7 +209,7 @@ export function PegarEtiqueta({ onDone }) {
     }}>Leer etiqueta</button>`;
 }
 
-export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
+export function FoodForm({ initial, aviso, foods, onDone, onSaved, copiarDe }) {
   const [f, setF] = useState(() => ({
     name: '', brand: '', group: '', barcode: '', packG: null, unitG: null, unitName: '',
     factor: null, genericId: '', mar: false, minG: null, ...initial, n: { ...(initial?.n || {}) },
@@ -253,6 +254,8 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
   return html`
     <div class="form">
       ${aviso && html`<p class="notice">${aviso}</p>`}
+      ${copiarDe && !Object.values(f.n).some(v => v != null && v !== '') && html`
+        <button class="chip" onClick=${() => setF(prev => ({ ...prev, n: { ...copiarDe.n } }))}>Tiene los mismos valores que ${copiarDe.name}${copiarDe.brand ? ` · ${copiarDe.brand}` : ''}</button>`}
       <label>Nombre<input value=${f.name} onInput=${e => set('name', e.target.value)} placeholder=${hogar ? 'Ej: Toallitas húmedas' : 'Ej: Pechuga de pollo fileteada'} /></label>
       <${Toggle} label="No es comida" hint="Casa, limpieza, higiene: toallitas, papel, detergente…"
         checked=${hogar} onChange=${v => set('group', v ? 'hogar' : '')} />
@@ -312,6 +315,9 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
               Usar factor ×${fmt(cal.cocido / cal.crudo, 2)}
             </button>`}
         </div>`}`}
+      ${!hogar && f.id && f.source !== 'receta' && html`
+        <h4>Formas de cocinar medidas</h4>
+        <${FactoresMedidos} food=${f} />`}
 
       ${!hogar && html`<${Toggle} label="Es comida del mar" checked=${!!f.mar} onChange=${v => set('mar', v)} />`}
       ${esNuevo && html`<p class="muted small">Al guardar podrás decir cuántos tienes en casa.</p>`}

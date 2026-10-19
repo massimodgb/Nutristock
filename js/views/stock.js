@@ -1,7 +1,7 @@
 // Despensa por envases: cuántas bolsas/paquetes/botes tienes, cuál está abierto,
 // cuándo avisar y cuántos comprar. Lo usan la Despensa y la Biblioteca.
 import { html, useState } from '../lib.js';
-import { db, resumenStock, round1, useLive, getSetting, setSetting } from '../db.js';
+import { db, resumenStock, round1, useLive, getSetting, setSetting, mermarLote } from '../db.js';
 import { fmt, fmtG, todayStr } from '../nutri.js';
 import { Num, Toggle, Dot, Icon, toast } from '../ui.js';
 
@@ -119,13 +119,15 @@ export function CantidadStock({ food, onDone, sugerido }) {
 }
 
 // Ficha de stock de un producto: envases, el abierto, "se terminó", aviso y cuántos comprar
-export function FichaStock({ food, lots, onAdd, onQuitar }) {
+export function FichaStock({ food, lots, onAdd, onQuitar, onParecido }) {
   const hogar = esHogar(food);
   const env = nombreEnvase(food);
   const mios = lots.filter(l => l.foodId === food.id && l.g > 0).sort((a, b) => (!!b.abierto - !!a.abierto) || (a.expiry || '9').localeCompare(b.expiry || '9') || a.addedAt - b.addedAt);
   const set = cambios => db.foods.update(food.id, { ...cambios, ...(food.source === 'base' ? { edited: true } : {}) });
+  // "Se terminó": lo que la app creía que quedaba se apunta como merma del envase (no como comida)
   const terminar = async l => {
-    await db.lots.update(l.id, { g: 0, abierto: false, terminado: Date.now() });
+    if (hogar) await db.lots.update(l.id, { g: 0, abierto: false, terminado: Date.now() });
+    else await mermarLote(l.id, l.g, 'se terminó (lo que quedaba)');
     toast(`${env.charAt(0).toUpperCase() + env.slice(1)} ${conGenero(env, 'terminad')}. ${mios.length > 1 ? 'Empieza la siguiente unidad.' : 'Ya no queda.'}`);
   };
   const est = estadoCompra(food, lots);
@@ -146,6 +148,7 @@ export function FichaStock({ food, lots, onAdd, onQuitar }) {
           <button class="btn small secondary" onClick=${() => terminar(l)}>Se terminó</button>
         </div>`)}
       <button class="btn" onClick=${onAdd}><${Icon} name="plus" size=${18} /> Añadir más</button>
+      ${onParecido && html`<button class="btn secondary" onClick=${onParecido}><${Icon} name="repeat" size=${18} /> Compré otro parecido (otro sabor o marca)</button>`}
       <button class="btn danger" onClick=${async () => {
         if (!confirm(`¿Quitar "${food.name}" de tu despensa? Se borra lo que tienes registrado y deja de vigilarse para la compra. El producto sigue en tu biblioteca.`)) return;
         await db.lots.where('foodId').equals(food.id).delete();

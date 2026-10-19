@@ -23,7 +23,7 @@ export const NUBE_URL = 'https://bublielinhboyngelmwg.supabase.co';
 export const NUBE_CLAVE = 'sb_publishable_q1agUK4AXhIrUqM6ZdEZTw_zMRmfm-G';
 const LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.115.0/+esm';
 
-const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop'];
+const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop', 'porciones'];
 const LOTE = 500;
 // Cuánto tiene que desaparecer de cada tabla para preguntarte antes de borrarlo en la nube.
 // min = filas perdidas a partir de las que se pregunta (y además ≥ 30 % de la tabla). soloVacia = solo si se vacía entera.
@@ -202,7 +202,7 @@ export async function sincronizarCon(t, { permitirBorrado = false, primera = nul
   return { subidos: cambios.length, borrados: borrados.length, bajados, recuperado: !!recuperar, perdida: pendiente };
 }
 
-const NOMBRES = { logs: 'registros de comida', lots: 'envases en la despensa', foods: 'productos', plans: 'planes', weights: 'pesos', workouts: 'entrenos', marcas: 'marcas', whoop: 'datos de Whoop', ejercicios: 'ejercicios', basicos: 'básicos', shopping: 'cosas de la lista', settings: 'ajustes' };
+const NOMBRES = { logs: 'registros de comida', lots: 'envases en la despensa', foods: 'productos', plans: 'planes', weights: 'pesos', workouts: 'entrenos', marcas: 'marcas', whoop: 'datos de Whoop', ejercicios: 'ejercicios', basicos: 'básicos', shopping: 'cosas de la lista', settings: 'ajustes', porciones: 'porciones preparadas' };
 export const nombreTabla = t => NOMBRES[t] || t;
 function resumenFilas(tablas) {
   const c = {};

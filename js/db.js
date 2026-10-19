@@ -23,6 +23,10 @@ db.version(3).stores({ workouts: '++id, date', marcas: '++id, ejercicio, date' }
 db.version(4).stores({ ejercicios: 'id' });
 // v5: datos de Whoop (recuperación, ciclos, sueño, entrenos), uno por registro
 db.version(5).stores({ whoop: 'id, tipo, fecha' });
+// v6 (v3, Fase 2): porciones PREPARADAS y pendientes de comer (meal prep). Solo añade una tabla: no toca nada de lo anterior.
+// Cada porción = unos gramos de un táper/lote asignados a una comida de un día. No cuentan como comidas
+// hasta que las confirmas (entonces se convierten en un registro normal y se descuentan del táper).
+db.version(6).stores({ porciones: 'id, date, foodId' });
 
 // Números únicos para los registros nuevos (en vez de 1, 2, 3…): así dos aparatos nunca crean el mismo número.
 // Es la hora en microsegundos + un poco de azar. Los registros que ya existían conservan su número.
@@ -32,7 +36,7 @@ export function nuevoId() {
   ultimoId = id;
   return id;
 }
-for (const t of ['lots', 'shopping', 'logs', 'workouts', 'marcas']) {
+for (const t of ['lots', 'shopping', 'logs', 'workouts', 'marcas', 'porciones']) {
   db[t].hook('creating', function (pk, obj) {
     if (pk == null && obj.id == null) { const id = nuevoId(); obj.id = id; return id; }
   });
@@ -156,6 +160,32 @@ export async function restoreStock(deducted = []) {
   });
 }
 
+// Merma: lo que sobra o se tira de un envase. NO es comida (no suma calorías), pero queda apuntado en el envase.
+// Devuelve lo que se quitó, para poder deshacerlo (por ejemplo si borras el registro que lo cerró).
+export async function mermarLote(lotId, g, motivo = 'tirado') {
+  const l = await db.lots.get(lotId);
+  if (!l || !(g > 0) || !(l.g > 0)) return null;
+  const quita = round1(Math.min(l.g, g)), queda = round1(l.g - quita), ts = Date.now();
+  await db.lots.update(lotId, {
+    g: queda, abierto: queda > 0, ...(queda <= 0 ? { terminado: ts } : {}),
+    mermas: [...(l.mermas || []), { g: quita, motivo, ts }],
+  });
+  return { lotId, g: quita, ts, estabaAbierto: !!l.abierto };
+}
+export async function deshacerMermas(mermas = []) {
+  for (const m of mermas) {
+    const l = await db.lots.get(m.lotId);
+    if (l) await db.lots.update(l.id, { g: round1(l.g + m.g), abierto: m.estabaAbierto || l.abierto, terminado: null, mermas: (l.mermas || []).filter(x => x.ts !== m.ts) });
+  }
+}
+// "Terminé el envase": lo que quede en el último envase usado pasa a merma
+export async function terminarEnvase(deducted = []) {
+  const ultimo = deducted[deducted.length - 1];
+  if (!ultimo) return [];
+  const m = await mermarLote(ultimo.lotId, Infinity, 'sobrante al terminar');
+  return m ? [m] : [];
+}
+
 // Resumen del stock de un producto en envases: "2 cerrados + 1 abierto (320 g)"
 export function resumenStock(food, lots) {
   const mios = lots.filter(l => l.foodId === food.id && l.g > 0);
@@ -168,15 +198,16 @@ export function resumenStock(food, lots) {
 }
 
 export async function deleteLog(log) {
-  // Devolver a la despensa y borrar el registro: todo o nada
+  // Devolver a la despensa (y deshacer el "terminé el envase") y borrar el registro: todo o nada
   await db.transaction('rw', db.lots, db.logs, async () => {
+    await deshacerMermas(log.merma);
     await restoreStock(log.deducted);
     await db.logs.delete(log.id);
   });
 }
 
 // ---------- Copia de seguridad ----------
-const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop'];
+const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop', 'porciones'];
 
 export async function exportAll() {
   const out = { app: 'nutristock', version: 1, exportedAt: new Date().toISOString() };

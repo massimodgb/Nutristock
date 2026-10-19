@@ -248,9 +248,34 @@
       const raw = Pr.rawDe(byId['patata'], 150, { metodo: 'airfryer', coccion: coc, byId });
       return raw === 300 && Math.round(N.nutrFor(byId['patata'], raw).kcal) === 231 || { raw, coc };
     });
-    await prueba('Un producto de marca usa la medida de su alimento base', () => {
+    await prueba('Factores: cada medida es de SU producto; la del alimento base solo se usa si la eliges', () => {
       const coc = Pr.conMedida({}, byId['patata'], 'airfryer', 300, 150);
-      return Pr.factorPara({ id: 'p-pat', genericId: 'patata' }, byId, 'airfryer', coc).factor === 0.5;
+      const marca = { id: 'p-pat', genericId: 'patata', source: 'manual' };
+      const m = Pr.medidasDe(marca, coc);
+      const sinElegir = Pr.factorPara(marca, byId, null, coc), elegida = Pr.factorPara(marca, byId, 'airfryer', coc);
+      return !Object.keys(m.propias).length && m.base.airfryer === 0.5 && m.ultimo === null
+        && sinElegir.factor === 1 && elegida.factor === 0.5 && elegida.de === 'base' || { m, sinElegir, elegida };
+    });
+    await prueba('Factores: un táper o receta nunca usa factores (ya está cocinado)', () => {
+      const coc = { 'r-1': { metodos: { airfryer: 0.5 }, ultimo: 'airfryer' } };
+      const t = { id: 'r-1', source: 'receta', factor: null };
+      return Pr.factorPara(t, byId, 'airfryer', coc).factor === null && !Object.keys(Pr.medidasDe(t, coc).propias).length;
+    });
+    await prueba('Factores: se pueden cambiar y borrar', () => {
+      let c = Pr.conMedida({}, byId['patata'], 'airfryer', 300, 150);
+      c = Pr.conFactor(c, 'patata', 'airfryer', 0.55);
+      const cambiado = c.patata.metodos.airfryer;
+      c = Pr.conFactor(c, 'patata', 'airfryer', null);
+      return cambiado === 0.55 && !c.patata.metodos.airfryer && c.patata.ultimo === null || c;
+    });
+    await prueba('Editar gramos escala TODOS los nutrientes en proporción', () => {
+      const n = { kcal: 352, prot: 73.6, carb: 0, sug: 0, fat: 4.8, sat: 1.3, fib: 0, salt: 0.5 };
+      const e = Pr.escalarLog({ g: 240, rawG: 320, n }, 300);
+      return Object.keys(n).every(k => Math.abs(e.n[k] - Math.round(n[k] * 1.25 * 10) / 10) < 0.051) && e.rawG === 400 || e;
+    });
+    await prueba('Editar gramos de un registro "en crudo": crudo = gramos', () => {
+      const e = Pr.escalarLog({ g: 100, rawG: 100, crudo: true, n: { kcal: 120 } }, 80);
+      return e.rawG === 80 && e.n.kcal === 96 || e;
     });
     await prueba('Editar gramos conserva los valores con los que se apuntó (y su factor)', () => {
       const e = Pr.escalarLog({ g: 240, rawG: 320, n: { kcal: 352, prot: 73.6 } }, 120);
@@ -274,7 +299,7 @@
       const carne = { ...byId['picada-ternera'], id: 'zz-test-carne', name: 'Carne (prueba)', source: 'manual', genericId: '' };
       const limpiar = async () => {
         const tapers = await db.foods.filter(f => f.source === 'receta' && ['zz-test-patata', 'zz-test-carne'].includes(f.ingredientes?.[0]?.foodId)).toArray();
-        const ids = ['zz-test-patata', 'zz-test-carne', ...tapers.map(t => t.id)];
+        const ids = ['zz-test-patata', 'zz-test-carne', 'zz-test-yogur', ...tapers.map(t => t.id)];
         await db.logs.where('foodId').anyOf(ids).delete();
         await db.lots.where('foodId').anyOf(ids).delete();
         await db.foods.bulkDelete(ids);
@@ -311,6 +336,21 @@
         await prueba('Borrar las dos comidas devuelve los 390 g al táper (la carne cruda no cambia)', async () =>
           (await stockDe(tc.id)) === 390 && (await stockDe(carne.id)) === 500 && (await db.logs.where('foodId').equals(tc.id).count()) === 0);
 
+        // Editar un registro después de cambiar la ficha del producto: se mantienen los valores de cuando se apuntó
+        const yog = { id: 'zz-test-yogur', name: 'Yogur (prueba)', source: 'manual', group: 'lacteo', n: { kcal: 60, prot: 10, carb: 4, fat: 0.2, sug: 4, sat: 0.1, fib: 0, salt: 0.1 } };
+        await db.foods.put(yog);
+        await Hy.saveLog({ date: '2000-01-01', mealId: 'merienda', food: yog, g: 200, crudo: false, rawG: 200, n: N.nutrFor(yog, 200), deduct: false, foods });
+        const ly = await db.logs.where('foodId').equals(yog.id).first();
+        const yog2 = { ...yog, n: { ...yog.n, kcal: 90, prot: 12 } };
+        await db.foods.put(yog2);
+        await Hy.cambiarGramosLog(ly, 100, yog2, foods, byId);
+        const ly2 = await db.logs.get(ly.id);
+        await prueba('Editar 200 → 100 g tras cambiar la ficha: mitad de los valores ORIGINALES (60 kcal/100 g → 60 kcal)', () =>
+          ly2.n.kcal === 60 && ly2.n.prot === 10 && ly2.n.carb === 4 && ly2.rawG === 100 && Pr.fichaCambiada(ly2, yog2) || ly2);
+        await Hy.cambiarGramosLog(ly2, 100, yog2, foods, byId, true);
+        const ly3 = await db.logs.get(ly.id);
+        await prueba('…y "Recalcular con la ficha actual" (solo si lo pides) usa los nuevos (90 kcal)', () => ly3.n.kcal === 90 && ly3.n.prot === 12 || ly3);
+
         await Hy.saveLog({ date: '2000-01-01', mealId: 'cena', food: pat, g: 150, crudo: false, rawG: 300, n: N.nutrFor(pat, 300), deduct: false, foods, metodo: 'airfryer', factor: 0.5 });
         await prueba('Cada registro guarda método, factor y fuente', async () => {
           const l = await db.logs.where('foodId').equals(pat.id).first();
@@ -319,6 +359,109 @@
       } finally {
         await limpiar();
         await setSetting('coccion', cocAntes);
+      }
+    }
+
+    // ---------- v3 · Fase 2: despensa y meal prep ----------
+    const Mp = await import('/js/mealprep.js');
+    const Dp = await import('/js/views/despensa.js');
+    await prueba('Copias: una copia antigua sin porciones se acepta; una con porciones también', () => {
+      const d = copiaBuena(); d.porciones = [{ id: 9, date: '2026-10-20', mealId: 'cena', foodId: 'a', g: 190 }];
+      return C.validarCopia(copiaBuena()).ok && C.validarCopia(d).ok || C.validarCopia(d).errores;
+    });
+    await prueba('Compré otro parecido: hereda familia, envase y aviso, pero NO los valores', () => {
+      const fresa = { id: 'p-fresa', name: 'Yogur fresa', brand: 'X', group: 'lacteo', genericId: 'yogur-proteico', packG: 120, envase: 'tarrina', aviso: 1, comprar: 4, n: { kcal: 80, prot: 10, carb: 8, fat: 0.5 } };
+      const t = Dp.plantillaParecido(fresa);
+      return t.genericId === 'yogur-proteico' && t.packG === 120 && t.aviso === 1 && !Object.keys(t.n).length && !t.id && !t.barcode || t;
+    });
+    await prueba('Meal prep: la carne va al bloque de proteína de la cena; la verdura, al de verduras', () => {
+      const planP = { comidas: [{ id: 'cena', bloques: [{ id: 'v', grupo: 'verdura', alimentos: [{ lista: 'verde', g: 200 }] }, { id: 'p', grupo: 'proteina', alimentos: [{ f: 'picada-ternera', g: 240 }] }] }], listas: { verde: ['calabacin', 'brocoli'] } };
+      const lote = { id: 'r-x', source: 'receta', equivale: 'picada-ternera', group: 'proteina' };
+      const m = planP.comidas[0];
+      return Mp.bloqueDe(m, null, lote, planP, byId) === 'p' && Mp.bloqueDe(m, null, byId['calabacin'] || { id: 'calabacin', group: 'verdura' }, planP, byId) === 'v'
+        && Mp.gramosPlan(m, null, 'p', lote, planP, byId) === 240;
+    });
+
+    if (['127.0.0.1', 'localhost'].includes(location.hostname)) {
+      const { db, deleteLog } = await import('/js/db.js');
+      const Hy = await import('/js/views/hoy.js');
+      const ids2 = ['zz-mp-carne', 'zz-mp-verdura', 'zz-mp-yogur'];
+      const limpiar2 = async () => {
+        const tapers = await db.foods.filter(f => f.source === 'receta' && ids2.includes(f.ingredientes?.[0]?.foodId)).toArray();
+        const todos = [...ids2, ...tapers.map(t => t.id)];
+        await db.porciones.where('foodId').anyOf(todos).delete();
+        await db.logs.where('foodId').anyOf(todos).delete();
+        await db.lots.where('foodId').anyOf(todos).delete();
+        await db.foods.bulkDelete(todos);
+      };
+      try {
+        await limpiar2();
+        const carne = { ...byId['picada-ternera'], id: 'zz-mp-carne', name: 'Picada (prueba)', source: 'manual', genericId: '' };
+        const verd = { ...byId['calabacin'] || byId['brocoli'], id: 'zz-mp-verdura', name: 'Verdura (prueba)', source: 'manual', genericId: '' };
+        await db.foods.bulkPut([carne, verd]);
+        await db.lots.bulkAdd([{ foodId: carne.id, g: 1000, addedAt: 1 }, { foodId: verd.id, g: 1000, addedAt: 1 }]);
+        const foodsMp = await db.foods.toArray();
+        const stock = async id => (await db.lots.where('foodId').equals(id).toArray()).reduce((s, l) => s + l.g, 0);
+        const HOY = '2000-02-01', MAN = '2000-02-02';
+        const ps = await Mp.guardarPreparado({
+          comidas: [{ date: HOY, mealId: 'cena' }, { date: MAN, mealId: 'comida' }], foods: foodsMp, plan: null,
+          items: [
+            { food: carne, modo: 'tanda', crudoG: 500, cocidoG: 390, gramos: [190, 200] },
+            { food: verd, modo: 'tal', gramos: [229, 230] },
+          ],
+        });
+        const loteCarne = await db.foods.get(ps.find(p => p.g === 190).foodId);
+        const loteVerd = await db.foods.get(ps.find(p => p.g === 229).foodId);
+        await prueba('Meal prep: cena de hoy 190 g + comida de mañana 200 g de carne, y 229 g / 230 g de verdura (cantidades independientes)', async () => {
+          const pp = await db.porciones.where('foodId').anyOf([loteCarne.id, loteVerd.id]).toArray();
+          return pp.length === 4 && pp.filter(p => p.date === HOY).map(p => p.g).sort().join() === '190,229' && pp.filter(p => p.date === MAN).map(p => p.g).sort().join() === '200,230' || pp;
+        });
+        await prueba('Meal prep: lo crudo se descuenta UNA vez al preparar (carne 1000 → 500, verdura 1000 → 541)', async () =>
+          (await stock(carne.id)) === 500 && (await stock(verd.id)) === 541 && (await stock(loteCarne.id)) === 390 && (await stock(loteVerd.id)) === 459 || { carne: await stock(carne.id), verd: await stock(verd.id) });
+        await prueba('Meal prep: lo preparado NO cuenta como comido (0 registros en esos días)', async () =>
+          (await db.logs.where('date').anyOf([HOY, MAN]).count()) === 0);
+
+        const pCena = (await db.porciones.where('foodId').equals(loteCarne.id).toArray()).find(p => p.date === HOY);
+        await Mp.confirmarPorcion(pCena, { g: 150 });
+        await prueba('Confirmar la cena comiendo solo 150 de 190 g: registra 150 g, descuenta del táper (390 → 240) y NO de lo crudo', async () => {
+          const l = await db.logs.where('foodId').equals(loteCarne.id).first();
+          return l?.g === 150 && l.date === HOY && (await stock(loteCarne.id)) === 240 && (await stock(carne.id)) === 500 && !(await db.porciones.get(pCena.id))
+            && Math.abs(l.n.kcal - N.nutrFor(carne, 500).kcal * 150 / 390) < 0.6 || { l, taper: await stock(loteCarne.id) };
+        });
+        const pMan = (await db.porciones.where('foodId').equals(loteCarne.id).toArray())[0];
+        await Mp.moverPorcion(pMan, { g: 210, date: '2000-02-03', mealId: 'cena' }, null, Object.fromEntries((await db.foods.toArray()).map(f => [f.id, f])));
+        await prueba('Cambiar fecha, comida y gramos de una porción no toca la despensa', async () => {
+          const p = await db.porciones.get(pMan.id);
+          return p.date === '2000-02-03' && p.mealId === 'cena' && p.g === 210 && (await stock(loteCarne.id)) === 240 && (await stock(carne.id)) === 500 || p;
+        });
+        const pVerdMan = (await db.porciones.where('foodId').equals(loteVerd.id).toArray()).find(p => p.date === MAN);
+        await Mp.cancelarPorcion(pVerdMan);
+        await prueba('Cancelar una porción: sus gramos quedan libres en el táper (no vuelven a lo crudo)', async () =>
+          !(await db.porciones.get(pVerdMan.id)) && (await stock(loteVerd.id)) === 459 && (await stock(verd.id)) === 541);
+        const pVerdHoy = (await db.porciones.where('foodId').equals(loteVerd.id).toArray())[0];
+        await Mp.cancelarPorcion(pVerdHoy, { tirado: true });
+        await prueba('Cancelar diciendo "lo tiré": se apunta como merma del táper, no como comida', async () => {
+          const lot = (await db.lots.where('foodId').equals(loteVerd.id).toArray())[0];
+          return lot.g === 230 && lot.mermas?.[0]?.g === 229 && (await db.logs.where('foodId').equals(loteVerd.id).count()) === 0 || lot;
+        });
+
+        // Envase de 120 g del que como 110 g y lo cierro
+        const yog = { id: 'zz-mp-yogur', name: 'Yogur 120 (prueba)', source: 'manual', group: 'lacteo', packG: 120, envase: 'tarrina', n: { kcal: 60, prot: 10, carb: 4, fat: 0.2 } };
+        await db.foods.put(yog);
+        await db.lots.add({ foodId: yog.id, g: 120, abierto: false, addedAt: 2 });
+        await Hy.saveLog({ date: HOY, mealId: 'merienda', food: yog, g: 110, crudo: false, rawG: 110, n: N.nutrFor(yog, 110), deduct: true, foods: [yog], terminar: true });
+        const ly = await db.logs.where('foodId').equals(yog.id).first();
+        await prueba('Envase de 120 g: como 110 g y lo cierro → queda vacío y los 10 g son merma (cuento 66 kcal, no 72)', async () => {
+          const lot = (await db.lots.where('foodId').equals(yog.id).toArray())[0];
+          return lot.g === 0 && lot.mermas?.[0]?.g === 10 && ly.n.kcal === 66 && ly.merma?.[0]?.g === 10 || { lot, ly };
+        });
+        await deleteLog(ly);
+        await prueba('…y si borro ese registro, la tarrina vuelve a tener sus 120 g', async () => {
+          const lot = (await db.lots.where('foodId').equals(yog.id).toArray())[0];
+          return lot.g === 120 && !(lot.mermas || []).length || lot;
+        });
+      } finally {
+        await limpiar2();
       }
     }
 

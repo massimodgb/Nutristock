@@ -5,7 +5,7 @@
 import { html, useState } from '../lib.js';
 import { db, useLive, getSetting, setSetting, getPrefs, candidateIds, deductStock, round1 } from '../db.js';
 import { NUTRS, sumN, nutrFor, fmt, fmtG, todayStr, addDays, fmtDate, visibleFood } from '../nutri.js';
-import { METODOS, nombreMetodo, raizDe, conMedida, faltanDatos, textoFaltan } from '../precision.js';
+import { METODOS, nombreMetodo, raizDe, medidasDe, conMedida, faltanDatos, textoFaltan } from '../precision.js';
 import { MICROS, microsDe } from '../data/micros.js';
 import { Num, Icon, Dot, Toggle, toast } from '../ui.js';
 
@@ -126,27 +126,36 @@ async function archivarTandasVacias(recetaDe, nuevaId) {
 // Guarda el táper (todo o nada): producto con valores por 100 g COCINADOS + envase en la despensa,
 // y descuenta lo crudo una sola vez. Devuelve el producto del táper.
 export async function guardarPreparacion({ food, foods, crudoG, cocidoG, metodo, descontar, dias }) {
+  let taper;
+  await db.transaction('rw', db.foods, db.lots, async () => {
+    taper = await crearLote({ food, foods, crudoG, cocidoG, metodo, descontar, dias });
+  });
+  // El factor medido queda para las próximas veces (se lee justo antes para no pisar otras medidas)
+  if (metodo) await setSetting('coccion', conMedida(await getSetting('coccion', {}), food, metodo, crudoG, cocidoG));
+  return taper;
+}
+
+// Crea el producto del táper/lote y su envase, y descuenta lo crudo (sin transacción propia:
+// quien la llama la mete en la suya, que debe incluir foods y lots).
+export async function crearLote({ food, foods, crudoG, cocidoG, metodo, descontar, dias, nombre }) {
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
   const id = 'r-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
   const total = nutrFor(food, crudoG), k = 100 / cocidoG;
   const m = microsDe(food, crudoG, byId);
   const falta = faltanDatos(food);
+  const cocinado = crudoG !== cocidoG || metodo;
   const taper = {
     id, source: 'receta', recetaDe: id, brand: nombreTanda(),
-    name: `${food.name.split(' · ')[0]} ${metodo ? `(${nombreMetodo(metodo).toLowerCase()})` : 'cocinado'}`,
+    name: nombre || `${food.name.split(' · ')[0]} ${metodo ? `(${nombreMetodo(metodo).toLowerCase()})` : cocinado ? 'cocinado' : '(preparado)'}`,
     group: food.group, mar: !!food.mar, factor: null, genericId: '', equivale: raizDe(food), metodo: metodo || null,
     n: Object.fromEntries(NUTRS.map(({ k: key }) => [key, round1((total[key] || 0) * k)])),
     micros: m ? Object.fromEntries(Object.entries(m).map(([key, v]) => [key, Math.round(v * k * 100) / 100])) : null,
     ingredientes: [{ foodId: food.id, g: crudoG }], ultimoTotalG: cocidoG,
     ...(falta.length ? { faltan: falta } : {}),
   };
-  await db.transaction('rw', db.foods, db.lots, async () => {
-    await db.foods.put(taper);
-    if (descontar) await deductStock(candidateIds(food, foods), crudoG);
-    await db.lots.add({ foodId: id, g: round1(cocidoG), abierto: true, expiry: dias ? addDays(todayStr(), dias) : null, addedAt: Date.now() });
-  });
-  // El factor medido queda para las próximas veces (se lee justo antes para no pisar otras medidas)
-  if (metodo) await setSetting('coccion', conMedida(await getSetting('coccion', {}), food, metodo, crudoG, cocidoG));
+  await db.foods.put(taper);
+  if (descontar) await deductStock(candidateIds(food, foods), crudoG);
+  await db.lots.add({ foodId: id, g: round1(cocidoG), abierto: true, expiry: dias ? addDays(todayStr(), dias) : null, addedAt: Date.now() });
   return taper;
 }
 
@@ -188,7 +197,7 @@ export function Preparacion({ foods, food: inicial, onDone }) {
       </div>`;
   }
 
-  const metodo = elegido === undefined ? coccion[raizDe(food)]?.ultimo || null : elegido;
+  const metodo = elegido === undefined ? medidasDe(food, coccion).ultimo : elegido;
   const stockG = stockDe(food);
   const desc = descontar ?? stockG > 0;
   const listo = crudoG > 0 && cocidoG > 0;

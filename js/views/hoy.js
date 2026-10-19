@@ -2,17 +2,20 @@
 import { html, useState, useMemo, useEffect } from '../lib.js';
 import {
   db, useLive, getSetting, setSetting, getPrefs, activePlan, stockMap, candidateIds,
-  deductStock, restoreStock, deleteLog, round1,
+  deductStock, restoreStock, deleteLog, round1, terminarEnvase, deshacerMermas, ordenGasto,
 } from '../db.js';
 import {
   NUTRS, GROUPS, sumN, planRef, blockRef, mealBlocks, blockFoods, visibleFood, cookFactor, toRaw, nutrFor,
   fmt, fmtG, todayStr, addDays, fmtDate, daysUntil, round1Obj,
 } from '../nutri.js';
 import {
-  METODOS, nombreMetodo, raizDe, factorPara, conMedida, faltanDatos, faltanLog, textoFaltan, fuenteDe,
+  METODOS, nombreMetodo, medidasDe, factorPara, conMedida, faltanDatos, faltanLog, textoFaltan, fuenteDe,
   factorDeLog, kcal100DeLog, escalarLog, fichaCambiada,
 } from '../precision.js';
 import { Preparacion } from './receta.js';
+import { FactoresMedidos } from './coccion.js';
+import { PrepararComidas, nombreComidaDia } from './preparar.js';
+import { nPorcion, totalPorciones, confirmarPorcion, cancelarPorcion, moverPorcion, mermarDeLote } from '../mealprep.js';
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast, hojaRecienCerrada } from '../ui.js';
 import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
@@ -34,18 +37,21 @@ export function Hoy({ go }) {
   const logs = useLive(() => db.logs.where('date').equals(date).toArray(), [date]);
   const elecciones = useLive(() => getSetting('opciones:' + date, {}), [date]);
   const ayer = useLive(() => db.logs.where('date').equals(addDays(date, -1)).toArray(), [date]);
+  const porciones = useLive(() => db.porciones.where('date').equals(date).toArray(), [date]);
+  const atrasadas = useLive(() => db.porciones.where('date').below(todayStr()).toArray(), []);
   const [sheet, setSheetRaw] = useState(null);
   const [abierta, setAbierta] = useState(null); // comida desplegada en "Tus comidas"
   // En el iPhone, el toque que cierra una hoja puede "atravesarla" y abrir otra: lo ignoramos
   const setSheet = v => { if (v && hojaRecienCerrada()) return; setSheetRaw(v); };
 
-  if ([plan, foods, lots, basicos, prefs, logs, elecciones, ayer].includes(undefined)) {
+  if ([plan, foods, lots, basicos, prefs, logs, elecciones, ayer, porciones, atrasadas].includes(undefined)) {
     return html`<div class="loading">Cargando…</div>`;
   }
 
   const byId = Object.fromEntries(foods.map(f => [f.id, f]));
   const stock = stockMap(lots, foods);
   const ctx = { plan, foods, byId, stock, prefs, date, lots };
+  const preparado = totalPorciones(porciones, byId);
 
   // Opción elegida en cada comida: la que marcaste, la que ya registraste, o la primera
   const choice = {};
@@ -80,12 +86,15 @@ export function Hoy({ go }) {
       ${!isToday && html`<button class="chip volver-hoy" onClick=${() => setDate(todayStr())}>Volver a hoy</button>`}
       ${isToday && html`<${AvisoNube} go=${go} />`}
       ${isToday && html`<${RecordatorioCopia} />`}
-      <${Hero} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
+      ${isToday && atrasadas.length > 0 && html`
+        <button class="aviso info aviso-faltan" onClick=${() => setDate(atrasadas.map(p => p.date).sort()[0])}>
+          <span class="grow">Tienes ${atrasadas.length === 1 ? '1 porción preparada' : `${atrasadas.length} porciones preparadas`} de días anteriores sin confirmar.</span><small>Ver</small></button>`}
+      <${Hero} total=${total} objetivo=${ref} preparado=${preparado} onClick=${() => setSheet({ type: 'desglose' })} />
       <${MacroTiles} total=${total} objetivo=${ref} />
       <${AvisoFaltan} logs=${logs} byId=${byId} onClick=${() => setSheet({ type: 'desglose' })} />
       <${Rapido} date=${date} logs=${logs} ayer=${ayer}
         onCopiar=${(titulo, entradas) => setSheet({ type: 'copiar', titulo, entradas })}
-        onOtroDia=${() => setSheet({ type: 'otrodia' })} />
+        onOtroDia=${() => setSheet({ type: 'otrodia' })} onPreparar=${() => setSheet({ type: 'preparar' })} />
 
       ${!plan && html`
         <div class="card">
@@ -96,10 +105,12 @@ export function Hoy({ go }) {
       <section class="card comidas" aria-label="Tus comidas">
         <header class="sec-head"><h2>Tus comidas</h2>${plan && html`<button class="link small" onClick=${() => go('plan')}>Ver plan</button>`}</header>
         ${plan?.comidas.map((m, i) => html`
-          <${ComidaFila} key=${m.id} meal=${m} indice=${i} ...${ctx} logs=${logs} option=${choice[m.id]}
+          <${ComidaFila} key=${m.id} meal=${m} indice=${i} ...${ctx} logs=${logs} porciones=${porciones} option=${choice[m.id]}
             abierta=${abierta === m.id} onToggle=${() => setAbierta(abierta === m.id ? null : m.id)} />
           ${abierta === m.id && html`
-            <${MealCard} meal=${m} ...${ctx} logs=${logs} option=${choice[m.id]} embebido=${true}
+            <${MealCard} meal=${m} ...${ctx} logs=${logs} porciones=${porciones} option=${choice[m.id]} embebido=${true}
+              onPorcion=${p => setSheet({ type: 'porcion', porcion: p })}
+              onConfirmar=${async ps => { for (const p of ps) await confirmarPorcion(p, { foods }); toast(ps.length === 1 ? 'Confirmado ✓' : `${ps.length} porciones confirmadas ✓`); }}
               ayer=${ayer.filter(l => l.mealId === m.id && l.foodId)}
               onRepetir=${ayerLogs => setSheet({ type: 'copiar', titulo: `${m.nombre} de ayer`, entradas: ayerLogs.map(plantilla) })}
               onOption=${o => setChoice(m.id, o)}
@@ -159,6 +170,12 @@ export function Hoy({ go }) {
       <${Sheet} open=${sheet?.type === 'anadir'} onClose=${() => setSheet(null)} title=${sheet?.grupo ? 'Añadir platos' : 'Añadir comida'}>
         ${sheet?.type === 'anadir' && html`<${AnadirComida} ...${ctx} mealId=${sheet.mealId} grupo=${sheet.grupo} grupoNombre=${sheet.grupoNombre} onDone=${() => setSheetRaw(null)} />`}
       <//>
+      <${Sheet} open=${sheet?.type === 'preparar'} onClose=${() => setSheet(null)} title="Preparar comidas">
+        ${sheet?.type === 'preparar' && html`<${PrepararComidas} ...${ctx} onDone=${() => setSheetRaw(null)} />`}
+      <//>
+      <${Sheet} open=${sheet?.type === 'porcion'} onClose=${() => setSheet(null)} title="Porción preparada">
+        ${sheet?.type === 'porcion' && html`<${PorcionSheet} p=${sheet.porcion} ...${ctx} onDone=${() => setSheetRaw(null)} />`}
+      <//>
       <${Sheet} open=${sheet?.type === 'grupo'} onClose=${() => setSheet(null)} title="Comida libre">
         ${sheet?.type === 'grupo' && html`<${GrupoDetalle} logs=${logs.filter(l => l.grupo === sheet.grupo)} byId=${byId} foods=${foods}
           onDone=${() => setSheetRaw(null)}
@@ -171,7 +188,7 @@ export function Hoy({ go }) {
 export const miles = x => Math.round(x || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
 
 // Lo más importante del día: calorías comidas frente al objetivo
-function Hero({ total, objetivo: ref, onClick }) {
+function Hero({ total, objetivo: ref, preparado, onClick }) {
   const pct = ref?.kcal ? (total.kcal / ref.kcal) * 100 : 0;
   const quedan = ref ? ref.kcal - total.kcal : null;
   const pasado = quedan != null && quedan < 0;
@@ -187,6 +204,7 @@ function Hero({ total, objetivo: ref, onClick }) {
           <i style=${{ transform: `scaleX(${Math.min(1, pct / 100)})`, background: pct > 110 ? 'var(--danger)' : 'var(--accent)' }}></i>
         </div>
         <div class="hero-pie"><span>${pasado ? html`<b class="mal">${miles(-quedan)} kcal</b> por encima` : html`<b>${miles(quedan)} kcal</b> restantes`}</span><span class="muted">Ver desglose ›</span></div>`}
+      ${preparado?.kcal > 0 && html`<div class="hero-prep"><i></i> ${miles(preparado.kcal)} kcal preparadas, aún sin contar${ref ? ` · con ellas, ${miles(total.kcal + preparado.kcal)}` : ''}</div>`}
     </button>`;
 }
 
@@ -426,8 +444,10 @@ function Avisos({ lots, foods, byId, stock, basicos, prefs, plan, choice, logs, 
     </div>`;
 }
 
-function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlock, onLog, onRepetir, embebido, onGrupo, onAnadir }) {
+function MealCard({ meal, plan, byId, prefs, logs, porciones = [], option, ayer, onOption, onBlock, onLog, onRepetir, embebido, onGrupo, onAnadir, onPorcion, onConfirmar }) {
   const mealLogs = logs.filter(l => l.mealId === meal.id);
+  const mealPs = porciones.filter(p => p.mealId === meal.id);
+  const [confirmando, setConfirmando] = useState(false);
   const opt = meal.opciones?.find(o => o.id === option);
   const blocks = [
     ...(meal.bloques || []).map(b => ({ b, optionId: null })),
@@ -444,7 +464,17 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
           <div><h3>${meal.nombre}</h3><small>${meal.hora}</small></div>
           <span class="muted small">${kcal ? `${fmt(kcal)} kcal · ` : ''}${doneCount}/${blocks.length}</span>
         </header>`}
-      ${mealLogs.length === 0 && ayer.length > 0 && html`
+      ${mealPs.length > 0 && html`
+        <div class="prep-caja">
+          <div class="prep-cab"><b>Preparada</b><small class="muted">pendiente de comer · no cuenta todavía</small></div>
+          ${mealPs.map(p => html`
+            <button class="b-log prep-linea" key=${p.id} onClick=${() => onPorcion?.(p)}>
+              ${(byId[p.foodId]?.name || 'Táper borrado')} · ${fmt(p.g)} g · ${fmt(nPorcion(p, byId).kcal)} kcal</button>`)}
+          <button class="btn prep-ok" disabled=${confirmando} onClick=${async () => { setConfirmando(true); try { await onConfirmar?.(mealPs); } finally { setConfirmando(false); } }}>
+            <${Icon} name="check" size=${18} /> Me lo comí${mealPs.length > 1 ? ` (${mealPs.length})` : ''}</button>
+          <small class="muted">¿Comiste otra cantidad o lo cambias de día? Toca la porción.</small>
+        </div>`}
+      ${mealLogs.length === 0 && mealPs.length === 0 && ayer.length > 0 && html`
         <button class="chip repetir" onClick=${() => onRepetir(ayer)}>
           <${Icon} name="repeat" size=${15} /> Repetir lo de ayer (${ayer.map(l => l.name.split(' · ')[0]).join(', ')})
         </button>`}
@@ -455,9 +485,10 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
         </div>`}
       ${blocks.map(({ b, optionId }) => {
         const bl = mealLogs.filter(l => l.blockId === b.id);
+        const bp = mealPs.filter(p => p.blockId === b.id);
         const vis = blockFoods(b, plan).some(x => visibleFood(byId[x.id], prefs));
         return html`
-          <div class=${'block' + (bl.length ? ' done' : '') + (vis ? '' : ' off')} key=${b.id}
+          <div class=${'block' + (bl.length ? ' done' : bp.length ? ' preparado' : '') + (vis ? '' : ' off')} key=${b.id}
             onClick=${() => vis && onBlock(b, optionId)}>
             <${Dot} group=${b.grupo} />
             <div class="grow">
@@ -468,7 +499,7 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
                   ${l.name} · ${fmt(l.g)} g${l.crudo ? ' (crudo)' : ''} · ${fmt(l.n.kcal)} kcal
                 </button>`)}
             </div>
-            <span class="b-state">${bl.length ? html`<${Icon} name="check" size=${18} />` : vis ? html`<${Icon} name="plus" size=${18} />` : ''}</span>
+            <span class="b-state">${bl.length ? html`<${Icon} name="check" size=${18} />` : bp.length ? html`<small class="prep-tag">preparado</small>` : vis ? html`<${Icon} name="plus" size=${18} />` : ''}</span>
           </div>`;
       })}
       ${sueltos.length > 0 && html`
@@ -487,22 +518,27 @@ function MealCard({ meal, plan, byId, prefs, logs, option, ayer, onOption, onBlo
 
 // Una fila de "Tus comidas": icono, qué llevas, y su estado (pendiente / a medias / listo). Al tocarla se despliega.
 const ICONO_COMIDA = n => /desayun/i.test(n) ? 'sol' : /media|tentempi|snack/i.test(n) ? 'manzana' : /merienda/i.test(n) ? 'taza' : /cena/i.test(n) ? 'luna' : 'plato';
-function ComidaFila({ meal, plan, byId, prefs, logs, option, abierta, onToggle }) {
+function ComidaFila({ meal, plan, byId, prefs, logs, porciones = [], option, abierta, onToggle }) {
   const mealLogs = logs.filter(l => l.mealId === meal.id);
+  const mealPs = porciones.filter(p => p.mealId === meal.id);
   const opt = meal.opciones?.find(o => o.id === option) || meal.opciones?.[0];
   const blocks = [...(meal.bloques || []), ...(opt?.bloques || [])]
     .filter(b => blockFoods(b, plan).some(x => visibleFood(byId[x.id], prefs)));
   const hechos = blocks.filter(b => mealLogs.some(l => l.blockId === b.id)).length;
   const kcal = sumN(mealLogs.map(l => l.n)).kcal;
-  const estado = blocks.length && hechos >= blocks.length ? 'listo' : hechos > 0 ? 'medias' : mealLogs.length ? 'libre' : 'pendiente';
-  const nombres = [...new Set(agrupar(mealLogs).map(e => e.tipo === 'grupo' ? e.nombre : e.log.name.split(' · ')[0].split(' (')[0]))];
+  // planificada (pendiente) → preparada → consumida (a medias / listo)
+  const estado = mealPs.length && !(blocks.length && hechos >= blocks.length) ? 'preparada'
+    : blocks.length && hechos >= blocks.length ? 'listo' : hechos > 0 ? 'medias' : mealLogs.length ? 'libre' : 'pendiente';
+  const kcalPrep = totalPorciones(mealPs, byId).kcal;
+  const nombres = [...new Set([...agrupar(mealLogs).map(e => e.tipo === 'grupo' ? e.nombre : e.log.name.split(' · ')[0].split(' (')[0]),
+    ...mealPs.map(p => (byId[p.foodId]?.name || '').split(' (')[0])].filter(Boolean))];
   return html`
     <button class=${'comida-fila ' + estado + (abierta ? ' abierta' : '')} onClick=${onToggle} aria-expanded=${abierta}>
       <span class=${'comida-ico ' + estado}><${Icon} name=${ICONO_COMIDA(meal.nombre)} size=${20} /></span>
       <span class="grow"><b>${meal.nombre} <i>${meal.hora}</i></b>
         <small>${nombres.length ? nombres.slice(0, 3).join(', ') + (nombres.length > 3 ? '…' : '') : 'Pendiente de registrar'}</small></span>
-      <span class="comida-estado">${estado === 'listo' ? html`<em>✓ Listo</em>` : estado === 'medias' ? `${hechos} de ${blocks.length}` : estado === 'libre' ? 'Fuera del plan' : ''}
-        ${kcal ? html`<small>${fmt(kcal)} kcal</small>` : ''}</span>
+      <span class="comida-estado">${estado === 'listo' ? html`<em>✓ Listo</em>` : estado === 'preparada' ? html`<em class="prep">Preparada</em>` : estado === 'medias' ? `${hechos} de ${blocks.length}` : estado === 'libre' ? 'Fuera del plan' : ''}
+        ${kcal ? html`<small>${fmt(kcal)} kcal</small>` : kcalPrep ? html`<small>≈ ${fmt(kcalPrep)} kcal</small>` : ''}</span>
     </button>`;
 }
 
@@ -618,7 +654,11 @@ function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
   const [metodo, setMetodo] = useState(undefined); // undefined = el último que usaste con este alimento
   const [medir, setMedir] = useState(null); // { metodo, crudoG, cocidoG }
   const [taper, setTaper] = useState(false);
+  const [editarF, setEditarF] = useState(false);
+  const [terminar, setTerminar] = useState(false);
   const ultimo = useLive(() => db.logs.where('foodId').equals(food.id).last(), [food.id]);
+  const ids = candidateIds(food, foods || [food]);
+  const lotsF = useLive(() => db.lots.where('foodId').anyOf(ids).toArray(), [food.id]);
   if (coccion === undefined) return null;
 
   if (taper) {
@@ -627,15 +667,20 @@ function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
       <${Preparacion} foods=${foods} food=${food} onDone=${t => { setTaper(false); if (t) onTaper?.(t); }} />`;
   }
 
-  const medidos = coccion[raizDe(food)]?.metodos || {};
-  const ult = coccion[raizDe(food)]?.ultimo;
-  const met = metodo === undefined ? (medidos[ult] ? ult : null) : metodo;
+  // Medidas de ESTE producto (y, aparte, las de su alimento base, que solo se usan si las eliges)
+  const { propias: medidos, base: medidosBase, ultimo: ult } = medidasDe(food, coccion);
+  const met = metodo === undefined ? ult : metodo;
   const fichaFactor = cookFactor(food, byId);
-  const { factor, medido } = factorPara(food, byId, met, coccion);
-  const cocinable = fichaFactor != null || Object.keys(medidos).length > 0;
+  const { factor, medido, de } = factorPara(food, byId, met, coccion);
+  const cocinable = food.source !== 'receta' && (fichaFactor != null || Object.keys(medidos).length > 0 || Object.keys(medidosBase).length > 0);
   const rawG = g ? (crudo || !factor ? g : g / factor) : 0;
   const n = nutrFor(food, rawG);
   const falta = faltanDatos(food);
+  // ¿Se acaba el envase con esto? (yogur de 120 g del que comes 110 g: sobran 10 g que no son comida)
+  const primero = (lotsF || []).filter(l => l.g > 0).sort((a, b) => (ids.indexOf(a.foodId) - ids.indexOf(b.foodId)) || ordenGasto(a, b))[0];
+  const packG = byId[primero?.foodId]?.packG;
+  const sobra = primero && rawG ? Math.round((primero.g - rawG) * 10) / 10 : null;
+  const puedeTerminar = deduct && packG && sobra > 0 && sobra <= Math.max(30, packG * 0.3);
   const guardarMedida = async () => {
     await setSetting('coccion', conMedida(coccion, food, medir.metodo, medir.crudoG, medir.cocidoG));
     setMetodo(medir.metodo);
@@ -666,6 +711,7 @@ function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
           <div class="chips wrap">
             ${fichaFactor != null && chip(null, `De la tabla ×${fmt(fichaFactor, 2)}`)}
             ${Object.entries(medidos).map(([m, f]) => chip(m, `${nombreMetodo(m)} ×${fmt(f, 2)}`))}
+            ${Object.entries(medidosBase).filter(([m]) => !medidos[m]).map(([m, f]) => chip(m, `${nombreMetodo(m)} ×${fmt(f, 2)} (de ${byId[food.genericId]?.name || 'su base'})`))}
             <button class=${'chip' + (crudo ? ' on' : '')} onClick=${() => setCrudo(true)}>Lo pesé en crudo</button>
             <button class="chip" onClick=${() => setMedir({ metodo: met || 'airfryer', crudoG: null, cocidoG: null })}>+ Otro método (medir)</button>
           </div>
@@ -682,28 +728,87 @@ function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
                 ${medir.crudoG > 0 && medir.cocidoG > 0 ? `Guardar: ${nombreMetodo(medir.metodo).toLowerCase()} ×${fmt(medir.cocidoG / medir.crudoG, 2)}` : 'Pon los dos pesos'}</button>
             </div>`}
           <small class="muted">${crudo ? 'Se calcula con los gramos tal cual (en crudo).'
-            : factor ? `${fmt(g || 0)} g cocinado ≈ ${fmt(rawG)} g en crudo (×${fmt(factor, 2)}, ${medido ? 'medido por ti' : 'factor de tabla, aproximado'}).`
+            : factor ? `${fmt(g || 0)} g cocinado ≈ ${fmt(rawG)} g en crudo (×${fmt(factor, 2)}, ${medido ? (de === 'base' ? `medido con ${byId[food.genericId]?.name || 'su alimento base'}` : 'medido por ti') : 'factor de tabla, aproximado'}).`
             : 'Sin factor: se cuenta tal cual.'}</small>
+          ${Object.keys(medidos).length > 0 && html`<button class="link small" onClick=${() => setEditarF(!editarF)}>${editarF ? 'Ocultar' : 'Editar o borrar mis medidas'}</button>`}
+          ${editarF && html`<${FactoresMedidos} food=${food} />`}
           ${onTaper && html`<button class="link small" onClick=${() => setTaper(true)}>¿Cocinaste más para otras comidas? Pesa la tanda y guárdala como táper</button>`}
         </div>`}
       <${Toggle} label="Descontar de la despensa" checked=${deduct} onChange=${setDeduct}
         hint=${stockG > 0 ? `En casa: ${fmtG(stockG, food)} → se descontarán ${fmt(Math.min(rawG, stockG))} g` : 'No hay stock registrado'} />
       ${deduct && stockG > 0 && rawG > stockG * 1.02 && html`
         <p class="aviso warn small">Registras ${fmt(rawG)} g en crudo pero en casa solo constan ${fmtG(stockG, food)}: se descontará lo que hay y la comida se apunta entera. Si te falta stock por registrar, añádelo en Despensa.</p>`}
+      ${puedeTerminar && html`
+        <${Toggle} label=${`Terminé el envase (sobran ${fmt(sobra)} g)`} checked=${terminar} onChange=${setTerminar}
+          hint="Lo que sobra se apunta como desperdicio del envase: no cuenta como comida." />`}
       ${falta.length > 0 && html`<p class="aviso warn small">Este producto no tiene ${textoFaltan(falta)}: contarán como 0. Puedes completarlo en su ficha (Biblioteca).</p>`}
       <div class="preview"><${MacroLine} n=${n} /></div>
-      <button class="btn" disabled=${!g} onClick=${() => onSave({ food, g, crudo, rawG, n, deduct, metodo: crudo ? null : met, factor: crudo ? null : factor })}>Guardar</button>
+      <button class="btn" disabled=${!g} onClick=${() => onSave({ food, g, crudo, rawG, n, deduct, metodo: crudo ? null : met, factor: crudo ? null : factor, terminar: puedeTerminar && terminar })}>Guardar</button>
+    </div>`;
+}
+
+// Una porción preparada: comerla (entera o parte), cambiar gramos, día o comida, o cancelarla
+function PorcionSheet({ p, plan, foods, byId, onDone }) {
+  const [g, setG] = useState(p.g);
+  const [date, setDate] = useState(p.date);
+  const [mealId, setMealId] = useState(p.mealId);
+  const [resto, setResto] = useState('libre'); // al comer menos: 'libre' (sigue en el táper) o 'tirado'
+  const [cancelar, setCancelar] = useState(false);
+  const lote = byId[p.foodId];
+  const n = nutrFor(lote || { n: {} }, g || 0);
+  const cambiado = g !== p.g || date !== p.date || mealId !== p.mealId;
+  const parcial = g > 0 && g < p.g;
+  const hecho = t => { toast(t); onDone(); };
+  const comer = async () => {
+    await confirmarPorcion(p, { g, foods });
+    if (parcial && resto === 'tirado') await mermarDeLote(p.foodId, p.g - g, 'resto tirado');
+    hecho(parcial ? `Apuntados ${fmt(g)} g ✓${resto === 'tirado' ? ' (el resto, como desperdicio)' : ' · el resto sigue libre en el táper'}` : 'Confirmado ✓');
+  };
+  const mover = async () => {
+    const optionId = date !== p.date || mealId !== p.mealId ? (await getSetting('opciones:' + date, {}))[mealId] || plan?.comidas.find(m => m.id === mealId)?.opciones?.[0]?.id || null : p.optionId;
+    await moverPorcion(p, { g, date, mealId, optionId }, plan, byId);
+    hecho(`Guardado: ${nombreComidaDia(date, mealId, plan)} ✓`);
+  };
+  if (!lote) return html`<p class="muted">El táper de esta porción ya no existe.</p>
+    <button class="btn danger" onClick=${async () => { await db.porciones.delete(p.id); hecho('Porción quitada'); }}>Quitar la porción</button>`;
+  return html`
+    <div class="form">
+      <h4><${Dot} group=${lote.group} /> ${lote.name}</h4>
+      <small class="muted">${nombreComidaDia(p.date, p.mealId, plan)} · preparada, aún no cuenta como comida.</small>
+      <${Num} value=${g} onChange=${setG} suffix="g cocinados" />
+      <div class="preview"><${MacroLine} n=${n} /></div>
+      ${parcial && html`
+        <small class="muted">Comes menos de lo preparado (${fmt(p.g)} g). Lo que no comes:</small>
+        <div class="chips">
+          <button class=${'chip' + (resto === 'libre' ? ' on' : '')} onClick=${() => setResto('libre')}>Sigue en el táper</button>
+          <button class=${'chip' + (resto === 'tirado' ? ' on' : '')} onClick=${() => setResto('tirado')}>Lo tiré</button>
+        </div>`}
+      <button class="btn" disabled=${!(g > 0)} onClick=${comer}><${Icon} name="check" size=${18} /> ${parcial ? `Me comí ${fmt(g)} g` : 'Me lo comí'}</button>
+
+      <h4>Cambiar de comida o de día</h4>
+      <input type="date" value=${date} onChange=${e => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && setDate(e.target.value)} aria-label="Día" />
+      <div class="chips wrap">${(plan?.comidas || []).map(m => html`
+        <button class=${'chip' + (mealId === m.id ? ' on' : '')} onClick=${() => setMealId(m.id)}>${m.nombre}</button>`)}</div>
+      <button class="btn secondary" disabled=${!cambiado || !(g > 0)} onClick=${mover}>Guardar cambios sin comerla</button>
+
+      ${!cancelar ? html`<button class="link small" onClick=${() => setCancelar(true)}>Cancelar esta porción</button>` : html`
+        <div class="aviso warn small"><span>¿Qué pasa con estos ${fmt(p.g)} g?</span></div>
+        <button class="btn secondary" onClick=${async () => { await cancelarPorcion(p); hecho('Porción cancelada: los gramos quedan libres en el táper'); }}>Vuelven al táper (los comeré otro día)</button>
+        <button class="btn danger" onClick=${async () => { await cancelarPorcion(p, { tirado: true }); hecho('Porción cancelada y apuntada como desperdicio'); }}>Los tiré</button>`}
     </div>`;
 }
 
 // Descontar de la despensa y apuntar el registro van juntos: o se hacen las dos cosas o ninguna
 // Cada registro guarda cómo se calculó (método, factor, datos que faltaban, fuente) para poder revisarlo luego.
-export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods, metodo, factor, extra = {} }) {
+export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods, metodo, factor, terminar, extra = {} }) {
   const f = crudo ? null : factor ?? (g && rawG && Math.abs(g / rawG - 1) > 0.005 ? Math.round((g / rawG) * 100) / 100 : null);
   const falta = faltanDatos(food);
   await db.transaction('rw', db.lots, db.logs, async () => {
     const deducted = deduct ? await deductStock(candidateIds(food, foods), rawG) : [];
+    // "Terminé el envase": lo que sobra es merma (no se suma a lo que comiste)
+    const merma = deduct && terminar ? await terminarEnvase(deducted) : [];
     await db.logs.add({
+      ...(merma.length ? { merma } : {}),
       date, mealId, optionId: optionId || null, blockId: blockId || null,
       foodId: food.id, name: food.name + (food.brand ? ` · ${food.brand}` : ''), group: food.group,
       g, crudo, rawG: round1(rawG), n: round1Obj(n), deducted, ts: Date.now(),
@@ -718,6 +823,7 @@ export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo,
 export async function cambiarGramosLog(log, g, food, foods, byId, conFicha = false) {
   const descontado = (log.deducted || []).reduce((s, d) => s + d.g, 0);
   await db.transaction('rw', db.lots, db.logs, async () => {
+    await deshacerMermas(log.merma);
     await restoreStock(log.deducted);
     const esc = !conFicha && escalarLog(log, g);
     let rawG, n;
@@ -728,8 +834,9 @@ export async function cambiarGramosLog(log, g, food, foods, byId, conFicha = fal
       n = round1Obj(nutrFor(food, rawG));
     }
     const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
+    const merma = log.merma?.length ? await terminarEnvase(deducted) : null;
     const falta = conFicha ? faltanDatos(food) : null;
-    await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted, ...(conFicha ? { faltan: falta.length ? falta : null } : {}) });
+    await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted, ...(merma ? { merma } : {}), ...(conFicha ? { faltan: falta.length ? falta : null } : {}) });
   });
 }
 
@@ -985,7 +1092,7 @@ const plantilla = l => ({
   metodo: l.metodo || null, factor: factorDeLog(l),
 });
 
-function Rapido({ date, logs, ayer, onCopiar, onOtroDia }) {
+function Rapido({ date, logs, ayer, onCopiar, onOtroDia, onPreparar }) {
   const habitual = useLive(() => getSetting('diaHabitual', null), []);
   if (habitual === undefined) return null;
   return html`
@@ -995,6 +1102,7 @@ function Rapido({ date, logs, ayer, onCopiar, onOtroDia }) {
           <${Icon} name="repeat" size=${14} /> Copiar ayer (${ayer.length})</button>`}
         ${habitual?.length > 0 && html`<button class="chip" onClick=${() => onCopiar('Mi día habitual', habitual)}>
           <${Icon} name="check" size=${14} /> Mi día habitual (${habitual.length})</button>`}
+        <button class="chip" onClick=${onPreparar}><${Icon} name="bolt" size=${14} /> Preparar comidas</button>
         <button class="chip" onClick=${onOtroDia}><${Icon} name="hoy" size=${14} /> Copiar otro día</button>
         ${logs.length > 0 && html`
           <button class="chip" onClick=${async () => {

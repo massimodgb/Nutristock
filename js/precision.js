@@ -18,15 +18,26 @@ export const METODOS = [
 ];
 export const nombreMetodo = id => METODOS.find(m => m.id === id)?.name || 'Factor de la ficha';
 
-// Las medidas se guardan por alimento base: medir "Patata" sirve también para "Patatas Hacendado".
-// Ajuste: settings.coccion = { [alimentoBase]: { metodos: { airfryer: 0.5 }, ultimo: 'airfryer' } }
+// Las medidas se guardan por PRODUCTO (su id): medir "Patata" no cambia "Patatas gajo congeladas X".
+// Ajuste: settings.coccion = { [idProducto]: { metodos: { airfryer: 0.5 }, ultimo: 'airfryer' } }
+// Un producto de marca sin medida propia puede USAR la de su alimento base, pero solo si la eliges tú.
+// Los tápers y recetas (ya cocinados) nunca llevan factor.
 export const raizDe = food => food?.genericId || food?.id;
 
-// Factor a usar: el medido para ese método o, si no, el de la ficha / alimento base
+export function medidasDe(food, coccion = {}) {
+  if (!food || food.source === 'receta') return { propias: {}, base: {}, ultimo: null };
+  const propias = coccion[food.id]?.metodos || {};
+  const base = food.genericId && food.genericId !== food.id ? coccion[food.genericId]?.metodos || {} : {};
+  return { propias, base, ultimo: propias[coccion[food.id]?.ultimo] ? coccion[food.id].ultimo : null };
+}
+
+// Factor a usar con un método: el medido para ESTE producto, o el de su alimento base si lo has elegido,
+// o (sin método) el de la ficha / alimento base de la tabla
 export function factorPara(food, byId, metodo, coccion = {}) {
-  const medido = metodo && coccion[raizDe(food)]?.metodos?.[metodo];
-  if (medido) return { factor: medido, medido: true };
-  return { factor: cookFactor(food, byId), medido: false };
+  const { propias, base } = medidasDe(food, coccion);
+  if (metodo && propias[metodo]) return { factor: propias[metodo], medido: true, de: 'propio' };
+  if (metodo && base[metodo]) return { factor: base[metodo], medido: true, de: 'base' };
+  return { factor: food?.source === 'receta' ? null : cookFactor(food, byId), medido: false };
 }
 
 export function rawDe(food, g, { crudo, metodo, coccion, byId }) {
@@ -35,12 +46,17 @@ export function rawDe(food, g, { crudo, metodo, coccion, byId }) {
   return factor ? g / factor : g;
 }
 
-// Guarda un factor medido (peso cocinado ÷ peso crudo) para ese alimento y método
+// Guarda un factor medido (peso cocinado ÷ peso crudo) para ese producto y método
 export function conMedida(coccion = {}, food, metodo, crudoG, cocidoG) {
-  const raiz = raizDe(food);
-  const f = Math.round((cocidoG / crudoG) * 100) / 100;
-  const actual = coccion[raiz] || { metodos: {} };
-  return { ...coccion, [raiz]: { ...actual, metodos: { ...actual.metodos, [metodo]: f }, ultimo: metodo } };
+  return conFactor(coccion, food.id, metodo, Math.round((cocidoG / crudoG) * 100) / 100, true);
+}
+// Cambia (o borra, con factor null) el factor de un método de un producto
+export function conFactor(coccion = {}, foodId, metodo, factor, marcarUltimo = false) {
+  const actual = coccion[foodId] || { metodos: {} };
+  const metodos = { ...actual.metodos };
+  if (factor > 0) metodos[metodo] = factor; else delete metodos[metodo];
+  const ultimo = marcarUltimo ? metodo : metodos[actual.ultimo] ? actual.ultimo : null;
+  return { ...coccion, [foodId]: { metodos, ultimo } };
 }
 
 // ---------- Datos que faltan ----------
