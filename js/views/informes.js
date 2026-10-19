@@ -1,6 +1,6 @@
 // Informes para la nutricionista y la entrenadora: ver / guardar como PDF / compartir, y datos para Excel (CSV).
 import { html, useState, useEffect } from '../lib.js';
-import { db, useLive, getSetting, getPrefs, activePlan } from '../db.js';
+import { db, useLive, getSetting, setSetting, getPrefs, activePlan } from '../db.js';
 import { sumN, mealBlocks, blockFoods, visibleFood, planRef, fmt, todayStr, addDays, fmtDate } from '../nutri.js';
 import { Seg, Icon, toast } from '../ui.js';
 import { calcularBalance, fraseCambio } from '../balance.js';
@@ -12,13 +12,14 @@ import { BENCHMARKS } from '../entreno/datos.js';
 import { resumenWhoop } from '../whoop.js';
 import { listaSupl, tomadosEntre, cantTomada, textoCant, textoDosis, aporteDia, aporteMedio, aporteSupl, cantHabitual, textoAporte, tieneDatos, NUTR_SUPL, SUPL_EXTRA } from '../suplementos.js';
 import { MICROS, microsMedios } from '../data/micros.js';
+import { tiposMedida, sesionesDe, mediasSemanales, resumenPeso } from '../medidas.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const n1 = (x, d = 0) => fmt(x || 0, d);
 const COMIDA_NOMBRE = (plan, id) => (id === 'extra' ? 'Fuera del plan' : id === 'supl' ? 'Suplementos' : plan?.comidas.find(m => m.id === id)?.nombre || id);
 
 // ---------- Reunir todos los datos del periodo ----------
-async function reunir(desde, hasta) {
+export async function reunir(desde, hasta) {
   const [logs, pesosTodos, plan, foods, prefs, perfil, workouts, marcas, aguas, whoopFilas, supl, suplTomados] = await Promise.all([
     db.logs.where('date').between(desde, hasta, true, true).toArray(),
     db.weights.toArray(),
@@ -33,6 +34,7 @@ async function reunir(desde, hasta) {
     listaSupl(),
     tomadosEntre(desde, hasta),
   ]);
+  const [medidasTodas, tipos] = await Promise.all([db.medidas.toArray(), tiposMedida()]);
   // Whoop por día (si está conectado)
   const porFechaW = {};
   for (const f of whoopFilas) (porFechaW[f.fecha] ||= []).push(f);
@@ -100,11 +102,91 @@ async function reunir(desde, hasta) {
   const suplResumen = supl.map(x => ({ ...x, dias: dias.filter(d => suplTomados[d.date]?.[x.id]).length }));
   const micros = microsMedios(logs, byId);
   micros.supl = aporteMedio(supl, suplTomados, Object.keys(micros.porDia));
-  return { desde, hasta, logs, dias, conDatos, medias, ref, plan, byId, porComida, masFrecuentes, balance, pesosPeriodo, workouts, marcas, perfil, whoopMedias, suplResumen, micros };
+  // Peso y medidas: lo del periodo y el periodo anterior de la misma duración (para ver la variación)
+  const largo = Math.round((new Date(hasta) - new Date(desde)) / 864e5) + 1;
+  const prevDesde = addDays(desde, -largo), prevHasta = addDays(desde, -1);
+  const mediaKg = ws => (ws.length ? ws.reduce((a, w) => a + w.kg, 0) / ws.length : null);
+  const pesosPrev = pesosTodos.filter(w => w.date >= prevDesde && w.date <= prevHasta);
+  const cuerpo = {
+    resumen: resumenPeso(pesosTodos.filter(w => w.date <= hasta), hasta, perfil?.objetivo ?? null),
+    semanas: mediasSemanales(pesosPeriodo, 1),
+    media: mediaKg(pesosPeriodo), mediaPrev: mediaKg(pesosPrev), nPrev: pesosPrev.length,
+    medidas: tipos.map(t => {
+      const ses = sesionesDe(medidasTodas, t.id);
+      const enPeriodo = ses.filter(x => x.fecha >= desde && x.fecha <= hasta);
+      const antes = [...ses].reverse().find(x => x.fecha < desde && x.rep);
+      return { t, sesiones: enPeriodo, antes };
+    }).filter(m => m.sesiones.length || m.antes),
+  };
+  return { desde, hasta, logs, dias, conDatos, medias, ref, plan, byId, porComida, masFrecuentes, balance, pesosPeriodo, workouts, marcas, perfil, whoopMedias, suplResumen, micros, cuerpo };
 }
 
 // ---------- Informe para la nutricionista ----------
-function htmlNutricion(D) {
+// Partes del informe de la nutricionista (se pueden quitar o poner según lo que le resulte útil)
+export const SECCIONES_NUTRI = [
+  ['adherencia', 'Adherencia al plan'], ['resumen', 'Resumen de calorías y macros'], ['peso', 'Peso y tendencia'], ['medidas', 'Medidas (cintura, cadera…)'],
+  ['micros', 'Vitaminas y minerales'], ['whoop', 'Whoop'], ['suplementos', 'Suplementos'], ['diaADia', 'Día a día'],
+  ['porComida', 'Por comida'], ['frecuentes', 'Alimentos más frecuentes'], ['fuera', 'Fuera del plan'], ['registro', 'Registro completo'],
+];
+
+// Gráfica sencilla en SVG para el informe (se ve en el PDF y en cualquier navegador)
+function svgLinea(puntos, { unidad = '', sueltos = [] } = {}) {
+  const todos = [...puntos, ...sueltos];
+  if (todos.length < 2) return '';
+  const W = 520, H = 150, P = 22;
+  const ts = todos.map(p => new Date(p.f).getTime()), vs = todos.map(p => p.v);
+  const t0 = Math.min(...ts), t1 = Math.max(...ts), min = Math.min(...vs) - 0.3, max = Math.max(...vs) + 0.3;
+  const x = f => P + (W - 2 * P) * ((new Date(f).getTime() - t0) / Math.max(864e5, t1 - t0));
+  const y = v => P + (H - 2 * P) * (1 - (v - min) / Math.max(0.1, max - min));
+  const linea = puntos.length > 1 ? `<path d="${puntos.map((p, i) => `${i ? 'L' : 'M'}${x(p.f).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}" fill="none" stroke="#1f9d63" stroke-width="2"/>` : '';
+  return `<svg class="grafico" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+    <text x="2" y="${y(max) + 10}" font-size="10" fill="#666">${n1(max, 1)} ${unidad}</text><text x="2" y="${y(min) - 3}" font-size="10" fill="#666">${n1(min, 1)} ${unidad}</text>
+    ${sueltos.map(p => `<circle cx="${x(p.f).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="3" fill="none" stroke="#999"/>`).join('')}
+    ${linea}${puntos.map(p => `<circle cx="${x(p.f).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="3.5" fill="#2f6fd8"><title>${p.f}: ${n1(p.v, 1)}</title></circle>`).join('')}
+    ${puntos.map(p => `<text x="${x(p.f).toFixed(1)}" y="${H - 4}" font-size="9" fill="#666" text-anchor="middle">${fmtDate(p.f, { day: 'numeric', month: 'short' })}</text>`).join('')}
+  </svg>`;
+}
+const signo = (v, dec = 1) => (v == null ? '—' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${n1(Math.abs(v), dec)}`);
+
+function htmlPeso(D) {
+  const c = D.cuerpo, r = c.resumen, ps = D.pesosPeriodo;
+  if (!ps.length) return '<h2>Peso</h2><p>Sin pesajes en el periodo.</p>';
+  const variacion = c.media != null && c.mediaPrev != null ? `${signo(c.media - c.mediaPrev)} kg frente al periodo anterior (media ${n1(c.mediaPrev, 1)} kg, ${c.nPrev} pesajes)` : 'Sin pesajes suficientes en el periodo anterior para comparar.';
+  return `<h2>Peso</h2>
+  <p>Pesajes: <b>${ps.length}</b> (del ${fmtDate(ps[0].date)} al ${fmtDate(ps.at(-1).date)}). Media del periodo: <b>${n1(c.media, 1)} kg</b>; ${variacion}.<br>
+  ${r.tendencia != null ? `Tendencia de las últimas 4 semanas: <b>${signo(r.tendencia, 2)} kg/semana</b>${r.objetivo != null ? ` (objetivo indicado: ${signo(r.objetivo, 2)} kg/semana)` : ''}.` : 'Aún no hay pesajes suficientes (2 semanas) para calcular una tendencia fiable.'}
+  ${r.cambioSemana != null ? `<br>Media de 7 días frente a la semana anterior: ${signo(r.cambioSemana)} kg.` : ''}${r.cambioMes != null ? ` Frente a hace un mes: ${signo(r.cambioMes)} kg.` : ''}</p>
+  ${c.semanas.length > 1 ? `<p class="nota">Media de cada semana (línea) y pesajes reales (círculos):</p>${svgLinea(c.semanas.map(x => ({ f: x.semana, v: x.media })), { unidad: 'kg', sueltos: ps.map(w => ({ f: w.date, v: w.kg })) })}` : ''}
+  ${c.semanas.length ? `<table><tr><th>Semana</th><th>Media</th><th>Pesajes</th></tr>${c.semanas.map(x => `<tr><td>del ${fmtDate(x.semana, { day: 'numeric', month: 'short' })}</td><td>${n1(x.media, 1)} kg</td><td>${x.n}</td></tr>`).join('')}</table>` : ''}
+  ${D.balance.gasto ? `<p>Gasto estimado: ${n1(D.balance.gasto)} kcal/día (${D.balance.fuenteGasto === 'real' ? 'calculado con sus datos de comida y peso' : 'fórmula Mifflin-St Jeor × actividad'}).${D.balance.gasto && D.balance.planKcal ? ` Con el plan medio: ${fraseCambio(D.balance.proyPlan)}; con lo que come de verdad: ${fraseCambio(D.balance.proyComido)}.` : ''}</p>` : ''}`;
+}
+
+function htmlMedidas(D) {
+  const ms = D.cuerpo.medidas;
+  if (!ms.length) return '<h2>Medidas</h2><p>Sin medidas corporales registradas.</p>';
+  return `<h2>Medidas</h2>${ms.map(({ t, sesiones, antes }) => {
+    const reps = sesiones.filter(x => x.rep);
+    const ult = reps.at(-1);
+    const cambio = ult && antes ? `${signo(ult.rep.valor - antes.rep.valor)} ${t.unidad} frente a la última medida anterior al periodo (${n1(antes.rep.valor, 1)} ${t.unidad}, ${fmtDate(antes.fecha)})` : '';
+    return `<h3>${esc(t.nombre)}</h3>
+    ${sesiones.length ? `<table><tr><th>Fecha</th><th>Medida elegida</th><th>Todas las tomas</th><th>Observaciones</th></tr>
+      ${sesiones.map(x => `<tr><td>${fmtDate(x.fecha)}</td><td>${x.rep ? `<b>${n1(x.rep.valor, 1)} ${t.unidad}</b>` : 'sin elegir'}</td><td>${x.tomas.map(m => n1(m.valor, 1)).join(' · ')} ${t.unidad}</td><td>${esc(x.nota || '')}</td></tr>`).join('')}</table>` : '<p>Sin mediciones en el periodo.</p>'}
+    ${cambio ? `<p>${cambio}.</p>` : ''}
+    ${reps.length + (antes ? 1 : 0) > 1 ? svgLinea([...(antes ? [{ f: antes.fecha, v: antes.rep.valor }] : []), ...reps.map(x => ({ f: x.fecha, v: x.rep.valor }))], { unidad: t.unidad }) : ''}`;
+  }).join('')}<p class="nota">Cuando hay varias tomas el mismo día, la "medida elegida" es la que marcó él como representativa (no es una media).</p>`;
+}
+
+function htmlAdherencia(D) {
+  const { conDatos, dias, medias, ref } = D;
+  if (conDatos.length < 3) return `<h2>Adherencia al plan</h2><p>Solo hay ${conDatos.length} ${conDatos.length === 1 ? 'día' : 'días'} con comida registrada: no es suficiente para valorar la adherencia.</p>`;
+  const dif = (a, b) => (b ? `${signo(((a - b) / b) * 100, 0)} %` : '—');
+  return `<h2>Adherencia al plan</h2>
+  <p>Registró la comida <b>${conDatos.length} de ${dias.length} días</b>. Completó de media el <b>${n1(medias.cumplimiento * 100)} %</b> de los bloques del plan.
+  ${ref ? `Calorías: ${dif(medias.kcal, ref.kcal)} frente al plan · proteína: ${dif(medias.prot, ref.prot)} · hidratos: ${dif(medias.carb, ref.carb)} · grasas: ${dif(medias.fat, ref.fat)}.` : ''}</p>`;
+}
+
+export function htmlNutricion(D, sec = {}) {
+  const ver = k => sec[k] !== false;
   const { plan, ref, medias, dias, conDatos, logs, balance } = D;
   const fila = (t, v, o) => `<tr><td>${t}</td><td>${v}</td><td>${o ?? ''}</td></tr>`;
   const fuera = logs.filter(l => l.mealId === 'extra');
@@ -115,7 +197,8 @@ function htmlNutricion(D) {
   ${plan ? `Plan: ${esc(plan.nutricionista || '')} · desde ${fmtDate(plan.fecha, { day: 'numeric', month: 'long' })}${plan.editado ? ` (editado a mano el ${fmtDate(plan.editado, { day: 'numeric', month: 'short' })})` : ''}` : 'Sin plan cargado'}<br>
   Días con comida registrada: <b>${conDatos.length} de ${dias.length}</b>. Todo se pesa en cocido; las calorías se calculan sobre el equivalente en crudo.</p>
 
-  <h2>Resumen (media de los días registrados)</h2>
+  ${ver('adherencia') ? htmlAdherencia(D) : ''}
+  ${ver('resumen') ? `<h2>Resumen (media de los días registrados)</h2>
   <table><tr><th></th><th>Media diaria</th><th>Plan (media de opciones)</th></tr>
   ${fila('Calorías', `${n1(medias.kcal)} kcal`, ref ? `${n1(ref.kcal)} kcal` : '')}
   ${fila('Proteína', `${n1(medias.prot)} g`, ref ? `${n1(ref.prot)} g` : '')}
@@ -128,44 +211,41 @@ function htmlNutricion(D) {
   ${fila('Agua', `${n1(medias.agua / 1000, 1)} L`)}
   ${fila('Cumplimiento del plan', `${n1(medias.cumplimiento * 100)} % de los bloques`)}
   ${fila('Fuera del plan', `${n1(fuera.reduce((s, l) => s + (l.n.kcal || 0), 0))} kcal en el periodo (${fuera.length} registros)`)}
-  </table>
+  </table>` : ''}
 
-  <h2>Peso y balance</h2>
-  <p>${D.pesosPeriodo.length ? `Pesajes: ${D.pesosPeriodo.length}. Primero: ${n1(D.pesosPeriodo[0].kg, 1)} kg (${fmtDate(D.pesosPeriodo[0].date)}); último: ${n1(D.pesosPeriodo.at(-1).kg, 1)} kg (${fmtDate(D.pesosPeriodo.at(-1).date)}).` : 'Sin pesajes en el periodo.'}
-  ${balance.tendencia ? `<br>Tendencia del peso: <b>${balance.tendencia.kgSemana >= 0 ? '+' : ''}${n1(balance.tendencia.kgSemana, 2)} kg/semana</b>.` : ''}
-  ${balance.gasto ? `<br>Gasto estimado: ${n1(balance.gasto)} kcal/día (${balance.fuenteGasto === 'real' ? 'calculado con sus datos de comida y peso' : 'fórmula Mifflin-St Jeor × actividad'}).` : ''}
-  ${balance.gasto && balance.planKcal ? `<br>Con el plan medio: ${fraseCambio(balance.proyPlan)}; con lo que come de verdad: ${fraseCambio(balance.proyComido)}.` : ''}</p>
+  ${ver('peso') ? htmlPeso(D) : ''}
+  ${ver('medidas') ? htmlMedidas(D) : ''}
 
-  ${htmlMicros(D)}
-  ${htmlWhoop(D, true)}
-  ${htmlSupl(D)}
+  ${ver('micros') ? htmlMicros(D) : ''}
+  ${ver('whoop') ? htmlWhoop(D, true) : ''}
+  ${ver('suplementos') ? htmlSupl(D) : ''}
 
-  <h2>Día a día</h2>
+  ${ver('diaADia') ? `<h2>Día a día</h2>
   <table class="peq"><tr><th>Día</th><th>kcal</th><th>P</th><th>C</th><th>G</th><th>Fibra</th><th>Sal</th><th>Agua</th><th>Peso</th><th>Plan</th><th>Fuera</th><th>Entreno</th>${D.whoopMedias.dias ? '<th>Recup.</th><th>Gasto Whoop</th>' : ''}</tr>
   ${dias.map(d => `<tr><td>${fmtDate(d.date)}</td><td>${d.registros ? n1(d.n.kcal) : '—'}</td><td>${d.registros ? n1(d.n.prot) : ''}</td><td>${d.registros ? n1(d.n.carb) : ''}</td><td>${d.registros ? n1(d.n.fat) : ''}</td><td>${d.registros ? n1(d.n.fib) : ''}</td><td>${d.registros ? n1(d.n.salt, 1) : ''}</td><td>${d.agua ? n1(d.agua / 1000, 1) + ' L' : ''}</td><td>${d.peso ? n1(d.peso, 1) : ''}</td><td>${d.cumplimiento != null ? n1(d.cumplimiento * 100) + '%' : ''}</td><td>${d.fuera ? n1(d.fuera) : ''}</td><td>${d.entreno ? 'Sí' + (d.rpe ? ` (RPE ${n1(d.rpe, 1)})` : '') : ''}</td>${D.whoopMedias.dias ? `<td>${d.w?.recuperacion != null ? n1(d.w.recuperacion) + '%' : ''}</td><td>${d.w?.kcal && !d.w.enCurso ? n1(d.w.kcal) : ''}</td>` : ''}</tr>`).join('')}
-  </table>
+  </table>` : ''}
 
-  <h2>Por comida</h2>
+  ${ver('porComida') ? `<h2>Por comida</h2>
   <table><tr><th>Comida</th><th>Hora del plan</th><th>Hora media de registro</th><th>kcal media</th><th>Proteína media</th></tr>
   ${Object.entries(D.porComida).map(([id, c]) => {
     const m = plan?.comidas.find(x => x.id === id);
     const nd = c.dias.size || 1;
     return `<tr><td>${esc(COMIDA_NOMBRE(plan, id))}</td><td>${m?.hora || ''}</td><td>${c.horas.length ? h(c.horas.reduce((a, b) => a + b, 0) / c.horas.length) : ''}</td><td>${n1(c.kcal / nd)}</td><td>${n1(c.prot / nd)} g</td></tr>`;
   }).join('')}
-  </table>
+  </table>` : ''}
 
-  <h2>Alimentos más frecuentes</h2>
+  ${ver('frecuentes') ? `<h2>Alimentos más frecuentes</h2>
   <table><tr><th>Alimento</th><th>Veces</th><th>Cantidad media (cocido)</th></tr>
   ${D.masFrecuentes.map(([k, f]) => `<tr><td>${esc(k)}</td><td>${f.veces}</td><td>${n1(f.g / f.veces)} g</td></tr>`).join('')}
-  </table>
+  </table>` : ''}
 
-  ${fuera.length ? `<h2>Comidas fuera del plan</h2><table><tr><th>Día</th><th>Qué</th><th>kcal</th><th>P / C / G</th></tr>
+  ${ver('fuera') && fuera.length ? `<h2>Comidas fuera del plan</h2><table><tr><th>Día</th><th>Qué</th><th>kcal</th><th>P / C / G</th></tr>
   ${fuera.map(l => `<tr><td>${fmtDate(l.date)}</td><td>${esc(l.name)}${l.aprox ? ' (aprox.)' : ''}</td><td>${n1(l.n.kcal)}</td><td>${n1(l.n.prot)} / ${n1(l.n.carb)} / ${n1(l.n.fat)}</td></tr>`).join('')}</table>` : ''}
 
-  <h2>Registro completo</h2>
+  ${ver('registro') ? `<h2>Registro completo</h2>
   <table class="peq"><tr><th>Día</th><th>Comida</th><th>Alimento</th><th>Gramos</th><th>kcal</th><th>P</th><th>C</th><th>G</th></tr>
   ${[...D.logs].sort((a, b) => a.date.localeCompare(b.date) || (a.ts || 0) - (b.ts || 0)).map(l => `<tr><td>${fmtDate(l.date)}</td><td>${esc(COMIDA_NOMBRE(plan, l.mealId))}</td><td>${esc(l.name)}</td><td>${l.g ? n1(l.g) + (l.crudo ? ' (crudo)' : '') : ''}</td><td>${n1(l.n.kcal)}</td><td>${n1(l.n.prot)}</td><td>${n1(l.n.carb)}</td><td>${n1(l.n.fat)}</td></tr>`).join('')}
-  </table>
+  </table>` : ''}
   <p class="nota">Generado con NutriStock el ${fmtDate(todayStr(), { day: 'numeric', month: 'long', year: 'numeric' })}. Valores aproximados (tablas BEDCA/USDA y etiquetas de los productos).</p>`;
 }
 
@@ -290,6 +370,7 @@ function csvNutricion(D) {
     ['nutricion_registros.csv', csv(['fecha', 'hora', 'comida', 'alimento', 'gramos', 'pesado_en', 'gramos_crudo', 'kcal', 'proteina_g', 'carbohidratos_g', 'grasas_g', 'fibra_g', 'azucares_g', 'saturadas_g', 'sal_g', 'aproximado'],
       [...logs].sort((a, b) => a.date.localeCompare(b.date) || (a.ts || 0) - (b.ts || 0)).map(l => [l.date, l.ts > 1e12 ? new Date(l.ts).toTimeString().slice(0, 5) : '', COMIDA_NOMBRE(plan, l.mealId), l.name, l.g, l.g ? (l.crudo ? 'crudo' : 'cocido') : '', l.rawG, l.n.kcal, l.n.prot, l.n.carb, l.n.fat, l.n.fib, l.n.sug, l.n.sat, l.n.salt, l.aprox ? 'si' : '']))],
     ['peso.csv', csv(['fecha', 'peso_kg'], D.pesosPeriodo.map(w => [w.date, w.kg]))],
+    ['medidas.csv', csv(['fecha', 'medida', 'valor', 'unidad', 'elegida', 'observaciones'], D.cuerpo.medidas.flatMap(({ t, sesiones }) => sesiones.flatMap(x => x.tomas.map(m => [x.fecha, t.nombre, m.valor, t.unidad, m.representativa ? 'si' : '', x.nota || '']))))],
   ];
 }
 
@@ -342,7 +423,7 @@ async function compartir(archivos, titulo) {
   }
 }
 
-const ESTILO_INFORME = `body{font:14px -apple-system,Helvetica,Arial,sans-serif;color:#111;margin:24px;line-height:1.4}
+const ESTILO_INFORME = `.grafico{width:100%;max-width:560px;height:auto;display:block;margin:6px 0}body{font:14px -apple-system,Helvetica,Arial,sans-serif;color:#111;margin:24px;line-height:1.4}
 h1{font-size:22px;margin:0 0 6px}h2{font-size:17px;margin:22px 0 8px;border-bottom:2px solid #16a34a;padding-bottom:3px}h3{font-size:15px;margin:14px 0 4px}
 table{border-collapse:collapse;width:100%;margin:6px 0}th,td{border-bottom:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top}
 th{background:#f2f2f2}table.peq{font-size:12px}.nota{color:#666;font-size:12px}pre{white-space:pre-wrap;font:12px monospace;background:#f6f6f6;padding:8px}
@@ -356,6 +437,8 @@ export function Informes({ go }) {
   const [hasta, setHasta] = useState(todayStr());
   const [datos, setDatos] = useState(null);
   const [cargando, setCargando] = useState(false);
+  const secciones = useLive(() => getSetting('informeNutri', {}), []) || {};
+  const alternar = async k => setSetting('informeNutri', { ...(await getSetting('informeNutri', {})), [k]: secciones[k] === false });
 
   const elegirDias = n => { setDias(n); setDesde(addDays(todayStr(), -(n - 1))); setHasta(todayStr()); };
   useEffect(() => {
@@ -365,7 +448,7 @@ export function Informes({ go }) {
     return () => { vivo = false; };
   }, [desde, hasta]);
 
-  const cuerpo = datos ? (para === 'nutri' ? htmlNutricion(datos) : htmlEntreno(datos)) : '';
+  const cuerpo = datos ? (para === 'nutri' ? htmlNutricion(datos, secciones) : htmlEntreno(datos)) : '';
   const titulo = para === 'nutri' ? 'Informe de alimentación' : 'Informe de entrenamiento';
   const nombreBase = `${para === 'nutri' ? 'nutricion' : 'entreno'}_${desde}_a_${hasta}`;
   const htmlCompleto = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${titulo}</title><style>${ESTILO_INFORME}</style></head><body>${cuerpo}</body></html>`;
@@ -377,7 +460,13 @@ export function Informes({ go }) {
       <section class="card form no-print">
         <${Seg} value=${para} onChange=${setPara} options=${[{ value: 'nutri', label: 'Para la nutricionista' }, { value: 'entreno', label: 'Para la entrenadora' }]} />
         <div class="chips">${[7, 14, 30, 90].map(n => html`
-          <button class=${'chip' + (dias === n ? ' on' : '')} onClick=${() => elegirDias(n)}>Últimos ${n} días</button>`)}</div>
+          <button class=${'chip' + (dias === n ? ' on' : '')} onClick=${() => elegirDias(n)}>${n === 7 ? 'Semanal (7 días)' : `Últimos ${n} días`}</button>`)}</div>
+        ${para === 'nutri' && html`
+          <details class="incluir"><summary>Qué incluir en el informe</summary>
+            <div class="chips wrap">${SECCIONES_NUTRI.map(([k, t]) => html`
+              <button class=${'chip' + (secciones[k] !== false ? ' on' : '')} aria-pressed=${secciones[k] !== false} onClick=${() => alternar(k)}>${t}</button>`)}</div>
+            <small class="muted">Se recuerda para la próxima vez. Cuando tu nutricionista te diga qué le sirve, quita lo demás.</small>
+          </details>`}
         <div class="grid2">
           <label>Desde<input type="date" value=${desde} max=${hasta} onInput=${e => { setDias(null); setDesde(e.target.value); }} /></label>
           <label>Hasta<input type="date" value=${hasta} min=${desde} max=${todayStr()} onInput=${e => { setDias(null); setHasta(e.target.value); }} /></label>
@@ -386,7 +475,7 @@ export function Informes({ go }) {
         <small class="muted">En el iPhone: se abre "Imprimir" → toca "Compartir" (arriba) → "Guardar en Archivos" o envíalo por WhatsApp o correo como PDF.</small>
         <button class="btn secondary" disabled=${!datos} onClick=${() => compartir([[nombreBase + '.html', htmlCompleto, 'text/html']], titulo)}>Compartir informe (se abre en cualquier navegador)</button>
         <button class="btn secondary" disabled=${!datos} onClick=${async () => { await compartir(para === 'nutri' ? csvNutricion(datos) : csvEntreno(datos), titulo + ' (Excel)'); toast('Listo ✓'); }}>
-          Datos para Excel (${para === 'nutri' ? '3' : '5'} archivos CSV)</button>
+          Datos para Excel (${para === 'nutri' ? '4' : '5'} archivos CSV)</button>
       </section>
       ${cargando && html`<p class="muted no-print">Preparando…</p>`}
       ${datos && html`<article class="informe" dangerouslySetInnerHTML=${{ __html: cuerpo }}></article>`}

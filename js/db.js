@@ -27,6 +27,8 @@ db.version(5).stores({ whoop: 'id, tipo, fecha' });
 // Cada porción = unos gramos de un táper/lote asignados a una comida de un día. No cuentan como comidas
 // hasta que las confirmas (entonces se convierten en un registro normal y se descuentan del táper).
 db.version(6).stores({ porciones: 'id, date, foodId' });
+// v7 (v3, Fase 6): medidas corporales (cintura, cadera…). Varias tomas por sesión; tú eliges la representativa.
+db.version(7).stores({ medidas: 'id, fecha, tipo' });
 
 // Números únicos para los registros nuevos (en vez de 1, 2, 3…): así dos aparatos nunca crean el mismo número.
 // Es la hora en microsegundos + un poco de azar. Los registros que ya existían conservan su número.
@@ -36,7 +38,7 @@ export function nuevoId() {
   ultimoId = id;
   return id;
 }
-for (const t of ['lots', 'shopping', 'logs', 'workouts', 'marcas', 'porciones']) {
+for (const t of ['lots', 'shopping', 'logs', 'workouts', 'marcas', 'porciones', 'medidas']) {
   db[t].hook('creating', function (pk, obj) {
     if (pk == null && obj.id == null) { const id = nuevoId(); obj.id = id; return id; }
   });
@@ -207,7 +209,7 @@ export async function deleteLog(log) {
 }
 
 // ---------- Copia de seguridad ----------
-const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop', 'porciones'];
+const TABLES = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop', 'porciones', 'medidas'];
 
 export async function exportAll() {
   const out = { app: 'nutristock', version: 1, exportedAt: new Date().toISOString() };

@@ -15,10 +15,10 @@ const respaldos = new Dexie('nutristock-respaldos');
 respaldos.version(1).stores({ copias: '++id, fecha' });
 const MAX_INTERNAS = 7;
 
-const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop', 'porciones'];
+const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop', 'porciones', 'medidas'];
 // Tablas que añadió una versión posterior: una copia antigua puede no traerlas (y entonces NO se tocan al restaurar)
-const OPCIONALES = ['whoop', 'porciones'];
-const CLAVE = { foods: 'id', lots: 'id', basicos: 'id', shopping: 'id', plans: 'id', logs: 'id', weights: 'date', settings: 'key', workouts: 'id', marcas: 'id', ejercicios: 'id', whoop: 'id', porciones: 'id' };
+const OPCIONALES = ['whoop', 'porciones', 'medidas'];
+const CLAVE = { foods: 'id', lots: 'id', basicos: 'id', shopping: 'id', plans: 'id', logs: 'id', weights: 'date', settings: 'key', workouts: 'id', marcas: 'id', ejercicios: 'id', whoop: 'id', porciones: 'id', medidas: 'id' };
 
 // ---------- Exportar a archivo ----------
 export async function exportarCopia() {

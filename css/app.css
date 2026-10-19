@@ -881,3 +881,25 @@ details.revisar summary { cursor: pointer; font-weight: 600; padding: 10px 0; co
 .revision-etq ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
 .revision-etq li .muted { overflow-wrap: anywhere; }
 .supl-macros summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+
+/* ---------- v3 · Fase 6: peso y medidas ---------- */
+.cuerpo .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cuerpo-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 0; }
+.cuerpo-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: var(--radius-s); background: var(--fill); }
+.cuerpo-stats small { color: var(--muted); font-size: 12px; }
+.cuerpo-stats b { font-size: 19px; font-variant-numeric: tabular-nums; }
+.chart .tendencia-line { fill: none; stroke: var(--carb); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.chart .medida-line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.chart .toma-dot { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.leyenda span { display: inline-block; vertical-align: middle; margin-right: 2px; }
+.ley-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fat); }
+.ley-hueco { width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--muted); }
+.ley-line { width: 16px; height: 2px; background: var(--accent); }
+.ley-trend { width: 16px; height: 0; border-top: 2px dashed var(--carb); }
+.medida { display: flex; flex-direction: column; gap: 6px; padding: 10px 0; border-top: 1px solid var(--borde); }
+.medida-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.toma.rep { color: var(--accent); font-weight: 700; }
+.medidas-form .toma-fila { align-items: center; }
+.semanas summary, .medida summary { cursor: pointer; font-size: 14px; color: var(--accent); padding: 4px 0; }
+.informe .grafico { width: 100%; max-width: 560px; height: auto; display: block; margin: 6px 0; }
+.incluir summary { cursor: pointer; font-weight: 600; padding: 6px 0; }

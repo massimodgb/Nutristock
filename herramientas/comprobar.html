@@ -233,6 +233,71 @@
       }
     }
 
+    // ---------- v3 · Fase 6: medidas, peso e informe ----------
+    const Md = await import('/js/medidas.js');
+    const filasCintura = [
+      { id: 1, fecha: '2026-10-01', tipo: 'cintura', valor: 88, sesion: 's1', representativa: true, ts: 1 },
+      { id: 2, fecha: '2026-10-08', tipo: 'cintura', valor: 87.5, sesion: 's2', representativa: false, ts: 2 },
+      { id: 3, fecha: '2026-10-08', tipo: 'cintura', valor: 85.5, sesion: 's2', representativa: true, ts: 3 },
+      { id: 4, fecha: '2026-10-15', tipo: 'cintura', valor: 86, sesion: 's3', representativa: false, ts: 4 },
+      { id: 5, fecha: '2026-10-15', tipo: 'cintura', valor: 85, sesion: 's3', representativa: false, ts: 5 },
+    ];
+    await prueba('Medidas: dos tomas el mismo día se guardan las dos; cuenta la que marcaste (85,5), sin hacer la media', () => {
+      const s = Md.sesionesDe(filasCintura, 'cintura').find(x => x.sesion === 's2');
+      return s.tomas.length === 2 && s.rep.valor === 85.5 || s;
+    });
+    await prueba('Medidas: una sesión sin la buena marcada no inventa un valor (sale sin punto)', () => {
+      const serie = Md.serieDe(filasCintura, 'cintura');
+      return serie.length === 3 && serie[2].valor === null && serie[2].tomas.join() === '86,85' && serie[1].valor === 85.5 || serie;
+    });
+    await prueba('Medidas: cambio frente a la anterior (85,5 − 88 = −2,5 cm)', () => {
+      const c = Md.cambiosMedida(Md.serieDe(filasCintura, 'cintura'));
+      return c.ultima.valor === 85.5 && c.vsAnterior === -2.5 || c;
+    });
+    const pesosEj = ['2026-09-21', '2026-09-23', '2026-09-25', '2026-09-28', '2026-09-30', '2026-10-02', '2026-10-05', '2026-10-07', '2026-10-09', '2026-10-12', '2026-10-14', '2026-10-16', '2026-10-18']
+      .map((date, i) => ({ date, kg: 84 - i * 0.1 }));
+    await prueba('Peso: media de cada semana (lunes a domingo) con sus pesajes', () => {
+      const s = Md.mediasSemanales(pesosEj);
+      return s.length === 4 && s[0].semana === '2026-09-21' && Math.abs(s[0].media - 83.9) < 0.001 && s[0].n === 3 || s;
+    });
+    await prueba('Peso: tendencia ≈ −0,3 kg/semana frente a un objetivo de −0,25 (en línea, diferencia < 0,1)', () => {
+      const r = Md.resumenPeso(pesosEj, '2026-10-18', -0.25);
+      return r.tendencia < -0.25 && r.tendencia > -0.35 && Math.abs(r.frenteObjetivo) < 0.1 && r.media7 != null && r.cambioSemana < 0 || r;
+    });
+    await prueba('Peso: con pocos datos no se inventa tendencia ni cambios', () => {
+      const r = Md.resumenPeso([{ date: '2026-10-18', kg: 84 }], '2026-10-18', -0.25);
+      return r.tendencia === null && r.cambioSemana === null && r.cambioMes === null && r.media7 === null || r;
+    });
+
+    if (['127.0.0.1', 'localhost'].includes(location.hostname)) {
+      const { db } = await import('/js/db.js');
+      const Inf = await import('/js/views/informes.js');
+      const F = '2000-04-10';
+      try {
+        const ses = await Md.guardarSesion({ fecha: F, tipo: 'cintura', tomas: [{ valor: 87.5 }, { valor: 85.5, representativa: true }], nota: 'en ayunas' });
+        await prueba('Guardar una sesión de cintura con 87,5 y 85,5 (la buena 85,5)', async () => {
+          const f = await db.medidas.where('fecha').equals(F).toArray();
+          return f.length === 2 && f.filter(x => x.representativa).map(x => x.valor).join() === '85.5' && f.every(x => x.sesion === ses && x.nota === 'en ayunas') || f;
+        });
+        await Md.guardarSesion({ sesion: ses, fecha: F, tipo: 'cintura', tomas: [{ valor: 87.5, representativa: true }, { valor: 85.5 }] });
+        await prueba('Editar la sesión cambia la buena sin duplicar tomas', async () => {
+          const f = await db.medidas.where('fecha').equals(F).toArray();
+          return f.length === 2 && f.find(x => x.representativa).valor === 87.5 || f;
+        });
+        await db.weights.bulkPut([{ date: '2000-04-05', kg: 84.2 }, { date: '2000-04-08', kg: 84.0 }, { date: '2000-04-11', kg: 83.8 }]);
+        const D = await Inf.reunir('2000-04-05', '2000-04-11');
+        const h = Inf.htmlNutricion(D), sinMedidas = Inf.htmlNutricion(D, { medidas: false });
+        await prueba('Informe de nutricionista: peso del periodo, medidas con todas las tomas y la elegida', () =>
+          /Pesajes: <b>3<\/b>/.test(h) && /<h2>Medidas<\/h2>/.test(h) && /87,5 · 85,5/.test(h) && /<b>87,5 cm<\/b>/.test(h) && !/<h2>Medidas<\/h2>/.test(sinMedidas) || h.slice(0, 400));
+        await prueba('Informe: con menos de 3 días de comida no saca conclusiones de adherencia', () => /no es suficiente para valorar la adherencia/.test(h));
+        await Md.borrarSesion('cintura', ses);
+        await prueba('Borrar la sesión quita sus tomas', async () => (await db.medidas.where('fecha').equals(F).count()) === 0);
+      } finally {
+        await db.medidas.where('fecha').equals(F).delete();
+        await db.weights.bulkDelete(['2000-04-05', '2000-04-08', '2000-04-11']);
+      }
+    }
+
     const { alimentoPorNombre } = await import('/js/plan-pdf.js');
     await prueba('"Queso Ricotta Hacendado" se clasifica como ricotta', () => alimentoPorNombre('Queso Ricotta Hacendado') === 'ricotta');
 

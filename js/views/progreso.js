@@ -6,6 +6,7 @@ import { db, useLive, getPrefs, getSetting, activePlan } from '../db.js';
 import { calcularBalance, fraseCambio, OBJETIVOS } from '../balance.js';
 import { sumN, planRef, mealBlocks, blockFoods, visibleFood, fmt, todayStr, addDays, fmtDate } from '../nutri.js';
 import { Seg, Empty } from '../ui.js';
+import { Cuerpo } from './cuerpo.js';
 import { resumenWhoop, colorRecuperacion } from '../whoop.js';
 import { FACTORES, MIN_DIAS, paresCruce, compararMitades, fraseCruce, textoValor } from '../cruces.js';
 import { MICROS, microsMedios } from '../data/micros.js';
@@ -125,10 +126,7 @@ export function Progreso({ go }) {
 
       <${Cruces} logs=${logs} whoopPor=${whoopPor} hoy=${hoy} desde=${desdeCruces} />
 
-      <section class="card">
-        <h3>Peso</h3>
-        <${GraficoPeso} weights=${weights} desde=${desde} hoy=${hoy} />
-      </section>
+      <${Cuerpo} pesos=${pesosTodos} perfil=${perfil} />
 
       ${conDatos.length > 0 && html`
         <details class="card pg-tabla">
@@ -208,34 +206,6 @@ function GraficoBarras({ dias, metrica, objetivo, sel, onSel }) {
         <line x1="0" x2=${W} y1=${y(objetivo)} y2=${y(objetivo)} class="target" />
         <text x=${W} y=${y(objetivo) - 4} text-anchor="end" class="tick">plan ${fmt(objetivo)}${metrica.unidad}</text>`}
     </svg>`;
-}
-
-// Peso diario (puntos) y media de 7 días (línea)
-function GraficoPeso({ weights, desde, hoy }) {
-  const visibles = weights.filter(w => w.date >= desde).sort((a, b) => a.date.localeCompare(b.date));
-  if (visibles.length < 2) return html`<p class="muted small">Apunta tu peso en Hoy (o conecta Whoop) durante unos días para ver la tendencia.</p>`;
-  const mediaDe = date => {
-    const w = weights.filter(x => x.date >= addDays(date, -6) && x.date <= date);
-    return w.reduce((s, x) => s + x.kg, 0) / w.length;
-  };
-  const W = 340, H = 140, pad = 14;
-  const dias = Math.round((new Date(hoy) - new Date(desde)) / 864e5) || 1;
-  const kgs = visibles.flatMap(w => [w.kg, mediaDe(w.date)]);
-  const min = Math.min(...kgs) - 0.3, max = Math.max(...kgs) + 0.3;
-  const x = date => pad + (W - 2 * pad) * ((new Date(date) - new Date(desde)) / 864e5) / dias;
-  const y = kg => pad + (H - 2 * pad) * (1 - (kg - min) / (max - min));
-  const linea = visibles.map((w, i) => `${i ? 'L' : 'M'}${x(w.date)},${y(mediaDe(w.date))}`).join(' ');
-  const ultima = visibles[visibles.length - 1];
-  const cambio = mediaDe(ultima.date) - mediaDe(visibles[0].date);
-  return html`
-    <p class="pg-frase pequena">${fmt(mediaDe(ultima.date), 1)} kg de media, ${Math.abs(cambio) < 0.05 ? 'sin cambios' : `${cambio > 0 ? '+' : '−'}${fmt(Math.abs(cambio), 1)} kg`} en el periodo.</p>
-    <svg class="chart" viewBox=${`0 0 ${W} ${H}`} role="img" aria-label="Evolución del peso">
-      <text x="0" y=${y(max) + 10} class="tick">${fmt(max, 1)}</text>
-      <text x="0" y=${y(min) - 2} class="tick">${fmt(min, 1)}</text>
-      ${visibles.map(w => html`<circle cx=${x(w.date)} cy=${y(w.kg)} r="4" class="peso-dot"><title>${fmtDate(w.date)}: ${fmt(w.kg, 1)} kg</title></circle>`)}
-      <path d=${linea} class="peso-line" />
-    </svg>
-    <p class="muted small">Puntos: peso de cada día · línea: media de 7 días (fíjate en la línea).</p>`;
 }
 
 // ¿A dónde te lleva? Todo sobre una misma línea: a la izquierda de tu gasto bajas, a la derecha subes.
