@@ -320,6 +320,7 @@ function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
     hecho: sumN(logs.filter(l => l.mealId === m.id).map(l => l.n)),
   }));
   const fuera = sumN(logs.filter(l => l.mealId === 'extra').map(l => l.n));
+  const supl = sumN(logs.filter(l => l.mealId === 'supl').map(l => l.n));
 
   return html`
     <div class="ecuacion">
@@ -359,6 +360,9 @@ function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
       ${fuera.kcal > 0 && html`
         <tr><td>Fuera del plan</td><td>${fmt(fuera.kcal)}</td><td>0</td>
           <td class="small">${fmt(fuera.prot)} / ${fmt(fuera.carb)} / ${fmt(fuera.fat)}</td></tr>`}
+      ${supl.kcal > 0 && html`
+        <tr><td>Suplementos</td><td>${fmt(supl.kcal)}</td><td>—</td>
+          <td class="small">${fmt(supl.prot)} / ${fmt(supl.carb)} / ${fmt(supl.fat)}</td></tr>`}
     </table>
     ${revisar}
 
@@ -873,7 +877,8 @@ function LogDetail({ log, byId, foods, onDone }) {
         ${NUTRS.map(({ k, name, unit }) => html`<tr><td>${name}</td><td>${fmt(log.n[k] || 0, 1)} ${unit}</td></tr>`)}
       </table>
       ${descontado > 0 && html`<p class="muted small">Se descontaron ${fmt(descontado)} g de la despensa. Si lo borras, se devuelven.</p>`}
-      <button class="btn danger" onClick=${async () => { await deleteLog(log); toast('Borrado'); onDone(); }}>
+      ${log.suplId && html`<p class="muted small">Es un suplemento: al borrarlo también se desmarca en "Suplementos".</p>`}
+      <button class="btn danger" onClick=${async () => { if (log.suplId) await marcarSupl(log.date, log.suplId, 0); else await deleteLog(log); toast('Borrado'); onDone(); }}>
         <${Icon} name="trash" size=${18} /> Borrar registro
       </button>
     </div>`;
@@ -1086,6 +1091,8 @@ function EntrenoHoy({ date, go }) {
 
 // ---------- Registro rápido: copiar ayer, tu día habitual u otro día ----------
 // Guarda solo lo necesario para poder repetir un registro otro día
+// Los suplementos no se copian como comida: se marcan en su tarjeta
+const plantillas = ls => ls.filter(l => !l.suplId).map(plantilla);
 const plantilla = l => ({
   mealId: l.mealId, optionId: l.optionId || null, blockId: l.blockId || null, foodId: l.foodId || null,
   name: l.name, g: l.g || null, crudo: !!l.crudo, aprox: !!l.aprox, n: l.n,
@@ -1098,15 +1105,15 @@ function Rapido({ date, logs, ayer, onCopiar, onOtroDia, onPreparar }) {
   return html`
     <section class="rapido">
       <div class="chips">
-        ${ayer.length > 0 && html`<button class="chip" onClick=${() => onCopiar('Copiar ayer', ayer.map(plantilla))}>
-          <${Icon} name="repeat" size=${14} /> Copiar ayer (${ayer.length})</button>`}
+        ${plantillas(ayer).length > 0 && html`<button class="chip" onClick=${() => onCopiar('Copiar ayer', plantillas(ayer))}>
+          <${Icon} name="repeat" size=${14} /> Copiar ayer (${plantillas(ayer).length})</button>`}
         ${habitual?.length > 0 && html`<button class="chip" onClick=${() => onCopiar('Mi día habitual', habitual)}>
           <${Icon} name="check" size=${14} /> Mi día habitual (${habitual.length})</button>`}
         <button class="chip" onClick=${onPreparar}><${Icon} name="bolt" size=${14} /> Preparar comidas</button>
         <button class="chip" onClick=${onOtroDia}><${Icon} name="hoy" size=${14} /> Copiar otro día</button>
         ${logs.length > 0 && html`
           <button class="chip" onClick=${async () => {
-            await setSetting('diaHabitual', logs.map(plantilla));
+            await setSetting('diaHabitual', plantillas(logs));
             toast('Guardado como tu día habitual ✓');
           }}>Guardar como día habitual</button>`}
       </div>
@@ -1119,7 +1126,7 @@ function OtroDia({ date, onDone, ...ctx }) {
   return html`
     <label class="form">Copiar lo que comí el día<input type="date" max=${todayStr()} value=${origen} onInput=${e => e.target.value && setOrigen(e.target.value)} /></label>
     ${ls && (ls.length
-      ? html`<${CopiarSheet} key=${origen} ...${ctx} date=${date} entradas=${ls.map(plantilla)} onDone=${onDone} />`
+      ? html`<${CopiarSheet} key=${origen} ...${ctx} date=${date} entradas=${plantillas(ls)} onDone=${onDone} />`
       : html`<p class="muted">Ese día no tiene nada registrado.</p>`)}`;
 }
 
@@ -1318,7 +1325,7 @@ function Suplementos({ date }) {
             </button>`;
         })}
       </div>
-      ${Object.keys(aporte).length > 0 && html`<small class="muted">Hoy te aportan: ${textoAporte(aporte)}</small>`}
+      ${Object.keys(aporte).length > 0 && html`<small class="muted">Hoy te aportan: ${[textoAporte(aporte), aporte.kcal ? `${Math.round(aporte.kcal)} kcal (ya sumadas a tu día)` : ''].filter(Boolean).join(' · ')}</small>`}
       <${Sheet} open=${!!cambiar} onClose=${() => setCambiar(null)} title=${cambiar?.nombre || ''}>
         ${cambiar && html`<${TomaSupl} s=${cambiar} cant=${cantTomada(cambiar, tomados[cambiar.id])}
           onGuardar=${async c => { await marcarSupl(date, cambiar.id, c); setCambiar(null); }} />`}

@@ -177,6 +177,62 @@
     await prueba('Sonido con música: "bajar" pide a Safari una sesión transitoria; "mezclar", ambiente', () =>
       So.tipoSesion({ musica: 'bajar' }) === 'transient' && So.tipoSesion({ musica: 'mezclar' }) === 'ambient' && So.tipoSesion({ musica: 'pausar' }) === 'transient-solo');
 
+    // ---------- v3 · Fase 5: suplementos y etiquetas ----------
+    const Su = await import('/js/suplementos.js');
+    const omegaEN = 'Supplement Facts\nServing Size 2 Softgels\nServings Per Container 60\nAmount Per Serving %DV\nCalories 20\nTotal Fat 2 g 3%\nFish Oil Concentrate 2000 mg\nTotal Omega-3 Fatty Acids 1200 mg\nEPA (Eicosapentaenoic Acid) 720 mg\nDHA (Docosahexaenoic Acid) 480 mg';
+    await prueba('Omega 3 en inglés: porción 2 cápsulas, EPA 720 y DHA 480 por separado, total 1200, y el aceite (2000 mg) NO cuenta', () => {
+      const r = Su.parseEtiquetaSupl(omegaEN);
+      return r.porcion === 2 && r.unidad === 'capsula' && r.valores.epa === 720 && r.valores.dha === 480 && r.valores.o3 === 1200
+        && r.dudas.some(d => /aceite de pescado/.test(d)) || r;
+    });
+    await prueba('Suplemento con calorías: el omega 3 tiene 20 kcal y 2 g de grasa (no se asume 0)', () => {
+      const r = Su.parseEtiquetaSupl(omegaEN);
+      return r.valores.kcal === 20 && r.valores.fat === 2 || r;
+    });
+    await prueba('Electrolitos en inglés: "1 stick" = 1 sobre; sodio 1000, potasio 200, magnesio 60 mg; 5 kcal y 2 g de hidratos', () => {
+      const r = Su.parseEtiquetaSupl('Nutrition Facts\nServing size 1 stick (5.5 g)\nCalories 5\nTotal Carbohydrate 2g\nSodium 1000mg 43%\nPotassium 200mg 4%\nMagnesium 60mg 14%');
+      return r.porcion === 1 && r.unidad === 'sobre' && r.valores.na === 1000 && r.valores.k === 200 && r.valores.mg === 60 && r.valores.kcal === 5 && r.valores.carb === 2 || r;
+    });
+    await prueba('Magnesio en español: coge el magnesio elemental (300 mg), no el bisglicinato; vitamina D 1000 UI = 25 µg (y lo avisa)', () => {
+      const r = Su.parseEtiquetaSupl('Tamaño de la porción: 2 comprimidos\nBisglicinato de magnesio 1500 mg\nde los cuales magnesio elemental 300 mg\nVitamina D3 (colecalciferol) 1000 UI');
+      return r.porcion === 2 && r.unidad === 'comprimido' && r.valores.mg === 300 && r.valores.vd === 25 && r.dudas.some(d => /UI/.test(d)) || r;
+    });
+    await prueba('Gominolas: 15 kcal (de los kJ/kcal), hidratos 3,5 g y azúcares 2,8 g', () => {
+      const r = Su.parseEtiquetaSupl('Por dosis diaria (2 gominolas)\nValor energético 63 kJ / 15 kcal\nHidratos de carbono 3,5 g\nde los cuales azúcares 2,8 g\nVitamina C 80 mg');
+      return r.porcion === 2 && r.unidad === 'gominola' && r.valores.kcal === 15 && r.valores.carb === 3.5 && r.valores.sug === 2.8 || r;
+    });
+    await prueba('Sin calorías en la etiqueta: no se inventan (se avisa)', () => {
+      const r = Su.parseEtiquetaSupl('Per serving (1 scoop)\nProtein 20 g\nTotal fat 1 g');
+      return r.valores.kcal == null && r.dudas.some(d => /no las calculo/.test(d)) || r;
+    });
+    await prueba('Lo que aporta un suplemento con EPA y DHA no los cuenta dos veces en el resumen', () => {
+      const t = Su.textoAporte(Su.aporteSupl({ porcion: 2, valores: { o3: 1200, epa: 720, dha: 480 } }, 2));
+      return t === 'omega 3 total 1200 mg' || t;
+    });
+
+    if (['127.0.0.1', 'localhost'].includes(location.hostname)) {
+      const { db, getSetting, setSetting } = await import('/js/db.js');
+      const listaAntes = await getSetting('suplementos', null);
+      const F = '2000-03-01';
+      try {
+        await setSetting('suplementos', [
+          { id: 'zz-gomi', nombre: 'Gominolas (prueba)', unidad: 'gominola', porcion: 2, habitual: 2, valores: { kcal: 15, carb: 3.5, sug: 2.8, vc: 80 } },
+          { id: 'zz-mag', nombre: 'Magnesio (prueba)', unidad: 'comprimido', porcion: 2, habitual: 2, valores: { mg: 300 } },
+        ]);
+        await Su.marcarSupl(F, 'zz-gomi', 4);
+        await Su.marcarSupl(F, 'zz-mag', 2);
+        const ls = await db.logs.where('date').equals(F).toArray();
+        await prueba('Marcar un suplemento con calorías lo suma al día (4 gominolas = 30 kcal); uno sin calorías no crea nada', () =>
+          ls.length === 1 && ls[0].suplId === 'zz-gomi' && ls[0].mealId === 'supl' && ls[0].n.kcal === 30 && ls[0].n.carb === 7 || ls);
+        await Su.marcarSupl(F, 'zz-gomi', 0);
+        await prueba('Desmarcarlo quita esas calorías del día', async () => (await db.logs.where('date').equals(F).count()) === 0);
+      } finally {
+        await db.logs.where('date').equals(F).delete();
+        await db.settings.delete('supl:' + F);
+        if (listaAntes) await setSetting('suplementos', listaAntes); else await db.settings.delete('suplementos');
+      }
+    }
+
     const { alimentoPorNombre } = await import('/js/plan-pdf.js');
     await prueba('"Queso Ricotta Hacendado" se clasifica como ricotta', () => alimentoPorNombre('Queso Ricotta Hacendado') === 'ricotta');
 

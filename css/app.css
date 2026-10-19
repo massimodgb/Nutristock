@@ -873,3 +873,11 @@ details.revisar summary { cursor: pointer; font-weight: 600; padding: 10px 0; co
 .tramo-ed select { width: auto; flex: 0 0 auto; }
 .tramo-ed .inline > input { flex: 1 1 auto; width: auto; min-width: 0; }
 .chip-descanso { flex-direction: row; }
+
+/* ---------- v3 · Fase 5: suplementos y etiquetas ---------- */
+.foto-etq { display: flex; flex-direction: column; gap: 8px; }
+.foto-etq img { width: 100%; max-height: 60vh; object-fit: contain; border-radius: var(--radius-s); background: var(--fill); -webkit-user-select: text; user-select: text; }
+.revision-etq { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: var(--radius-s); background: var(--fill); }
+.revision-etq ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.revision-etq li .muted { overflow-wrap: anywhere; }
+.supl-macros summary { cursor: pointer; font-weight: 600; padding: 6px 0; }

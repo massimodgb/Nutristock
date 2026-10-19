@@ -15,7 +15,7 @@ import { MICROS, microsMedios } from '../data/micros.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const n1 = (x, d = 0) => fmt(x || 0, d);
-const COMIDA_NOMBRE = (plan, id) => (id === 'extra' ? 'Fuera del plan' : plan?.comidas.find(m => m.id === id)?.nombre || id);
+const COMIDA_NOMBRE = (plan, id) => (id === 'extra' ? 'Fuera del plan' : id === 'supl' ? 'Suplementos' : plan?.comidas.find(m => m.id === id)?.nombre || id);
 
 // ---------- Reunir todos los datos del periodo ----------
 async function reunir(desde, hasta) {

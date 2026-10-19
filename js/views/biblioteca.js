@@ -2,7 +2,7 @@
 import { html, useState, useEffect, useMemo, useRef } from '../lib.js';
 import { db, useLive, getPrefs, round1 } from '../db.js';
 import { NUTRS, GROUPS, fmt, parseNum, todayStr } from '../nutri.js';
-import { Sheet, Num, Toggle, Dot, Empty, Icon, toast } from '../ui.js';
+import { Sheet, Num, Toggle, Dot, Empty, Icon, toast, FotoEtiqueta } from '../ui.js';
 import { FactoresMedidos } from './coccion.js';
 import { buscarCodigo, parseEtiquetaInfo, iniciarEscaner, leerCodigoDeFoto } from '../importar.js';
 import { CantidadStock } from './stock.js';
@@ -199,6 +199,7 @@ export function PegarEtiqueta({ onDone }) {
       <li>En Fotos, mantén el dedo sobre el texto de la tabla → <b>Seleccionar todo</b> → <b>Copiar</b>.</li>
       <li>Pégalo aquí abajo.</li>
     </ol>
+    <${FotoEtiqueta} />
     <textarea rows="8" placeholder="Valor energético 1046 kJ / 250 kcal&#10;Grasas 10 g&#10;…" value=${txt}
       onInput=${e => setTxt(e.target.value)}></textarea>
     <button class="btn" disabled=${!txt.trim()} onClick=${() => {

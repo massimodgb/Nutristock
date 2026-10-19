@@ -192,3 +192,27 @@ export function Destello() {
   }, []);
   return on ? html`<div class=${'destello ' + on} aria-hidden="true"></div>` : null;
 }
+
+// Foto de la etiqueta SIN servicios externos ni pagos: la foto se queda en el iPhone.
+// Se usa el Texto en vivo (Live Text) del propio iPhone: con la foto en pantalla, mantienes el dedo sobre
+// el texto → Seleccionar todo → Copiar, y lo pegas en la casilla. Así no hace falta ninguna librería nueva.
+export function FotoEtiqueta() {
+  const [url, setUrl] = useState(null);
+  useEffect(() => () => url && URL.revokeObjectURL(url), [url]);
+  const elegir = e => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (f) setUrl(prev => { if (prev) URL.revokeObjectURL(prev); return URL.createObjectURL(f); });
+  };
+  return html`
+    <div class="foto-etq">
+      <label class="btn secondary">
+        ${url ? 'Hacer otra foto' : 'Hacer o elegir una foto de la etiqueta'}
+        <input type="file" accept="image/*" capture="environment" hidden onChange=${elegir} />
+      </label>
+      ${url && html`
+        <img src=${url} alt="Foto de la etiqueta" />
+        <p class="small muted">Mantén el dedo sobre el texto de la foto → <b>Seleccionar todo</b> → <b>Copiar</b>, y pégalo en la casilla.
+          Si aquí no te deja, abre la foto en la app Fotos y haz lo mismo. La foto no se guarda ni se envía a ningún sitio.</p>`}
+    </div>`;
+}

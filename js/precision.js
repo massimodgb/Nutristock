@@ -78,6 +78,7 @@ export const faltanLog = (log, byId) => (log.aprox ? [] : log.faltan || faltanDa
 // ---------- De dónde sale el dato ----------
 export function fuenteDe(food, log) {
   if (log?.aprox) return { texto: 'Estimación de un plato típico', certeza: 'estimado' };
+  if (log?.suplId) return { texto: 'Tu suplemento (números de su etiqueta)', certeza: 'etiqueta' };
   if (!food) return { texto: 'Producto borrado (se usan los valores que se guardaron)', certeza: 'guardado' };
   switch (food.source) {
     case 'base': return { texto: 'Tabla de la app (BEDCA / USDA, redondeado)', certeza: 'aproximado' };

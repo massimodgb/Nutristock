@@ -2,12 +2,12 @@
 import { html, useState, useEffect } from '../lib.js';
 import { db, useLive, getPrefs, setSetting } from '../db.js';
 import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar, decidirNube, nombreTabla } from '../nube.js';
-import { listaSupl, guardarListaSupl, idSupl, UNIDADES, NUTR_SUPL, textoCant, textoDosis, textoAporte, aporteSupl, cantHabitual, tieneDatos, parseEtiquetaSupl, buscarSuplemento } from '../suplementos.js';
+import { listaSupl, guardarListaSupl, idSupl, UNIDADES, NUTR_SUPL, MACROS_SUPL_INFO, textoCant, textoDosis, textoAporte, aporteSupl, cantHabitual, tieneDatos, parseEtiquetaSupl, buscarSuplemento } from '../suplementos.js';
 import { Escaner } from './biblioteca.js';
 import { estadoWhoop, conectarWhoop, comprobarWhoop, desconectarWhoop, sincronizarWhoop } from '../whoop.js';
 import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
-import { Num, Toggle, Icon, Sheet, toast } from '../ui.js';
+import { Num, Toggle, Icon, Sheet, toast, FotoEtiqueta } from '../ui.js';
 import { revisarHistorial } from '../precision.js';
 
 export function Mas({ go }) {
@@ -227,7 +227,7 @@ function FichaSupl({ inicial, onGuardar, onQuitar }) {
   const [valores, setValores] = useState(inicial?.valores || {});
   const [notas, setNotas] = useState(inicial?.notas || inicial?.dosis || '');
   const [etiqueta, setEtiqueta] = useState('');
-  const [leido, setLeido] = useState(null);
+  const [leido, setLeido] = useState(null); // { n, detalles, dudas, porcion, unidad }
   const [codigo, setCodigo] = useState(inicial?.codigo || null);
   const [escanear, setEscanear] = useState(false);
   const [buscando, setBuscando] = useState(false);
@@ -236,13 +236,15 @@ function FichaSupl({ inicial, onGuardar, onQuitar }) {
   const [, uno, varios] = UNIDADES.find(u => u[0] === unidad);
   const ficha = { nombre: nombre.trim(), marca: marca.trim(), unidad, porcion, habitual, valores, notas: notas.trim(), codigo };
   const aporte = aporteSupl(ficha, habitual);
+  // Lee la etiqueta pegada y enseña DE DÓNDE sale cada número y lo que conviene revisar (no guarda nada solo)
   const leer = () => {
     const r = parseEtiquetaSupl(etiqueta);
     const n = Object.keys(r.valores).length;
     if (n) setValores(antes => ({ ...antes, ...r.valores }));
     if (r.porcion) { setPorcion(r.porcion); setUnidad(r.unidad); if (!inicial?.habitual) setHabitual(r.porcion); }
-    setLeido(n ? `He encontrado ${n} ${n === 1 ? 'dato' : 'datos'}${r.porcion ? ` por ${textoCant(r.porcion, r.unidad)}` : ''}. Revísalos abajo.` : 'No he encontrado números. Escríbelos abajo a mano.');
+    setLeido({ n, detalles: r.detalles, dudas: r.dudas, porcion: r.porcion, unidad: r.unidad });
   };
+  const INFO = Object.fromEntries([...NUTR_SUPL, ...MACROS_SUPL_INFO].map(m => [m.k, m]));
   // Código de barras → Open Food Facts: nombre y marca casi siempre; los números, solo si los tiene
   const leerCodigo = async cod => {
     setEscanear(false);
@@ -292,8 +294,16 @@ function FichaSupl({ inicial, onGuardar, onQuitar }) {
         <summary>Pegar la etiqueta (lo más rápido)</summary>
         <p class="small muted">En Fotos, mantén el dedo sobre la tabla de la etiqueta → Copiar, y pégala aquí.</p>
         <textarea rows="5" value=${etiqueta} placeholder=${'Por dosis diaria (2 cápsulas)\nMagnesio 375 mg 100 %\nVitamina B6 1,4 mg'} onInput=${e => setEtiqueta(e.target.value)}></textarea>
+        <${FotoEtiqueta} />
         <button class="btn secondary" disabled=${!etiqueta.trim()} onClick=${leer}>Leer la etiqueta</button>
-        ${leido && html`<p class="small" role="status">${leido}</p>`}
+        ${leido && html`
+          <div class="revision-etq" role="status">
+            <p class="small"><b>${leido.n ? `He leído ${leido.n} ${leido.n === 1 ? 'dato' : 'datos'}${leido.porcion ? ` por ${textoCant(leido.porcion, leido.unidad)}` : ''}` : 'No he encontrado números'}.</b>
+              ${leido.n ? ' Compruébalos con la etiqueta antes de guardar:' : ' Escríbelos abajo a mano.'}</p>
+            ${leido.detalles.length > 0 && html`<ul class="small">${leido.detalles.map(d => html`
+              <li><b>${INFO[d.k]?.name || d.k} ${String(d.v).replace('.', ',')} ${INFO[d.k]?.unit || ''}</b> <span class="muted">← «${d.linea}»</span></li>`)}</ul>`}
+            ${leido.dudas.map(t => html`<p class="aviso warn small">${t}</p>`)}
+          </div>`}
       </details>
 
       <div>
@@ -319,7 +329,15 @@ function FichaSupl({ inicial, onGuardar, onQuitar }) {
       <label>Cuánto tomas normalmente al día
         <${Num} value=${habitual} onChange=${v => v > 0 && setHabitual(v)} suffix=${habitual === 1 ? uno : varios} />
       </label>
-      ${aporte && html`<p class="supl-resumen">Cada día te aporta: ${textoAporte(aporte)}</p>`}
+      <details class="supl-macros" open=${MACROS_SUPL_INFO.some(m => valores[m.k] != null)}>
+        <summary>Calorías y macros (si los tiene: gominolas, sobres con azúcar, aceites…)</summary>
+        <p class="small muted">No todos los suplementos tienen 0 kcal. Si los pones, al marcarlo en Hoy se suman a tus calorías del día. Deja vacío lo que no traiga la etiqueta.</p>
+        <div class="grid2 supl-valores">
+          ${MACROS_SUPL_INFO.map(m => html`
+            <label key=${m.k}>${m.name.replace('· ', '')}<${Num} value=${valores[m.k] ?? null} placeholder="—" onChange=${v => cambiarValor(m.k, v)} suffix=${m.unit} /></label>`)}
+        </div>
+      </details>
+      ${aporte && html`<p class="supl-resumen">Cada día te aporta: ${textoAporte(aporte)}${aporte.kcal ? ` · ${Math.round(aporte.kcal)} kcal` : ''}</p>`}
 
       <label>Notas (opcional)<input value=${notas} placeholder="Ej.: bisglicinato, por la noche" onInput=${e => setNotas(e.target.value)} /></label>
 
