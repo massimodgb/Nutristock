@@ -8,6 +8,7 @@ import { nutrFor, sumN, cookFactor, visibleFood, fmt, fmtG, todayStr, addDays, f
 import { Num, Dot, Icon, Toggle, toast } from '../ui.js';
 import { METODOS, medidasDe, nombreMetodo, faltanDatos, textoFaltan } from '../precision.js';
 import { guardarPreparado, bloqueDe, gramosPlan, asignadoPorLote } from '../mealprep.js';
+import { FaltaEnCasa } from './receta.js';
 
 const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const clave = c => `${c.date}|${c.mealId}`;
@@ -44,6 +45,8 @@ export function PrepararComidas({ plan, foods, lots, prefs, onDone }) {
   const stockDe = f => { const ids = candidateIds(f, foods); return lots.filter(l => ids.includes(l.foodId)).reduce((s, l) => s + Math.max(0, l.g), 0); };
   const asignado = asignadoPorLote(porciones);
   const libreLote = f => Math.max(0, round1(stockDe(f) - (asignado[f.id] || 0)));
+  // Descontar de la despensa: por defecto sí si consta algo en casa; si no consta nada, no (no se inventa stock)
+  const descDe = it => it.descontar ?? stockDe(it.food) > 0;
   const elegida = c => comidas.some(x => clave(x) === clave(c));
   // Gramos que pide el plan para un ingrediente en una comida (se proponen; los cambias si quieres)
   const sugerido = (f, c) => {
@@ -91,12 +94,17 @@ export function PrepararComidas({ plan, foods, lots, prefs, onDone }) {
     const kPorG = m.id === 'lote' ? 1 : crudoG > 0 && cocidoG > 0 ? crudoG / cocidoG : null; // gramos crudos por gramo cocinado
     const nDe = g => (kPorG ? nutrFor(valores, g * kPorG) : null);
     const libre = cocidoG != null ? round1(cocidoG - asign) : null;
-    return { m, gs, asign, crudoG, cocidoG, nDe, libre, ok: asign > 0 && (m.id === 'lote' ? asign <= cocidoG + 0.5 : crudoG > 0 && cocidoG > 0 && (m.modo !== 'tanda' || asign <= cocidoG + 0.5)) };
+    // Si se descuenta y en casa consta menos crudo del necesario, hay que decidir antes de guardar
+    const st = round1(stockDe(it.food)), desc = m.id !== 'lote' && descDe(it);
+    const faltaCasa = desc && crudoG > 0 && crudoG > st + 0.05;
+    return { m, gs, asign, crudoG, cocidoG, nDe, libre, st, desc, faltaCasa,
+      ok: !faltaCasa && asign > 0 && (m.id === 'lote' ? asign <= cocidoG + 0.05 : crudoG > 0 && cocidoG > 0 && (m.modo !== 'tanda' || asign <= cocidoG + 0.05)) };
   };
   const calcs = items.map(calc);
   const totalesComida = comidas.map((c, i) => sumN(calcs.map(k => k.nDe(k.gs[i]) || {})));
   const listo = comidas.length > 0 && items.length > 0 && calcs.every(k => k.ok || k.asign === 0) && calcs.some(k => k.asign > 0);
   const nPorciones = calcs.reduce((s, k) => s + k.gs.filter(g => g > 0).length, 0);
+  const hayFaltas = calcs.some(k => k.faltaCasa && k.asign > 0);
 
   const guardar = async () => {
     if (!listo || guardando) return;
@@ -110,7 +118,7 @@ export function PrepararComidas({ plan, foods, lots, prefs, onDone }) {
           return {
             food: it.food, modo: k.m.id === 'lote' ? 'lote' : k.m.modo, factor: k.m.factor,
             metodo: k.m.modo === 'tanda' ? it.metodoTanda : k.m.metodo, crudoG: it.crudoG, cocidoG: it.cocidoG,
-            gramos: k.gs, descontar: it.descontar !== false,
+            gramos: k.gs, descontar: k.desc,
           };
         }),
       });
@@ -156,7 +164,7 @@ export function PrepararComidas({ plan, foods, lots, prefs, onDone }) {
           </button>`)}</div>`}`}
 
       ${items.map((it, i) => {
-        const k = calcs[i], modos = modosDe(it.food), falta = faltanDatos(it.food), st = stockDe(it.food);
+        const k = calcs[i], modos = modosDe(it.food), falta = faltanDatos(it.food), st = k.st;
         return html`
           <section class="prep-item" key=${it.food.id}>
             <div class="inline"><${Dot} group=${it.food.group} /><b class="grow">${it.food.name}</b>
@@ -180,11 +188,14 @@ export function PrepararComidas({ plan, foods, lots, prefs, onDone }) {
                 </div>`;
             })}</div>
             <small class=${k.ok || !k.asign ? 'muted' : 'aviso-rm'}>
-              ${k.m.id === 'lote' ? `Del táper: ${fmt(k.asign)} de ${fmtG(k.cocidoG)} libres${k.asign > k.cocidoG + 0.5 ? ' — no hay suficiente' : ''}.`
-                : k.m.modo === 'tanda' ? (it.crudoG > 0 && it.cocidoG > 0 ? `Se descuentan ${fmtG(it.crudoG)} crudos. ${k.libre >= 0 ? `Quedan ${fmtG(k.libre)} libres en el táper.` : 'Has asignado más de lo cocinado.'}` : 'Pon el peso crudo y el cocinado de toda la tanda.')
-                : k.asign ? `Se descuentan ${fmtG(k.crudoG)} ${k.m.modo === 'tal' ? '' : 'crudos '}de la despensa (una sola vez).${st > 0 && k.crudoG > st * 1.02 ? ` En casa solo constan ${fmtG(st, it.food)}.` : ''}` : 'Pon los gramos de cada comida.'}
+              ${k.m.id === 'lote' ? `Del táper: ${fmt(k.asign)} de ${fmtG(k.cocidoG)} libres${k.asign > k.cocidoG + 0.05 ? ' — no hay suficiente' : ''}.`
+                : k.m.modo === 'tanda' ? (it.crudoG > 0 && it.cocidoG > 0 ? `${k.desc ? `Se descuentan ${fmtG(it.crudoG)} crudos.` : 'No se descuenta de la despensa.'} ${k.libre >= 0 ? `Quedan ${fmtG(k.libre)} libres en el táper.` : 'Has asignado más de lo cocinado.'}` : 'Pon el peso crudo y el cocinado de toda la tanda.')
+                : !k.asign ? 'Pon los gramos de cada comida.'
+                : k.desc ? `Se descuentan ${fmtG(k.crudoG)} ${k.m.modo === 'tal' ? '' : 'crudos '}de la despensa (una sola vez).`
+                : st > 0 ? 'No se descuenta de la despensa.' : 'No consta en la despensa: no se descuenta nada.'}
             </small>
-            ${k.m.id !== 'lote' && st > 0 && html`<${Toggle} label="Descontar de la despensa" checked=${it.descontar !== false} onChange=${v => cambiar(i, { descontar: v })} />`}
+            ${k.m.id !== 'lote' && (st > 0 || k.desc) && html`<${Toggle} label="Descontar de la despensa" checked=${k.desc} onChange=${v => cambiar(i, { descontar: v })} />`}
+            ${k.faltaCasa && html`<${FaltaEnCasa} food=${it.food} necesario=${round1(k.crudoG)} disponible=${st} onNoDescontar=${() => cambiar(i, { descontar: false })} />`}
             ${falta.length > 0 && html`<small class="aviso-rm">Sin dato de ${textoFaltan(falta)}: contará como 0.</small>`}
           </section>`;
       })}
@@ -195,6 +206,6 @@ export function PrepararComidas({ plan, foods, lots, prefs, onDone }) {
           <small class="muted">Quedarán como «Preparada»: no cuentan como comido hasta que lo confirmes en cada comida.</small>
         </div>
         <button class="btn" disabled=${!listo || guardando} onClick=${guardar}>
-          ${listo ? `Guardar preparación (${nPorciones} ${nPorciones === 1 ? 'porción' : 'porciones'})` : 'Completa los gramos de cada ingrediente'}</button>`}
+          ${listo ? `Guardar preparación (${nPorciones} ${nPorciones === 1 ? 'porción' : 'porciones'})` : hayFaltas ? 'Resuelve lo que falta en casa' : 'Completa los gramos de cada ingrediente'}</button>`}
     </div>`;
 }

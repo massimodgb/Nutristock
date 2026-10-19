@@ -205,6 +205,9 @@ main { padding: env(safe-area-inset-top) 0 calc(var(--tabbar-h) + env(safe-area-
 .aviso.mal { background: var(--bad-soft); }
 .aviso.ok { background: var(--accent-soft); }
 .aviso.info { background: var(--info-soft); }
+/* Aviso con botones o casilla debajo del texto (falta en casa, confirmar borrado al restaurar) */
+.aviso.pila { flex-direction: column; align-items: stretch; }
+.aviso.pila .inline { flex-wrap: wrap; }
 
 /* Comidas */
 .meal { display: flex; flex-direction: column; gap: 6px; }

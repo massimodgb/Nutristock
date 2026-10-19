@@ -10,7 +10,7 @@
 //      Las porciones NO cuentan como comido: se ven en el día que toca como "preparadas".
 //   3. Al confirmar, la porción se convierte en un registro normal y se descuenta del lote (nunca de lo crudo).
 //      Cancelarla deja esos gramos libres en el lote (o, si lo tiraste, como merma).
-import { db, getSetting, setSetting, mermarLote, round1 } from './db.js';
+import { db, getSetting, setSetting, mermarLote, round1, stockDisponible, FaltaStock } from './db.js';
 import { mealBlocks, blockFoods, nutrFor, sumN } from './nutri.js';
 import { conMedida } from './precision.js';
 import { crearLote } from './views/receta.js';
@@ -44,6 +44,17 @@ export function asignadoPorLote(porciones) {
   return out;
 }
 
+// ---------- Reglas de cantidades (en los datos, no solo en la pantalla) ----------
+// Lo que queda en un táper y lo que ya está reservado para otras comidas
+export async function estadoLote(foodId, exceptoPorcion = null) {
+  const total = await stockDisponible([foodId]);
+  const asignado = round1((await db.porciones.where('foodId').equals(foodId).toArray())
+    .filter(p => p.id !== exceptoPorcion).reduce((s, p) => s + (p.g || 0), 0));
+  return { total, asignado, libre: round1(total - asignado) };
+}
+const TOL = 0.05; // margen por redondeos de 1 decimal
+const comprobarG = g => { if (!(g > 0) || !Number.isFinite(g)) throw new Error('La cantidad tiene que ser mayor que 0'); };
+
 // Guarda una preparación entera (todo o nada).
 //   comidas: [{ date, mealId, optionId }]
 //   items:   [{ food, modo, metodo, factor, crudoG, cocidoG, gramos: [g para cada comida] }]
@@ -60,13 +71,21 @@ export async function guardarPreparado({ comidas, items, foods, plan, dias = 3 }
     for (const it of items) {
       const asignado = (it.gramos || []).reduce((s, g) => s + (g > 0 ? g : 0), 0);
       if (!asignado) continue;
+      for (const g of it.gramos || []) if (g != null && g !== 0 && !(g > 0)) comprobarG(g);
       let lote = it.food;
+      // Del táper que ya tenías: solo lo que está libre (lo reservado para otras comidas no se puede volver a asignar)
+      if (it.modo === 'lote') {
+        const e = await estadoLote(it.food.id);
+        if (asignado > e.libre + TOL) throw new Error(`${it.food.name}: en el táper quedan ${e.libre} g libres y has asignado ${round1(asignado)} g.`);
+      }
       if (it.modo !== 'lote') {
         let crudoG, cocidoG;
         if (it.modo === 'tanda') { crudoG = it.crudoG; cocidoG = it.cocidoG; }
         else if (it.modo === 'factor' && it.factor) { cocidoG = asignado; crudoG = round1(asignado / it.factor); }
         else { cocidoG = asignado; crudoG = asignado; }
         if (!(crudoG > 0) || !(cocidoG > 0)) throw new Error(`Faltan los pesos de ${it.food.name}`);
+        // No se puede repartir más cocinado del que salió de la tanda
+        if (asignado > cocidoG + TOL) throw new Error(`${it.food.name}: la tanda pesa ${round1(cocidoG)} g cocinados y has repartido ${round1(asignado)} g.`);
         lote = await crearLote({ food: it.food, foods, crudoG, cocidoG, metodo: it.metodo || null, descontar: it.descontar !== false, dias });
         byId[lote.id] = lote;
         if (it.modo === 'tanda' && it.metodo) medidas.push({ food: it.food, metodo: it.metodo, crudoG, cocidoG });
@@ -97,16 +116,24 @@ export async function guardarPreparado({ comidas, items, foods, plan, dias = 3 }
 
 // "Me lo comí": la porción pasa a ser un registro normal (descuenta del táper, no de lo crudo).
 // Con g distinto de la porción = consumo parcial: lo que no comiste sigue libre en el táper.
-export async function confirmarPorcion(p, { g = p.g, foods } = {}) {
+export async function confirmarPorcion(p, { g = p.g, foods, restoTirado = false } = {}) {
+  comprobarG(g);
   const lote = await db.foods.get(p.foodId);
   if (!lote) throw new Error('El táper de esta porción ya no existe');
   const lista = foods || await db.foods.toArray();
   await db.transaction('rw', db.lots, db.logs, db.porciones, async () => {
+    const actual = await db.porciones.get(p.id);
+    if (!actual) throw new Error('Esta porción ya se apuntó o se canceló');
+    if (g > actual.g + TOL) throw new Error(`Preparaste ${actual.g} g: no puedes apuntar ${round1(g)} g. Si comiste más, cambia antes los gramos de la porción.`);
+    const disponible = await stockDisponible([actual.foodId]);
+    if (g > disponible + TOL) throw new FaltaStock(lote.name, g, disponible);
     await saveLog({
-      date: p.date, mealId: p.mealId, optionId: p.optionId, blockId: p.blockId, food: lote, g, crudo: false,
-      rawG: g, n: nutrFor(lote, g), deduct: true, foods: lista, extra: { prepId: p.prepId || null },
+      date: actual.date, mealId: actual.mealId, optionId: actual.optionId, blockId: actual.blockId, food: lote, g, crudo: false,
+      rawG: g, n: nutrFor(lote, g), deduct: true, exacto: true, foods: lista, extra: { prepId: actual.prepId || null },
     });
-    await db.porciones.delete(p.id);
+    // Comiste menos y tiraste el resto: ese resto es merma del táper (no comida)
+    if (restoTirado && g < actual.g - TOL) await mermarDeLote(actual.foodId, actual.g - g, 'resto tirado');
+    await db.porciones.delete(actual.id);
   });
 }
 
@@ -126,17 +153,27 @@ export async function mermarDeLote(foodId, g, motivo = 'tirado') {
 // Cancelar una porción: los gramos vuelven a estar libres en el táper; si lo tiraste, se apuntan como merma
 export async function cancelarPorcion(p, { tirado = false } = {}) {
   await db.transaction('rw', db.lots, db.porciones, async () => {
-    if (tirado) await mermarDeLote(p.foodId, p.g, 'porción tirada');
-    await db.porciones.delete(p.id);
+    const actual = await db.porciones.get(p.id);
+    if (!actual) throw new Error('Esta porción ya se apuntó o se canceló');
+    if (tirado) await mermarDeLote(actual.foodId, actual.g, 'porción tirada');
+    await db.porciones.delete(actual.id);
   });
 }
 
 // Cambiar gramos, día o comida de una porción (el bloque se vuelve a calcular)
+// Más gramos de los que había solo si están libres en el táper (lo reservado para otras comidas no cuenta)
 export async function moverPorcion(p, { g, date, mealId, optionId }, plan, byId) {
-  const nuevo = { g: g ?? p.g, date: date || p.date, mealId: mealId || p.mealId, optionId: optionId !== undefined ? optionId : p.optionId };
-  const meal = plan?.comidas.find(m => m.id === nuevo.mealId);
-  nuevo.blockId = meal ? bloqueDe(meal, nuevo.optionId, byId[p.foodId], plan, byId) : null;
-  await db.porciones.update(p.id, { ...nuevo, g: round1(nuevo.g) });
+  await db.transaction('rw', db.lots, db.porciones, async () => {
+    const actual = await db.porciones.get(p.id);
+    if (!actual) throw new Error('Esta porción ya se apuntó o se canceló');
+    const nuevo = { g: g ?? actual.g, date: date || actual.date, mealId: mealId || actual.mealId, optionId: optionId !== undefined ? optionId : actual.optionId };
+    comprobarG(nuevo.g);
+    const e = await estadoLote(actual.foodId, actual.id);
+    if (nuevo.g > e.libre + TOL) throw new Error(`En el táper quedan ${Math.max(0, e.libre)} g para esta porción (el resto está reservado o ya se comió).`);
+    const meal = plan?.comidas.find(m => m.id === nuevo.mealId);
+    nuevo.blockId = meal ? bloqueDe(meal, nuevo.optionId, byId?.[actual.foodId], plan, byId) : null;
+    await db.porciones.update(actual.id, { ...nuevo, g: round1(nuevo.g) });
+  });
 }
 
 // Opción elegida de una comida en un día (la que marcaste ese día o la primera)

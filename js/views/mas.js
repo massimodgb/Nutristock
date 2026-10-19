@@ -5,7 +5,7 @@ import { estadoNube, escucharNube, crearCuenta, entrar, salir, sincronizar, deci
 import { listaSupl, guardarListaSupl, idSupl, UNIDADES, NUTR_SUPL, MACROS_SUPL_INFO, textoCant, textoDosis, textoAporte, aporteSupl, cantHabitual, tieneDatos, parseEtiquetaSupl, buscarSuplemento } from '../suplementos.js';
 import { Escaner } from './biblioteca.js';
 import { estadoWhoop, conectarWhoop, comprobarWhoop, desconectarWhoop, sincronizarWhoop } from '../whoop.js';
-import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
+import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia, seBorranAlRestaurar } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
 import { Num, Toggle, Icon, Sheet, toast, FotoEtiqueta } from '../ui.js';
 import { revisarHistorial } from '../precision.js';
@@ -421,7 +421,16 @@ function RevisarHistorial() {
 function TusDatos({ persist }) {
   const [estado, setEstado] = useState(null);
   const [internas, setInternas] = useState([]);
-  const [revisar, setRevisar] = useState(null); // { datos, v, origen }
+  const [revisar, setRevisar] = useState(null); // { datos, v, origen, borra }
+  const [aceptoBorrar, setAceptoBorrar] = useState(false);
+  const [restaurando, setRestaurando] = useState(false);
+  // Antes de enseñar la copia, mira qué se borrará que la copia no trae
+  const abrirRevision = async (datos, origen) => {
+    const v = validarCopia(datos);
+    const borra = v.ok ? await seBorranAlRestaurar(datos) : [];
+    setAceptoBorrar(false);
+    setRevisar({ datos, v, origen, borra });
+  };
   const recargar = async () => { setEstado(await estadoCopia()); setInternas(await listarInternas()); };
   useEffect(() => { recargar(); }, []);
 
@@ -432,19 +441,21 @@ function TusDatos({ persist }) {
     if (!f) return;
     let datos = null;
     try { datos = JSON.parse(await f.text()); } catch {}
-    setRevisar({ datos, v: validarCopia(datos), origen: f.name });
+    await abrirRevision(datos, f.name);
   };
   const abrirInterna = async id => {
     const c = await leerInterna(id);
-    setRevisar({ datos: c.datos, v: validarCopia(c.datos), origen: `copia automática del ${new Date(c.fecha).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` });
+    await abrirRevision(c.datos, `copia automática del ${new Date(c.fecha).toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`);
   };
   const restaurar = async () => {
+    if (restaurando) return;
+    setRestaurando(true);
     try {
-      await restaurarCopia(revisar.datos);
-      toast('Copia restaurada ✓');
+      await restaurarCopia(revisar.datos, { confirmarBorrado: aceptoBorrar });
+      toast('Copia restaurada ✓ Si te arrepientes: copias automáticas → «antes de restaurar»');
       setRevisar(null);
-      setTimeout(() => location.reload(), 600);
-    } catch (err) { alert(err.message); }
+      setTimeout(() => location.reload(), 1500);
+    } catch (err) { alert(err.message); setRestaurando(false); }
   };
   const u = estado?.ultima;
 
@@ -493,8 +504,13 @@ function TusDatos({ persist }) {
               ${revisar.v.resumen.fecha !== '¿?' ? html`<br />Exportada el ${revisar.v.resumen.fecha}.` : ''}
             </div>
             ${revisar.v.avisos?.length > 0 && html`<ul class="small muted">${revisar.v.avisos.map(x => html`<li>${x}</li>`)}</ul>`}
-            <p class="aviso warn">Restaurar <b>reemplaza todo</b> lo que tienes ahora por esta copia. Antes, la app guarda sola una copia automática de lo actual, por si te arrepientes.</p>
-            <button class="btn danger" onClick=${restaurar}>Reemplazar mis datos por esta copia</button>` : html`
+            <p class="aviso warn">Restaurar <b>reemplaza todo</b> lo que tienes ahora por esta copia. Antes, la app guarda sola una copia automática de lo actual («antes de restaurar»), por si te arrepientes.</p>
+            ${revisar.borra?.length > 0 && html`
+              <div class="aviso warn pila" role="alert">
+                <span><b>Esta copia no trae:</b> ${revisar.borra.map(b => `${b.nombre} (ahora tienes ${b.n})`).join(', ')}. Al restaurar se borrarán.</span>
+                <${Toggle} label="Entiendo: borrarlos y dejarlo todo como en la copia" checked=${aceptoBorrar} onChange=${setAceptoBorrar} />
+              </div>`}
+            <button class="btn danger" disabled=${restaurando || (revisar.borra?.length > 0 && !aceptoBorrar)} onClick=${restaurar}>Reemplazar mis datos por esta copia</button>` : html`
             <p class="error"><b>Este archivo no se puede restaurar.</b> No se ha cambiado nada.</p>
             <ul class="small">${revisar.v.errores.map(e => html`<li>${e}</li>`)}</ul>`}
         </div>`}

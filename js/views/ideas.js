@@ -110,6 +110,7 @@ export function Ideas({ go }) {
 function Receta({ r, e, meal, foods, stock, onDone }) {
   const date = todayStr();
   const registrar = async () => {
+    try {
     await db.transaction('rw', db.lots, db.logs, async () => {
     for (const it of e.items) {
       const rawG = toRaw(it.food, it.g, false, Object.fromEntries(foods.map(f => [f.id, f])));
@@ -119,6 +120,7 @@ function Receta({ r, e, meal, foods, stock, onDone }) {
       });
     }
     });
+    } catch (e) { toast('No se ha registrado nada: ' + e.message); return; }
     if (e.optionId) {
       const el = await getSetting('opciones:' + date, {});
       await setSetting('opciones:' + date, { ...el, [meal.id]: e.optionId });

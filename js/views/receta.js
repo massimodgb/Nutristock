@@ -3,7 +3,7 @@
 // La app calcula los valores por 100 g COCINADOS, descuenta los ingredientes de la despensa
 // y guarda la receta en la despensa con su peso: al comer 300 g, se descuentan del táper.
 import { html, useState } from '../lib.js';
-import { db, useLive, getSetting, setSetting, getPrefs, candidateIds, deductStock, round1 } from '../db.js';
+import { db, useLive, getSetting, setSetting, getPrefs, candidateIds, deductStockExacto, round1 } from '../db.js';
 import { NUTRS, sumN, nutrFor, fmt, fmtG, todayStr, addDays, fmtDate, visibleFood } from '../nutri.js';
 import { METODOS, nombreMetodo, raizDe, medidasDe, conMedida, faltanDatos, textoFaltan } from '../precision.js';
 import { MICROS, microsDe } from '../data/micros.js';
@@ -12,6 +12,24 @@ import { Num, Icon, Dot, Toggle, toast } from '../ui.js';
 const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 // Valores por 100 g cocinados a partir de los ingredientes y del peso final
+// Aviso cuando en la despensa consta MENOS de lo que vas a descontar. No se guarda nada hasta que elijas:
+// "lo compré y no lo apunté" (añade a la despensa justo lo que falta, como una compra) o "no descontar esta vez".
+export function FaltaEnCasa({ food, necesario, disponible, onNoDescontar }) {
+  const faltan = round1(necesario - disponible);
+  const anadir = async () => {
+    await db.lots.add({ foodId: food.id, g: faltan, abierto: false, addedAt: Date.now(), origen: 'compra sin apuntar (al cocinar)' });
+    toast(`${fmtG(faltan)} de ${food.name} añadidos a la despensa ✓`);
+  };
+  return html`
+    <div class="aviso warn pila falta-casa" role="alert">
+      <span><b>${food.name}: no hay bastante en casa.</b> Constan ${fmtG(disponible)} y vas a usar ${fmtG(necesario)} en crudo.</span>
+      <div class="inline">
+        <button class="btn small secondary" onClick=${anadir}>Lo compré y no lo apunté: añadir ${fmtG(faltan)}</button>
+        <button class="btn small secondary" onClick=${onNoDescontar}>No descontar esta vez</button>
+      </div>
+    </div>`;
+}
+
 export function calcularReceta(items, totalG, byId) {
   const validos = items.filter(i => byId[i.foodId] && i.g > 0);
   const total = sumN(validos.map(i => nutrFor(byId[i.foodId], i.g)));
@@ -41,7 +59,10 @@ export function Receta({ foods, lots, prefs, inicial, onDone }) {
     .sort((a, b) => enCasa(b.id) - enCasa(a.id) || (a.source === 'base') - (b.source === 'base')).slice(0, 12);
   const r = calcularReceta(items, totalG, byId);
   const cambiar = (i, g) => setItems(items.map((x, j) => (j === i ? { ...x, g } : x)));
-  const listo = nombre.trim() && items.some(i => i.g > 0) && totalG > 0;
+  const stockDe = f => { const ids = candidateIds(f, foods); return round1(lots.filter(l => ids.includes(l.foodId)).reduce((s, l) => s + Math.max(0, l.g), 0)); };
+  // Ingredientes de los que no hay bastante en casa (solo importa si se descuentan)
+  const faltas = descontar ? items.filter(i => i.g > 0 && byId[i.foodId] && i.g > stockDe(byId[i.foodId]) + 0.05) : [];
+  const listo = nombre.trim() && items.some(i => i.g > 0) && totalG > 0 && !faltas.length;
 
   const guardar = async () => {
     const grupoPrincipal = (() => {
@@ -59,11 +80,15 @@ export function Receta({ foods, lots, prefs, inicial, onDone }) {
       ingredientes: items.filter(i => i.g > 0).map(i => ({ foodId: i.foodId, g: i.g })),
       ultimoTotalG: totalG, ...(faltan.length ? { faltan } : {}),
     };
-    await db.transaction('rw', db.foods, db.lots, async () => {
-      await db.foods.put(comida);
-      if (descontar) for (const i of comida.ingredientes) await deductStock(candidateIds(byId[i.foodId], foods), i.g);
-      await db.lots.add({ foodId: id, g: round1(totalG), abierto: true, expiry: dias ? addDays(todayStr(), dias) : null, addedAt: Date.now() });
-    });
+    if (!descontar) comida.sinDescontar = true; // queda apuntado que esta tanda no descontó la despensa
+    try {
+      // Todo o nada: si falta algún ingrediente en casa, no se crea el táper ni se descuenta nada
+      await db.transaction('rw', db.foods, db.lots, async () => {
+        await db.foods.put(comida);
+        if (descontar) for (const i of comida.ingredientes) await deductStockExacto(candidateIds(byId[i.foodId], foods), i.g, byId[i.foodId]?.name);
+        await db.lots.add({ foodId: id, g: round1(totalG), abierto: true, expiry: dias ? addDays(todayStr(), dias) : null, addedAt: Date.now() });
+      });
+    } catch (e) { toast(e.message); return; }
     await archivarTandasVacias(recetaDe, id);
     toast(`${comida.name}: ${fmtG(totalG)} guardados en tu despensa ✓`);
     onDone?.();
@@ -102,10 +127,11 @@ export function Receta({ foods, lots, prefs, inicial, onDone }) {
         </div>`}
 
       <${Toggle} label="Descontar los ingredientes de la despensa" checked=${descontar} onChange=${setDescontar} />
+      ${faltas.map(i => html`<${FaltaEnCasa} key=${i.foodId} food=${byId[i.foodId]} necesario=${i.g} disponible=${stockDe(byId[i.foodId])} onNoDescontar=${() => setDescontar(false)} />`)}
       <label>Se conserva en la nevera unos
         <div class="chips">${[3, 4, 5, 0].map(d => html`<button class=${'chip' + (dias === d ? ' on' : '')} onClick=${() => setDias(d)}>${d ? `${d} días` : 'Congelado / sin fecha'}</button>`)}</div>
       </label>
-      <button class="btn" disabled=${!listo} onClick=${guardar}>${listo ? `Guardar ${fmtG(totalG)} en la despensa` : 'Pon nombre, ingredientes y peso total'}</button>
+      <button class="btn" disabled=${!listo} onClick=${guardar}>${listo ? `Guardar ${fmtG(totalG)} en la despensa` : faltas.length ? 'Resuelve lo que falta en casa' : 'Pon nombre, ingredientes y peso total'}</button>
     </div>`;
 }
 
@@ -151,10 +177,11 @@ export async function crearLote({ food, foods, crudoG, cocidoG, metodo, desconta
     n: Object.fromEntries(NUTRS.map(({ k: key }) => [key, round1((total[key] || 0) * k)])),
     micros: m ? Object.fromEntries(Object.entries(m).map(([key, v]) => [key, Math.round(v * k * 100) / 100])) : null,
     ingredientes: [{ foodId: food.id, g: crudoG }], ultimoTotalG: cocidoG,
-    ...(falta.length ? { faltan: falta } : {}),
+    ...(falta.length ? { faltan: falta } : {}), ...(descontar ? {} : { sinDescontar: true }),
   };
+  // Primero se descuenta (exacto: si no hay bastante, se lanza el aviso y no se crea nada)
+  if (descontar) await deductStockExacto(candidateIds(food, foods), crudoG, food.name);
   await db.foods.put(taper);
-  if (descontar) await deductStock(candidateIds(food, foods), crudoG);
   await db.lots.add({ foodId: id, g: round1(cocidoG), abierto: true, expiry: dias ? addDays(todayStr(), dias) : null, addedAt: Date.now() });
   return taper;
 }
@@ -200,7 +227,8 @@ export function Preparacion({ foods, food: inicial, onDone }) {
   const metodo = elegido === undefined ? medidasDe(food, coccion).ultimo : elegido;
   const stockG = stockDe(food);
   const desc = descontar ?? stockG > 0;
-  const listo = crudoG > 0 && cocidoG > 0;
+  const faltaCasa = desc && crudoG > stockG + 0.05;
+  const listo = crudoG > 0 && cocidoG > 0 && !faltaCasa;
   const total = listo ? nutrFor(food, crudoG) : null;
   const falta = faltanDatos(food);
   const factorMedido = listo ? Math.round((cocidoG / crudoG) * 100) / 100 : null;
@@ -208,7 +236,9 @@ export function Preparacion({ foods, food: inicial, onDone }) {
   const guardar = async () => {
     if (!listo || guardando) return;
     setGuardando(true);
-    const taper = await guardarPreparacion({ food, foods, crudoG, cocidoG, metodo, descontar: desc, dias });
+    let taper;
+    try { taper = await guardarPreparacion({ food, foods, crudoG, cocidoG, metodo, descontar: desc, dias }); }
+    catch (e) { toast(e.message); setGuardando(false); return; }
     toast(`${taper.name}: ${fmtG(cocidoG)} guardados como táper ✓`);
     onDone?.({ food: taper, g: cocidoG });
   };
@@ -234,10 +264,11 @@ export function Preparacion({ foods, food: inicial, onDone }) {
         </div>`}
       ${falta.length > 0 && html`<p class="aviso warn small">${food.name} no tiene ${textoFaltan(falta)}: el táper tampoco lo tendrá.</p>`}
       <${Toggle} label="Descontar lo crudo de la despensa" checked=${desc} onChange=${setDescontar}
-        hint=${stockG > 0 ? `Se descontarán ${fmt(Math.min(crudoG || 0, stockG))} g una sola vez` : 'No hay stock registrado de este alimento'} />
+        hint=${!desc ? (stockG > 0 ? 'No se descuenta nada de la despensa' : 'No consta en la despensa: no se descuenta nada') : `Se descontarán ${fmt(crudoG || 0)} g una sola vez`} />
+      ${faltaCasa && html`<${FaltaEnCasa} food=${food} necesario=${crudoG} disponible=${stockG} onNoDescontar=${() => setDescontar(false)} />`}
       <label>Se conserva unos
         <div class="chips">${[3, 4, 5, 0].map(d => html`<button class=${'chip' + (dias === d ? ' on' : '')} onClick=${() => setDias(d)}>${d ? `${d} días` : 'Sin fecha'}</button>`)}</div>
       </label>
-      <button class="btn" disabled=${!listo || guardando} onClick=${guardar}>${listo ? `Guardar táper de ${fmtG(cocidoG)}` : 'Pon el peso en crudo y el cocinado'}</button>
+      <button class="btn" disabled=${!listo || guardando} onClick=${guardar}>${listo ? `Guardar táper de ${fmtG(cocidoG)}` : faltaCasa ? 'Resuelve lo que falta en casa' : 'Pon el peso en crudo y el cocinado'}</button>
     </div>`;
 }

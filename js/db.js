@@ -153,6 +153,34 @@ export async function deductStock(foodIds, rawG) {
   return deducted;
 }
 
+// No hay bastante en la despensa para descontar lo que se pide (se lanza ANTES de tocar nada)
+export class FaltaStock extends Error {
+  constructor(nombre, necesario, disponible) {
+    super(`${nombre ? nombre + ': ' : ''}en la despensa constan ${round1(disponible)} g y hacen falta ${round1(necesario)} g.`);
+    this.name = 'FaltaStock';
+    this.necesario = round1(necesario);
+    this.disponible = round1(disponible);
+    this.faltan = round1(necesario - disponible);
+  }
+}
+// Gramos que hay ahora en la despensa de unos productos
+export async function stockDisponible(foodIds) {
+  const lots = await db.lots.where('foodId').anyOf(foodIds).toArray();
+  return round1(lots.reduce((s, l) => s + Math.max(0, l.g || 0), 0));
+}
+// Descuento EXACTO: o hay suficiente y se descuenta todo, o no se toca nada y se avisa de lo que falta.
+// (deductStock, el de siempre, descuenta lo que haya: se sigue usando al registrar comida normal, donde
+// la app avisa de que "se descontará lo que hay".) Las preparaciones y los tápers usan este.
+export async function deductStockExacto(foodIds, rawG, nombre = '') {
+  let deducted;
+  await db.transaction('rw', db.lots, async () => {
+    const disponible = await stockDisponible(foodIds);
+    if (disponible + 0.05 < rawG) throw new FaltaStock(nombre, rawG, disponible);
+    deducted = await deductStock(foodIds, rawG);
+  });
+  return deducted;
+}
+
 export async function restoreStock(deducted = []) {
   await db.transaction('rw', db.lots, async () => {
     for (const d of deducted) {
@@ -217,14 +245,15 @@ export async function exportAll() {
   return out;
 }
 
+// Restaurar = dejar los datos EXACTAMENTE como en la copia: se vacían TODAS las tablas (también las que una copia
+// antigua no trae, como las porciones o medidas de V3) y se cargan las de la copia. Todo en una sola operación:
+// si algo falla o se cierra la app a medias, no cambia nada.
 export async function importAll(data) {
   if (data?.app !== 'nutristock') throw new Error('Este archivo no es una copia de NutriStock');
-  // Solo se reemplazan las partes que trae la copia (una copia antigua sin "whoop" no borra tus datos de Whoop)
-  const presentes = TABLES.filter(t => Array.isArray(data[t]));
-  await db.transaction('rw', presentes.map(t => db[t]), async () => {
-    for (const t of presentes) {
+  await db.transaction('rw', TABLES.map(t => db[t]), async () => {
+    for (const t of TABLES) {
       await db[t].clear();
-      if (data[t].length) await db[t].bulkPut(data[t]);
+      if (Array.isArray(data[t]) && data[t].length) await db[t].bulkPut(data[t]);
     }
   });
 }

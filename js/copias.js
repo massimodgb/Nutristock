@@ -16,8 +16,11 @@ respaldos.version(1).stores({ copias: '++id, fecha' });
 const MAX_INTERNAS = 7;
 
 const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weights', 'settings', 'workouts', 'marcas', 'ejercicios', 'whoop', 'porciones', 'medidas'];
-// Tablas que añadió una versión posterior: una copia antigua puede no traerlas (y entonces NO se tocan al restaurar)
+// Tablas que añadió una versión posterior: una copia antigua puede no traerlas. Al restaurar quedan VACÍAS
+// (la copia manda), y si ahora tienes datos en ellas se pide confirmación antes de borrarlos.
 const OPCIONALES = ['whoop', 'porciones', 'medidas'];
+const NOMBRE_OPCIONAL = { whoop: 'datos de Whoop', porciones: 'porciones preparadas', medidas: 'medidas corporales' };
+const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const CLAVE = { foods: 'id', lots: 'id', basicos: 'id', shopping: 'id', plans: 'id', logs: 'id', weights: 'date', settings: 'key', workouts: 'id', marcas: 'id', ejercicios: 'id', whoop: 'id', porciones: 'id', medidas: 'id' };
 
 // ---------- Exportar a archivo ----------
@@ -103,7 +106,15 @@ export function validarCopia(d) {
   if (planActivo && !lista('plans').some(pl => pl?.id === planActivo)) avisos.push('El plan activo no está en la copia: tendrás que volver a elegir o cargar tu plan.');
   const logsHuerfanos = lista('logs').filter(l => l?.foodId && !foodIds.has(l.foodId)).length;
   if (logsHuerfanos) avisos.push(`${logsHuerfanos} registros de comida son de productos que ya no están en tu biblioteca (se conservan con sus calorías).`);
-  if (d.whoop === undefined) avisos.push('Es una copia anterior a Whoop: tus datos de Whoop actuales no se tocan.');
+  // Porciones preparadas (V3): de un táper que esté en la copia, con fecha, comida y gramos válidos
+  const porcionMala = lista('porciones').filter(p => p && (!foodIds.has(p.foodId) || !FECHA.test(p.date || '') || !p.mealId || !(typeof p.g === 'number' && p.g > 0))).length;
+  if (porcionMala) errores.push(`Hay ${porcionMala} porciones preparadas dañadas (sin táper, sin fecha o sin gramos).`);
+  // Medidas corporales (V3): fecha, tipo y un valor positivo
+  const medidaMala = lista('medidas').filter(m => m && (!FECHA.test(m.fecha || '') || !m.tipo || !(typeof m.valor === 'number' && m.valor > 0))).length;
+  if (medidaMala) errores.push(`Hay ${medidaMala} medidas corporales dañadas (sin fecha, tipo o valor).`);
+  // Partes que la copia no trae (es de una versión anterior): al restaurar se quedarán vacías
+  const faltanTablas = OPCIONALES.filter(t => d[t] === undefined);
+  if (faltanTablas.length) avisos.push(`Es una copia de una versión anterior: no trae ${faltanTablas.map(t => NOMBRE_OPCIONAL[t]).join(', ')}. Al restaurar, eso quedará vacío, como en la copia.`);
   const resumen = {
     fecha: typeof d.exportedAt === 'string' ? d.exportedAt.slice(0, 10) : '¿?',
     registros: lista('logs').length,
@@ -113,14 +124,30 @@ export function validarCopia(d) {
     entrenos: lista('workouts').length,
     planes: lista('plans').length,
   };
-  return { ok: errores.length === 0, errores, avisos, resumen };
+  return { ok: errores.length === 0, errores, avisos, resumen, faltanTablas };
 }
 
-// Restaurar: valida, guarda antes una copia interna de lo que hay ahora, y reemplaza todo de una vez
-export async function restaurarCopia(d) {
+// Lo que tienes AHORA y se borrará porque la copia no lo trae (p. ej. medidas al restaurar una copia de antes de V3)
+export async function seBorranAlRestaurar(d) {
+  const r = [];
+  for (const t of OPCIONALES) {
+    if (d?.[t] !== undefined) continue;
+    const n = await db[t].count();
+    if (n) r.push({ tabla: t, n, nombre: NOMBRE_OPCIONAL[t] });
+  }
+  return r;
+}
+
+// Restaurar: valida, pide confirmación si se borra algo que la copia no trae, guarda antes una copia interna
+// de lo que hay ahora ("antes de restaurar", para poder volver atrás) y reemplaza todo de una vez.
+export async function restaurarCopia(d, { confirmarBorrado = false } = {}) {
   const v = validarCopia(d);
   if (!v.ok) throw new Error('No se ha cambiado nada. ' + v.errores.join(' '));
-  await copiaInterna('antes de restaurar');
+  const borra = await seBorranAlRestaurar(d);
+  if (borra.length && !confirmarBorrado) {
+    throw new Error(`No se ha cambiado nada. Esta copia no trae ${borra.map(b => `${b.nombre} (tienes ${b.n})`).join(', ')}: confirma que quieres borrarlos.`);
+  }
+  await copiaInterna('antes de restaurar'); // si no se puede guardar, no se sigue
   permitirBorradoMasivo(); // lo que desaparezca al restaurar es a propósito: la nube también debe quitarlo
   await importAll(d);
   return v.resumen;

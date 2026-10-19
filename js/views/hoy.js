@@ -2,7 +2,7 @@
 import { html, useState, useMemo, useEffect } from '../lib.js';
 import {
   db, useLive, getSetting, setSetting, getPrefs, activePlan, stockMap, candidateIds,
-  deductStock, restoreStock, deleteLog, round1, terminarEnvase, deshacerMermas, ordenGasto,
+  deductStock, deductStockExacto, restoreStock, deleteLog, round1, terminarEnvase, deshacerMermas, ordenGasto,
 } from '../db.js';
 import {
   NUTRS, GROUPS, sumN, planRef, blockRef, mealBlocks, blockFoods, visibleFood, cookFactor, toRaw, nutrFor,
@@ -15,7 +15,7 @@ import {
 import { Preparacion } from './receta.js';
 import { FactoresMedidos } from './coccion.js';
 import { PrepararComidas, nombreComidaDia } from './preparar.js';
-import { nPorcion, totalPorciones, confirmarPorcion, cancelarPorcion, moverPorcion, mermarDeLote } from '../mealprep.js';
+import { nPorcion, totalPorciones, confirmarPorcion, cancelarPorcion, moverPorcion, estadoLote } from '../mealprep.js';
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast, hojaRecienCerrada } from '../ui.js';
 import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
@@ -110,7 +110,12 @@ export function Hoy({ go }) {
           ${abierta === m.id && html`
             <${MealCard} meal=${m} ...${ctx} logs=${logs} porciones=${porciones} option=${choice[m.id]} embebido=${true}
               onPorcion=${p => setSheet({ type: 'porcion', porcion: p })}
-              onConfirmar=${async ps => { for (const p of ps) await confirmarPorcion(p, { foods }); toast(ps.length === 1 ? 'Confirmado ✓' : `${ps.length} porciones confirmadas ✓`); }}
+              onConfirmar=${async ps => {
+                let hechas = 0;
+                try { for (const p of ps) { await confirmarPorcion(p, { foods }); hechas++; } }
+                catch (e) { toast(`${hechas ? `${hechas} confirmadas. ` : ''}${e.message}`); return; }
+                toast(ps.length === 1 ? 'Confirmado ✓' : `${ps.length} porciones confirmadas ✓`);
+              }}
               ayer=${ayer.filter(l => l.mealId === m.id && l.foodId)}
               onRepetir=${ayerLogs => setSheet({ type: 'copiar', titulo: `${m.nombre} de ayer`, entradas: ayerLogs.map(plantilla) })}
               onOption=${o => setChoice(m.id, o)}
@@ -610,7 +615,8 @@ function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, da
       <${AmountForm} food=${sel.food} defaultG=${sugerir(sel.food)} byId=${byId} foods=${foods} stockG=${sel.st}
         onTaper=${t => setSel({ food: t.food, st: t.g })}
         onSave=${async r => {
-          await saveLog({ ...r, date, mealId: meal.id, optionId, blockId: block.id, foods });
+          try { await saveLog({ ...r, date, mealId: meal.id, optionId, blockId: block.id, foods }); }
+          catch (e) { toast(e.message); return; }
           // Si era un producto sin clasificar, lo clasificamos con el grupo de este bloque
           if (sel.otro && (!sel.food.group || sel.food.group === 'otro')) await db.foods.update(sel.food.id, { group: block.grupo });
           toast('Añadido ✓ Puedes añadir otra cosa a este bloque o pulsar Listo');
@@ -660,7 +666,10 @@ function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
   const [taper, setTaper] = useState(false);
   const [editarF, setEditarF] = useState(false);
   const [terminar, setTerminar] = useState(false);
+  const [sinStock, setSinStock] = useState(false); // táper: "me lo comí aunque no conste tanto"
   const ultimo = useLive(() => db.logs.where('foodId').equals(food.id).last(), [food.id]);
+  const esTaper = food.source === 'receta';
+  const loteT = useLive(() => (esTaper ? estadoLote(food.id) : null), [food.id]);
   const ids = candidateIds(food, foods || [food]);
   const lotsF = useLive(() => db.lots.where('foodId').anyOf(ids).toArray(), [food.id]);
   if (coccion === undefined) return null;
@@ -685,6 +694,9 @@ function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
   const packG = byId[primero?.foodId]?.packG;
   const sobra = primero && rawG ? Math.round((primero.g - rawG) * 10) / 10 : null;
   const puedeTerminar = deduct && packG && sobra > 0 && sobra <= Math.max(30, packG * 0.3);
+  // Táper: no se puede pasar de lo que queda; y avisa si se come lo reservado para porciones preparadas
+  const pasaTaper = esTaper && deduct && rawG > (stockG || 0) + 0.05;
+  const reservaTaper = esTaper && deduct && loteT?.asignado > 0 && rawG > loteT.libre + 0.05;
   const guardarMedida = async () => {
     await setSetting('coccion', conMedida(coccion, food, medir.metodo, medir.crudoG, medir.cocidoG));
     setMetodo(medir.metodo);
@@ -740,14 +752,21 @@ function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
         </div>`}
       <${Toggle} label="Descontar de la despensa" checked=${deduct} onChange=${setDeduct}
         hint=${stockG > 0 ? `En casa: ${fmtG(stockG, food)} → se descontarán ${fmt(Math.min(rawG, stockG))} g` : 'No hay stock registrado'} />
-      ${deduct && stockG > 0 && rawG > stockG * 1.02 && html`
+      ${pasaTaper && html`
+        <div class="aviso warn small pila" role="alert">
+          <span>En el táper quedan ${fmtG(stockG || 0, food)} y quieres apuntar ${fmt(rawG)} g. Pesa otra vez o, si de verdad comiste eso, márcalo:</span>
+          <${Toggle} label="Me lo comí igualmente (el táper queda a 0)" checked=${sinStock} onChange=${setSinStock} />
+        </div>`}
+      ${!pasaTaper && reservaTaper && html`
+        <p class="aviso warn small">De este táper hay ${fmt(loteT.asignado)} g reservados para comidas preparadas: si apuntas ${fmt(rawG)} g, alguna se quedará sin bastante.</p>`}
+      ${!esTaper && deduct && stockG > 0 && rawG > stockG * 1.02 && html`
         <p class="aviso warn small">Registras ${fmt(rawG)} g en crudo pero en casa solo constan ${fmtG(stockG, food)}: se descontará lo que hay y la comida se apunta entera. Si te falta stock por registrar, añádelo en Despensa.</p>`}
       ${puedeTerminar && html`
         <${Toggle} label=${`Terminé el envase (sobran ${fmt(sobra)} g)`} checked=${terminar} onChange=${setTerminar}
           hint="Lo que sobra se apunta como desperdicio del envase: no cuenta como comida." />`}
       ${falta.length > 0 && html`<p class="aviso warn small">Este producto no tiene ${textoFaltan(falta)}: contarán como 0. Puedes completarlo en su ficha (Biblioteca).</p>`}
       <div class="preview"><${MacroLine} n=${n} /></div>
-      <button class="btn" disabled=${!g} onClick=${() => onSave({ food, g, crudo, rawG, n, deduct, metodo: crudo ? null : met, factor: crudo ? null : factor, terminar: puedeTerminar && terminar })}>Guardar</button>
+      <button class="btn" disabled=${!g || (pasaTaper && !sinStock)} onClick=${() => onSave({ food, g, crudo, rawG, n, deduct, metodo: crudo ? null : met, factor: crudo ? null : factor, terminar: puedeTerminar && terminar, permitirSinStock: pasaTaper && sinStock })}>Guardar</button>
     </div>`;
 }
 
@@ -758,27 +777,32 @@ function PorcionSheet({ p, plan, foods, byId, onDone }) {
   const [mealId, setMealId] = useState(p.mealId);
   const [resto, setResto] = useState('libre'); // al comer menos: 'libre' (sigue en el táper) o 'tirado'
   const [cancelar, setCancelar] = useState(false);
+  const [ocupado, setOcupado] = useState(false); // evita apuntar dos veces con un doble toque
+  // Lo que puede tener esta porción: lo suyo + lo libre del táper (lo reservado para otras comidas no cuenta)
+  const lote_ = useLive(() => estadoLote(p.foodId, p.id), [p.id]);
   const lote = byId[p.foodId];
   const n = nutrFor(lote || { n: {} }, g || 0);
+  const maxMover = lote_ ? Math.max(0, lote_.libre) : null;
   const cambiado = g !== p.g || date !== p.date || mealId !== p.mealId;
   const parcial = g > 0 && g < p.g;
+  const demasiado = g > p.g + 0.05;
   const hecho = t => { toast(t); onDone(); };
-  const comer = async () => {
-    await confirmarPorcion(p, { g, foods });
-    if (parcial && resto === 'tirado') await mermarDeLote(p.foodId, p.g - g, 'resto tirado');
+  const accion = async fn => { if (ocupado) return; setOcupado(true); try { await fn(); } catch (e) { toast(e.message); setOcupado(false); } };
+  const comer = () => accion(async () => {
+    await confirmarPorcion(p, { g, foods, restoTirado: parcial && resto === 'tirado' });
     hecho(parcial ? `Apuntados ${fmt(g)} g ✓${resto === 'tirado' ? ' (el resto, como desperdicio)' : ' · el resto sigue libre en el táper'}` : 'Confirmado ✓');
-  };
-  const mover = async () => {
+  });
+  const mover = () => accion(async () => {
     const optionId = date !== p.date || mealId !== p.mealId ? (await getSetting('opciones:' + date, {}))[mealId] || plan?.comidas.find(m => m.id === mealId)?.opciones?.[0]?.id || null : p.optionId;
     await moverPorcion(p, { g, date, mealId, optionId }, plan, byId);
     hecho(`Guardado: ${nombreComidaDia(date, mealId, plan)} ✓`);
-  };
+  });
   if (!lote) return html`<p class="muted">El táper de esta porción ya no existe.</p>
     <button class="btn danger" onClick=${async () => { await db.porciones.delete(p.id); hecho('Porción quitada'); }}>Quitar la porción</button>`;
   return html`
     <div class="form">
       <h4><${Dot} group=${lote.group} /> ${lote.name}</h4>
-      <small class="muted">${nombreComidaDia(p.date, p.mealId, plan)} · preparada, aún no cuenta como comida.</small>
+      <small class="muted">${nombreComidaDia(p.date, p.mealId, plan)} · preparada (${fmt(p.g)} g), aún no cuenta como comida.</small>
       <${Num} value=${g} onChange=${setG} suffix="g cocinados" />
       <div class="preview"><${MacroLine} n=${n} /></div>
       ${parcial && html`
@@ -787,28 +811,33 @@ function PorcionSheet({ p, plan, foods, byId, onDone }) {
           <button class=${'chip' + (resto === 'libre' ? ' on' : '')} onClick=${() => setResto('libre')}>Sigue en el táper</button>
           <button class=${'chip' + (resto === 'tirado' ? ' on' : '')} onClick=${() => setResto('tirado')}>Lo tiré</button>
         </div>`}
-      <button class="btn" disabled=${!(g > 0)} onClick=${comer}><${Icon} name="check" size=${18} /> ${parcial ? `Me comí ${fmt(g)} g` : 'Me lo comí'}</button>
+      ${demasiado && html`<p class="aviso warn small">Preparaste ${fmt(p.g)} g. Para apuntar más, primero súbelo con "Guardar cambios sin comerla"${maxMover != null ? ` (como mucho ${fmt(maxMover)} g, lo libre del táper)` : ''}.</p>`}
+      <button class="btn" disabled=${!(g > 0) || demasiado || ocupado} onClick=${comer}><${Icon} name="check" size=${18} /> ${parcial ? `Me comí ${fmt(g)} g` : 'Me lo comí'}</button>
 
-      <h4>Cambiar de comida o de día</h4>
+      <h4>Cambiar cantidad, comida o día</h4>
+      ${maxMover != null && html`<small class="muted">Esta porción puede tener hasta ${fmt(maxMover)} g (lo que queda libre en el táper).</small>`}
       <input type="date" value=${date} onChange=${e => /^\d{4}-\d{2}-\d{2}$/.test(e.target.value) && setDate(e.target.value)} aria-label="Día" />
       <div class="chips wrap">${(plan?.comidas || []).map(m => html`
         <button class=${'chip' + (mealId === m.id ? ' on' : '')} onClick=${() => setMealId(m.id)}>${m.nombre}</button>`)}</div>
-      <button class="btn secondary" disabled=${!cambiado || !(g > 0)} onClick=${mover}>Guardar cambios sin comerla</button>
+      <button class="btn secondary" disabled=${!cambiado || !(g > 0) || ocupado || (maxMover != null && g > maxMover + 0.05)} onClick=${mover}>Guardar cambios sin comerla</button>
 
       ${!cancelar ? html`<button class="link small" onClick=${() => setCancelar(true)}>Cancelar esta porción</button>` : html`
         <div class="aviso warn small"><span>¿Qué pasa con estos ${fmt(p.g)} g?</span></div>
-        <button class="btn secondary" onClick=${async () => { await cancelarPorcion(p); hecho('Porción cancelada: los gramos quedan libres en el táper'); }}>Vuelven al táper (los comeré otro día)</button>
-        <button class="btn danger" onClick=${async () => { await cancelarPorcion(p, { tirado: true }); hecho('Porción cancelada y apuntada como desperdicio'); }}>Los tiré</button>`}
+        <button class="btn secondary" disabled=${ocupado} onClick=${() => accion(async () => { await cancelarPorcion(p); hecho('Porción cancelada: los gramos quedan libres en el táper'); })}>Vuelven al táper (los comeré otro día)</button>
+        <button class="btn danger" disabled=${ocupado} onClick=${() => accion(async () => { await cancelarPorcion(p, { tirado: true }); hecho('Porción cancelada y apuntada como desperdicio'); })}>Los tiré</button>`}
     </div>`;
 }
 
 // Descontar de la despensa y apuntar el registro van juntos: o se hacen las dos cosas o ninguna
 // Cada registro guarda cómo se calculó (método, factor, datos que faltaban, fuente) para poder revisarlo luego.
-export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods, metodo, factor, terminar, extra = {} }) {
+// Un táper (algo que cocinaste tú) se descuenta EXACTO: no se puede apuntar más de lo que hay salvo que lo
+// decidas (permitirSinStock = "lo comí aunque el táper no tenga tanto": se apunta todo y se descuenta lo que haya).
+export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods, metodo, factor, terminar, exacto, permitirSinStock, extra = {} }) {
   const f = crudo ? null : factor ?? (g && rawG && Math.abs(g / rawG - 1) > 0.005 ? Math.round((g / rawG) * 100) / 100 : null);
   const falta = faltanDatos(food);
+  const usarExacto = deduct && !permitirSinStock && (exacto || food.source === 'receta');
   await db.transaction('rw', db.lots, db.logs, async () => {
-    const deducted = deduct ? await deductStock(candidateIds(food, foods), rawG) : [];
+    const deducted = !deduct ? [] : usarExacto ? await deductStockExacto(candidateIds(food, foods), rawG, food.name) : await deductStock(candidateIds(food, foods), rawG);
     // "Terminé el envase": lo que sobra es merma (no se suma a lo que comiste)
     const merma = deduct && terminar ? await terminarEnvase(deducted) : [];
     await db.logs.add({
@@ -837,7 +866,9 @@ export async function cambiarGramosLog(log, g, food, foods, byId, conFicha = fal
       rawG = log.crudo ? g : factor ? g / factor : toRaw(food, g, false, byId);
       n = round1Obj(nutrFor(food, rawG));
     }
-    const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
+    const deducted = !(descontado > 0) ? [] : food?.source === 'receta'
+      ? await deductStockExacto(candidateIds(food, foods), rawG, food.name) // si no hay bastante, se deshace todo
+      : await deductStock(candidateIds(food, foods), rawG);
     const merma = log.merma?.length ? await terminarEnvase(deducted) : null;
     const falta = conFicha ? faltanDatos(food) : null;
     await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted, ...(merma ? { merma } : {}), ...(conFicha ? { faltan: falta.length ? falta : null } : {}) });
@@ -849,7 +880,8 @@ function LogDetail({ log, byId, foods, onDone }) {
   const food = log.foodId && byId[log.foodId];
   const [g, setG] = useState(log.g);
   const guardar = async (conFicha = false) => {
-    await cambiarGramosLog(log, g, food, foods, byId, conFicha);
+    try { await cambiarGramosLog(log, g, food, foods, byId, conFicha); }
+    catch (e) { toast(e.message); return; }
     toast('Actualizado ✓');
     onDone();
   };
@@ -894,7 +926,10 @@ function ExtraSheet({ foods, byId, stock, prefs, date, onDone }) {
     return html`
       <button class="link back" onClick=${() => setSel(null)}>‹ Elegir otro</button>
       <${AmountForm} food=${sel} defaultG=${null} byId=${byId} stockG=${stock[sel.id]?.g || 0}
-        onSave=${async r => { await saveLog({ ...r, date, mealId: 'extra', foods }); toast('Registrado ✓'); onDone(); }} />`;
+        onSave=${async r => {
+          try { await saveLog({ ...r, date, mealId: 'extra', foods }); } catch (e) { toast(e.message); return; }
+          toast('Registrado ✓'); onDone();
+        }} />`;
   }
   if (plato) return html`<${plato.por100 ? ProductoFuera : PlatoFuera} plato=${plato} date=${date} onBack=${() => setPlato(null)} onDone=${onDone} />`;
 
@@ -1149,6 +1184,7 @@ function CopiarSheet({ entradas, plan, foods, byId, stock, date, elecciones, onD
   const anadir = async () => {
     const opciones = { ...(elecciones || {}) };
     // Todo el día de una vez: o se añade todo, o nada
+    try {
     await db.transaction('rw', db.lots, db.logs, async () => {
     for (const f of elegidas) {
       const { food, rawG, n } = calcular(f);
@@ -1161,6 +1197,7 @@ function CopiarSheet({ entradas, plan, foods, byId, stock, date, elecciones, onD
       }
     }
     });
+    } catch (e) { toast('No se ha añadido nada: ' + e.message); return; }
     await setSetting('opciones:' + date, opciones);
     toast(`Añadidos ${elegidas.length} alimentos ✓`);
     onDone();
