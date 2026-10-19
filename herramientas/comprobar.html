@@ -72,6 +72,74 @@
     await prueba('DB y DBs son ejercicios distintos', () => P.claveEjercicio('Power DB Clean') !== P.claveEjercicio('Power DBs Clean'));
     await prueba('EMOM x 18min se detecta', () => P.textoFormato(P.parsearEntreno('WOD\nEMOM x 18min\n1) 10 burpees').secciones[0].formato) === 'EMOM 18 min');
 
+    // ---------- v3 · Fase 3: entrenos ----------
+    const En3 = await import('/js/views/entreno.js');
+    const m115 = [{ tipo: 'fuerza', ejercicio: 'clean', kg: 115, reps: 1 }];
+    const kgs = (l, marcas, cfg, eleg) => En3.pautaLinea(l, marcas, cfg, eleg).series;
+    await prueba('Clean 5x3 @45%-50%-55%-60%-62.5%: 5 series, un % por serie (con decimales)', () => {
+      const l = linea('Clean 5x3 @45%-50%-55%-60%-62.5% (Rest: 90 seg)');
+      return l.series === 5 && l.pct.join() === '45,50,55,60,62.5' && l.pctModo === 'serie' && l.descanso === 90 || l;
+    });
+    await prueba('…con RM 115 kg: teórico 51,75 / 57,5 / 63,25 / 69 / 71,875 y redondeado a 1 kg 52 / 58 / 63 / 69 / 72', () => {
+      const s = kgs(linea('Clean 5x3 @45-50-55-60-62.5%'), m115, { redondeo: 1 });
+      return s.map(x => x.teorico).join() === '51.75,57.5,63.25,69,71.875' && s.map(x => x.kg).join() === '52,58,63,69,72' || s;
+    });
+    await prueba('…redondeando a 2,5 kg (discos): 52,5 / 57,5 / 62,5 / 70 / 72,5, sin perder el teórico', () => {
+      const s = kgs(linea('Clean 5x3 @45-50-55-60-62.5%'), m115, { redondeo: 2.5 });
+      return s.map(x => x.kg).join() === '52.5,57.5,62.5,70,72.5' && s[4].teorico === 71.875 || s;
+    });
+    await prueba('Clean Deficit Deadlift 3x3 @35-40-45% del RM de Clean usa el RM de Clean', () => {
+      const p = En3.pautaLinea(linea('Clean Deficit Deadlift 3x3 @35-40-45% del RM de Clean'), m115, { redondeo: 0 });
+      return p.rm.id === 'clean' && p.series.map(x => x.kg).join() === '40.25,46,51.75' || p;
+    });
+    await prueba('"60% del RM de Front Squat" sin RM de Front Squat: no se inventa (sin kilos)', () => {
+      const p = En3.pautaLinea(linea('Thruster 3x8 @60% del RM de Front Squat'), m115, {});
+      return p.rm.id === 'front-squat' && p.rm.kg === null && p.series.every(x => x.kg === null) || p;
+    });
+    const textoCx = 'FUERZA\nComplex de Snatch\nCada 1:30 x 6 sets\n1 Power Snatch\n1 Squat Snatch\n1 Overhead Squat\n35-40-45-50-55-60%';
+    const cx = P.parsearEntreno(textoCx).secciones[0];
+    const lcx = cx.partes[0].lineas.find(l => l.tipo === 'complejo');
+    await prueba('Complejo: 3 movimientos juntos, 6 series cada 1:30 con su % (y "Cada 1:30" NO son 30 series)', () =>
+      lcx && lcx.movimientos.length === 3 && lcx.series === 6 && lcx.intervalo === 90 && lcx.pct.length === 6 && lcx.pctModo === 'serie'
+      && cx.partes[0].lineas.every(l => l.series !== 30) && P.textoFormato(cx.formato).startsWith('Cada 1:30') || cx);
+    await prueba('Complejo sin referencia en el texto: pide elegir el RM (no lo adivina)', () => {
+      const p = En3.pautaLinea(lcx, [{ tipo: 'fuerza', ejercicio: 'power-snatch', kg: 70, reps: 1 }], {});
+      return p.rm.dudosa === true && p.series.every(x => x.kg === null) && p.rm.candidatos.includes('power-snatch') || p;
+    });
+    await prueba('…eligiendo Power Snatch (70 kg): 24,5 / 28 / 31,5 / 35 / 38,5 / 42 kg', () => {
+      const s = kgs(lcx, [{ tipo: 'fuerza', ejercicio: 'power-snatch', kg: 70, reps: 1 }], { redondeo: 0 }, 'power-snatch');
+      return s.map(x => x.kg).join() === '24.5,28,31.5,35,38.5,42' || s;
+    });
+    await prueba('Sin RM: no se calcula; con solo un 3RM, el estimado NO se usa hasta que lo aceptas', () => {
+      const l = linea('Back Squat 4x3 @75%'), mm = [{ tipo: 'fuerza', ejercicio: 'back-squat', kg: 100, reps: 3 }];
+      const sin = En3.pautaLinea(l, [], {}), est = En3.pautaLinea(l, mm, {}), ok = En3.pautaLinea(l, mm, { estimados: { 'back-squat': true }, redondeo: 0 });
+      return sin.rm.sinRM && sin.series.every(x => x.kg === null) && est.rm.kg === null && est.rm.estimado?.kg === 110 && ok.series[0].kg === 82.5 || { sin, est, ok };
+    });
+    await prueba('Training Max: si lo activas, los % van sobre el TM', () => {
+      const p = En3.pautaLinea(linea('Clean 3x2 @80%'), m115, { usarTM: true, tm: { clean: 105 }, redondeo: 0 });
+      return p.rm.fuente === 'tm' && p.series[0].kg === 84 || p;
+    });
+    await prueba('Rango "4x3 @ 100-110%": las 4 series con su horquilla de kilos', () => {
+      const s = kgs(linea('Back Squat 4x3 @ 100-110%'), [{ tipo: 'fuerza', ejercicio: 'back-squat', kg: 100, reps: 1 }], { redondeo: 0 });
+      return s.length === 4 && s.every(x => x.kg === 100 && x.kgHasta === 110) || s;
+    });
+    await prueba('Descansos: "rest 2 min" = 120 s, "descanso 1:30" = 90 s, "90\'\' rest" = 90 s', () =>
+      P.leerDescanso('rest 2 min') === 120 && P.leerDescanso('descanso 1:30') === 90 && P.leerDescanso("90'' rest") === 90);
+    await prueba('WOD por minutos: 0-8 trabajo, 8-10 descanso, 10-20 trabajo; "Min 0-8" no es un ejercicio', () => {
+      const s = P.parsearEntreno('WOD\nMin 0-8: AMRAP\n10 Burpees\nMin 8-10: Rest\nMin 10-20: AMRAP\n20 DU').secciones[0];
+      const f = s.formato, ls = s.partes[0].lineas;
+      return f.tipo === 'segmentos' && f.tramos.map(x => `${x.desde}-${x.hasta}${x.descanso ? 'd' : ''}`).join() === '0-8,8-10d,10-20'
+        && ls.filter(l => l.tipo === 'ejercicio').map(l => l.ejercicios[0]).join() === 'Burpees,Double Unders' || s;
+    });
+    await prueba('Una instrucción ("Mantener la técnica…") no es un ejercicio', () => linea('Mantener la técnica por encima de la velocidad en todo momento').tipo === 'instruccion');
+    await prueba('Lectura congelada: con resultados de antes se lee con el lector antiguo; sin resultados, con el nuevo', () => {
+      const texto = 'FUERZA\nCada 1:30 x 6 sets\n1 Power Snatch';
+      const viejo = En3.leer({ id: 'w1', texto, resultados: { 0: { notas: 'x' } } });
+      const nuevo = En3.leer({ id: 'w2', texto, resultados: {} });
+      const cong = En3.leer({ id: 'w3', texto, resultados: { 0: { notas: 'x' } }, estructura: { secciones: [{ titulo: 'Congelada', partes: [] }] } });
+      return viejo.lector === undefined && nuevo.lector === 2 && cong.secciones[0].titulo === 'Congelada' || { viejo, nuevo };
+    });
+
     const { alimentoPorNombre } = await import('/js/plan-pdf.js');
     await prueba('"Queso Ricotta Hacendado" se clasifica como ricotta', () => alimentoPorNombre('Queso Ricotta Hacendado') === 'ricotta');
 

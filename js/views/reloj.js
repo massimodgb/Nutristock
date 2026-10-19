@@ -5,7 +5,7 @@ import { Num, Seg, Icon } from '../ui.js';
 import { textoFormato } from '../entreno/parser.js';
 
 const PREP = 10; // segundos de preparación
-const CUENTA_RONDAS = ['amrap', 'fortime', 'rondas', 'bloques'];
+const CUENTA_RONDAS = ['amrap', 'fortime', 'rondas', 'bloques', 'segmentos'];
 
 // Convierte la configuración en tramos: [{ label, dur, tipo: 'prep'|'trabajo'|'descanso', sube?, bloque? }]
 function tramos(cfg) {
@@ -31,6 +31,16 @@ function tramos(cfg) {
         if (i < cfg.rondas - 1 && cfg.descanso) t.push({ label: 'Descanso', dur: cfg.descanso, tipo: 'descanso' });
       }
       break;
+    // Tramos por minutos: "0-8 trabajo, 8-10 descanso, 10-20 trabajo" (cada tramo de trabajo cuenta sus rondas)
+    case 'segmentos': {
+      let b = 0;
+      for (const x of cfg.tramos || []) {
+        const dur = (x.hasta - x.desde) * 60;
+        if (x.descanso) t.push({ label: 'Descanso', sub: `Min ${x.desde}-${x.hasta}`, dur, tipo: 'descanso' });
+        else t.push({ label: x.label, sub: `Min ${x.desde}-${x.hasta}`, dur, tipo: 'trabajo', bloque: b++ });
+      }
+      break;
+    }
     case 'intervalos':
       for (let i = 0; i < cfg.rondas; i++) {
         t.push({ label: `Ronda ${i + 1}/${cfg.rondas}`, dur: cfg.trabajo, tipo: 'trabajo' });
@@ -106,7 +116,7 @@ export function RelojActivo({ cfg, onCerrar, onResultado }) {
   };
   const ronda = () => { st.rondas.push({ t: enTramo, bloque: tramo.bloque }); pitido(1000, 0.05); refrescar(x => x + 1); };
   const terminar = () => {
-    if (cfg.tipo === 'bloques') {
+    if (cfg.tipo === 'bloques' || cfg.tipo === 'segmentos') {
       // Terminaste este bloque antes del límite: apuntamos el tiempo y saltamos al descanso
       st.tiempos[tramo.bloque] = enTramo;
       st.inicio -= quedan * 1000;
@@ -115,7 +125,7 @@ export function RelojActivo({ cfg, onCerrar, onResultado }) {
     pitido(1320, 0.5);
     refrescar(x => x + 1);
   };
-  const nBloques = cfg.tipo === 'bloques' ? cfg.rondas : 1;
+  const nBloques = cfg.tipo === 'bloques' ? cfg.rondas : cfg.tipo === 'segmentos' ? (cfg.tramos || []).filter(x => !x.descanso).length : 1;
   const resumen = Array.from({ length: nBloques }, (_, b) => ({
     rondas: rondasBloque(b).length,
     tiempo: st.tiempos[b] ?? (cfg.tipo === 'fortime' ? trabajoTotal : null),

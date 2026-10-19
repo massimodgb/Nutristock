@@ -1,14 +1,15 @@
 // Entreno: pegas lo que te manda la entrenadora, lo ves ordenado, usas el reloj y apuntas pesos y resultados.
 import { html, useState, useMemo } from '../lib.js';
-import { db, useLive } from '../db.js';
+import { db, useLive, getSetting, setSetting } from '../db.js';
 import { fmt, todayStr, addDays, fmtDate } from '../nutri.js';
 import { Sheet, Num, Seg, Empty, Icon, toast } from '../ui.js';
-import { parsearEntreno, textoFormato, norm, claveEjercicio, implemento } from '../entreno/parser.js';
+import { parsearEntreno, textoFormato, norm, claveEjercicio, implemento, modoPct } from '../entreno/parser.js';
+import { parsearEntrenoV1 } from '../entreno/parser-v1.js';
 import { LEVANTAMIENTOS, BENCHMARKS } from '../entreno/datos.js';
 import { RelojActivo, Relojes } from './reloj.js';
-import { idRM, nombreRM, mejorRM, rmParaLinea } from '../entreno/rm.js';
+import { idRM, nombreRM, mejorRM, referenciaLinea, planSeries, cfgEntreno, redondear } from '../entreno/rm.js';
 
-const ES_WOD = ['fortime', 'amrap', 'emom', 'intervalos', 'rondas', 'bloques'];
+const ES_WOD = ['fortime', 'amrap', 'emom', 'intervalos', 'rondas', 'bloques', 'segmentos'];
 
 export function Entreno({ go, inicial }) {
   const [vista, setVista] = useState(inicial || 'dia');
@@ -18,11 +19,13 @@ export function Entreno({ go, inicial }) {
   const marcas = useLive(() => db.marcas.toArray(), []);
   const todos = useLive(() => db.workouts.toArray(), []);
   const propios = useLive(() => db.ejercicios.toArray(), []);
+  const ajustes = useLive(() => getSetting('entreno', {}), []);
 
-  if (!workouts || !marcas || !todos || !propios) return html`<div class="loading">Cargando…</div>`;
+  if (!workouts || !marcas || !todos || !propios || !ajustes) return html`<div class="loading">Cargando…</div>`;
   const hist = historialPesos(todos, alias(propios));
   if (reloj) return html`<${RelojActivo} cfg=${reloj.cfg} onResultado=${reloj.onResultado} onCerrar=${() => setReloj(null)} />`;
   const isToday = date === todayStr();
+  const cfg = cfgEntreno(ajustes);
 
   return html`
     <div class="page">
@@ -39,68 +42,113 @@ export function Entreno({ go, inicial }) {
           <button class="icon-btn" onClick=${() => setDate(addDays(date, 1))} aria-label="Día siguiente"><${Icon} name="right" /></button>
         </div>
         <${Semana} date=${date} todos=${todos} onDia=${setDate} />
-        ${workouts.length === 0 && html`<${Pegar} date=${date} />`}
-        ${workouts.map(w => html`<${Workout} key=${w.id} w=${w} marcas=${marcas} hist=${hist} onReloj=${setReloj} />`)}`}
-      ${vista === 'marcas' && html`<${Marcas} marcas=${marcas} />`}
+        ${workouts.length === 0 && html`<${Pegar} date=${date} marcas=${marcas} cfg=${cfg} />`}
+        ${workouts.map(w => html`<${Workout} key=${w.id} w=${w} marcas=${marcas} hist=${hist} cfg=${cfg} onReloj=${setReloj} />`)}`}
+      ${vista === 'marcas' && html`<${Marcas} marcas=${marcas} cfg=${cfg} />`}
       ${vista === 'ejercicios' && html`<${Ejercicios} />`}
       ${vista === 'relojes' && html`<section class="card"><${Relojes} onIniciar=${cfg => setReloj({ cfg })} /></section>`}
     </div>`;
 }
 
-// ---------- Pegar el entreno ----------
-function Pegar({ date, inicial = '', id, onDone }) {
+// ---------- Pegar el entreno (con revisión antes de guardar) ----------
+function Pegar({ date, inicial = '', id, tieneRes, marcas = [], cfg, onDone }) {
   const [txt, setTxt] = useState(inicial);
+  const [refs, setRefs] = useState({});
   const vista = useMemo(() => (txt.trim() ? parsearEntreno(txt) : null), [txt]);
   const guardar = async () => {
-    const datos = { date, texto: txt, parsed: vista, ts: Date.now() };
-    if (id) await db.workouts.update(id, datos);
-    else await db.workouts.add({ ...datos, resultados: {} });
+    // Si ya tenía resultados, se congela la lectura nueva para que no se muevan al volver a leer
+    const datos = { date, texto: txt, parsed: vista, ts: Date.now(), estructura: tieneRes ? vista : null };
+    if (id) await db.workouts.update(id, { ...datos, refs: { ...((await db.workouts.get(id))?.refs || {}), ...refs } });
+    else await db.workouts.add({ ...datos, resultados: {}, refs });
     toast('Entreno guardado ✓');
     onDone?.();
   };
   return html`
     <section class="card form">
       <h3>${id ? 'Editar entreno' : 'Pega el entreno de tu entrenadora'}</h3>
-      <p class="muted small">Copia el mensaje tal cual (WhatsApp, notas…) y pégalo aquí. La app lo ordena en secciones y prepara los relojes.</p>
+      <p class="muted small">Copia el mensaje tal cual (WhatsApp, notas…) y pégalo aquí. Antes de guardar verás cómo lo he entendido.</p>
       <textarea rows="10" value=${txt} onInput=${e => setTxt(e.target.value)} placeholder=${'FUERZA\nBack Squat\n5x3 @ 75%\n\nWOD\nEMOM x 12min\n1) 12 Cal row\n2) 10 Burpees'}></textarea>
-      ${vista && html`<p class="muted small">Entendido: ${vista.secciones.map(s => s.titulo + (s.formato ? ` (${textoFormato(s.formato)})` : '')).join(' · ')}</p>`}
-      <button class="btn" disabled=${!txt.trim()} onClick=${guardar}>Guardar entreno</button>
+      ${id && tieneRes && html`<p class="aviso warn small">Este entreno ya tiene resultados apuntados. Si cambias el orden de las líneas, revisa luego que cada peso siga en su ejercicio.</p>`}
+      ${vista && html`<${Revision} p=${vista} marcas=${marcas} cfg=${cfg} refs=${refs} onRef=${(k, v) => setRefs({ ...refs, [k]: v })} />`}
+      <button class="btn" disabled=${!txt.trim()} onClick=${guardar}>${vista ? 'Está bien: guardar entreno' : 'Guardar entreno'}</button>
       ${onDone && html`<button class="btn secondary" onClick=${onDone}>Cancelar</button>`}
     </section>`;
 }
 
+// Cómo ha entendido el texto: secciones, tipo de cada línea, series, % y kilos, y avisos
+const ETIQ_TIPO = { ejercicio: 'Ejercicio', complejo: 'Complejo', instruccion: 'Instrucción', encabezado: 'Título', formato: 'Formato' };
+function Revision({ p, marcas, cfg, refs, onRef }) {
+  return html`
+    <div class="revision">
+      <h4>Así lo he entendido</h4>
+      ${p.secciones.map((s, si) => html`
+        <div class="rev-sec" key=${si}>
+          <b>${s.titulo}</b>${s.formato && html` <small class="muted">· ${textoFormato(s.formato)}</small>`}
+          ${s.partes.map((pa, pi) => pa.lineas.map((l, li) => {
+            const key = `${si}-${pi}-${li}`;
+            const ref = l.pct?.length ? referenciaLinea(l, marcas, cfg, refs[key]) : null;
+            const plan = (l.series || l.tipo === 'complejo') ? planSeries(l, ref, cfg) : null;
+            return html`
+              <div class=${'rev-l ' + l.tipo} key=${key}>
+                <span class="rev-tipo">${ETIQ_TIPO[l.tipo] || 'Ejercicio'}</span>
+                <span class="grow">${l.tipo === 'complejo' ? (l.movimientos || []).map(m => `${m.reps || ''} ${m.nombre}`.trim()).join(' + ') : l.texto}
+                  ${l.series ? html`<small class="muted"> · ${l.series} × ${l.reps || '?'}</small>` : ''}
+                  ${l.descanso ? html`<small class="muted"> · descanso ${mmss(l.descanso)}</small>` : ''}
+                  ${l.pct?.length ? html`<br /><small>${textoPct(l)}${ref?.kg ? ` de ${ref.nombre} (${fmt(ref.kg, 1)} kg)` : ''}${plan?.some(x => x.kg) ? ` → ${[...new Set(plan.map(x => fmt(x.kg, 1)))].join(' / ')} kg` : ''}</small>` : ''}
+                  ${l.pctModo === 'dudoso' ? html`<br /><small class="aviso-rm">${l.pct.length} porcentajes para ${l.series} series: revisa la pauta.</small>` : ''}
+                  ${ref && html`<${AvisoRef} base=${ref} l=${l} marcas=${marcas} elegida=${refs[key]} onRef=${v => onRef(key, v)} compacto=${true} />`}
+                </span>
+              </div>`;
+          }))}
+        </div>`)}
+    </div>`;
+}
+
+const textoPct = l => (l.pctModo === 'rango' ? `${fmt(l.pct[0], 1)}-${fmt(l.pct[1], 1)}%` : `${l.pct.map(x => fmt(x, 1)).join(' / ')}%`);
+
 // ---------- Un entreno ----------
-function Workout({ w, marcas, hist, onReloj }) {
+const tieneResultados = w => Object.values(w.resultados || {}).some(r => r && Object.keys(r).length);
+function Workout({ w, marcas, hist, cfg, onReloj }) {
   const [editando, setEditando] = useState(false);
-  if (editando) return html`<${Pegar} date=${w.date} inicial=${w.texto} id=${w.id} onDone=${() => setEditando(false)} />`;
+  if (editando) return html`<${Pegar} date=${w.date} inicial=${w.texto} id=${w.id} tieneRes=${tieneResultados(w)} marcas=${marcas} cfg=${cfg} onDone=${() => setEditando(false)} />`;
   const res = w.resultados || {};
+  const lectura = leer(w);
   const guardarRes = async (si, cambios) => {
-    const actual = (await db.workouts.get(w.id)).resultados || {};
-    await db.workouts.update(w.id, { resultados: { ...actual, [si]: { ...(actual[si] || {}), ...cambios } } });
+    const actual = await db.workouts.get(w.id);
+    const r = actual.resultados || {};
+    // Al apuntar el primer resultado se congela la lectura: así los pesos no se descolocan si el lector cambia
+    await db.workouts.update(w.id, {
+      resultados: { ...r, [si]: { ...(r[si] || {}), ...cambios } },
+      ...(actual.estructura ? {} : { estructura: lectura }),
+    });
   };
-  const hechas = leer(w).secciones.filter((s, i) => res[i]?.hecho).length;
+  const ponerRef = async (key, id) => {
+    const actual = await db.workouts.get(w.id);
+    await db.workouts.update(w.id, { refs: { ...(actual.refs || {}), [key]: id }, ...(actual.estructura ? {} : { estructura: lectura }) });
+  };
+  const hechas = lectura.secciones.filter((s, i) => res[i]?.hecho).length;
 
   return html`
-    <p class="muted small center">${hechas}/${leer(w).secciones.length} secciones hechas</p>
-    ${leer(w).secciones.map((s, si) => html`
-      <${Seccion} key=${si} s=${s} si=${si} r=${res[si] || {}} marcas=${marcas} hist=${hist} date=${w.date} onReloj=${onReloj}
-        onGuardar=${c => guardarRes(si, c)} />`)}
+    <p class="muted small center">${hechas}/${lectura.secciones.length} secciones hechas</p>
+    ${lectura.secciones.map((s, si) => html`
+      <${Seccion} key=${si} s=${s} si=${si} r=${res[si] || {}} marcas=${marcas} hist=${hist} date=${w.date} cfg=${cfg} refs=${w.refs || {}}
+        onRef=${ponerRef} onReloj=${onReloj} onGuardar=${c => guardarRes(si, c)} />`)}
     <div class="inline">
       <button class="btn secondary" onClick=${() => setEditando(true)}><${Icon} name="pen" size=${16} /> Editar texto</button>
       <button class="btn danger" onClick=${() => confirm('¿Borrar este entreno y sus resultados?') && db.workouts.delete(w.id)}><${Icon} name="trash" size=${16} /> Borrar</button>
     </div>`;
 }
 
-function Seccion({ s, si, r, marcas, hist, date, onReloj, onGuardar }) {
+function Seccion({ s, si, r, marcas, hist, date, cfg, refs, onRef, onReloj, onGuardar }) {
   const esWod = s.formato && ES_WOD.includes(s.formato.tipo);
   const relojSeccion = s.formato && {
     cfg: s.formato,
-    onResultado: !esWod ? null : s.formato.tipo === 'bloques'
+    onResultado: !esWod ? null : s.formato.tipo === 'bloques' || s.formato.tipo === 'segmentos'
       // Varios bloques: guardamos el resultado de cada uno ("9:41 · 11:02" o "5 · 4 · 4 rondas")
       ? x => onGuardar({
         porBloque: s.formato.sub === 'fortime'
           ? x.bloques.map(b => (b.tiempo != null ? mmss(b.tiempo) : 'cap')).join(' · ')
-          : x.bloques.map(b => b.rondas).join(' · ') + ' rondas',
+          : x.bloques.map(b => b.rondas).join(' · ') + ' rondas', // AMRAP en bloques o tramos por minutos
         hecho: true,
       })
       : x => onGuardar({
@@ -108,16 +156,19 @@ function Seccion({ s, si, r, marcas, hist, date, onReloj, onGuardar }) {
         rondas: x.rondas || r.rondas, hecho: true,
       }),
   };
-  // Al marcar la sección como hecha, se guardan los pesos de la pauta que no hayas apuntado
+  // Al marcar la sección como hecha, se guardan como hechas las series de la pauta que no hayas apuntado
   const completar = async () => {
     const series = { ...(r.series || {}) }, pesos = { ...(r.pesos || {}) };
     const nuevos = [];
     s.partes.forEach((p, pi) => p.lineas.forEach((l, li) => {
       const k = `${pi}-${li}`, nombre = l.ejercicios?.[0];
-      if (!nombre) return;
-      const pa = pautaLinea(l, marcas);
-      if (pa.series && !series[k] && pa.series.every(x => x.kg)) { series[k] = pa.series; nuevos.push([nombre, pa.series]); }
-      else if (!l.series && pa.kg && !pesos[k]) {
+      if (!nombre || l.tipo === 'instruccion' || l.tipo === 'encabezado') return;
+      const pa = pautaLinea(l, marcas, cfg, refs[`${si}-${k}`]);
+      const guardadas = series[k] || [];
+      if (pa.series && pa.series.every(x => x.kg)) {
+        const filas = pa.series.map((plan, i) => guardadas[i] || { kg: plan.kg, reps: plan.reps, estado: 'hecha', plan: planGuardado(plan) });
+        if (filas.some((f, i) => f !== guardadas[i])) { series[k] = filas; if (l.tipo !== 'complejo') nuevos.push([nombre, filas]); }
+      } else if (!l.series && l.tipo !== 'complejo' && pa.kg && !pesos[k]) {
         pesos[k] = { kg: pa.kg, reps: l.repsLinea || null };
         if (l.repsLinea) nuevos.push([nombre, [pesos[k]]]);
       }
@@ -140,84 +191,147 @@ function Seccion({ s, si, r, marcas, hist, date, onReloj, onGuardar }) {
                 <button class="chip" onClick=${() => onReloj({ cfg: p.formato })}><${Icon} name="bolt" size=${13} /> ${textoFormato(p.formato)}</button>`}
             </div>`}
           ${p.lineas.map((l, li) => html`
-            <${Linea} l=${l} clave=${`${pi}-${li}`} r=${r} marcas=${marcas} hist=${hist} date=${date} onGuardar=${onGuardar} />`)}
+            <${Linea} l=${l} clave=${`${pi}-${li}`} r=${r} marcas=${marcas} hist=${hist} date=${date} cfg=${cfg}
+              elegida=${refs[`${si}-${pi}-${li}`]} onRef=${id => onRef(`${si}-${pi}-${li}`, id)} onGuardar=${onGuardar} />`)}
           ${p.links?.map(u => html`<a class="video" href=${u} target="_blank" rel="noopener">▶ Ver vídeo</a>`)}
         </div>`)}
       <${Resultado} s=${s} r=${r} esWod=${esWod} onGuardar=${onGuardar} onHecho=${completar} />
     </section>`;
 }
 
-// Lo que te toca levantar en una línea: kilos de cada serie (tu RM × el %) o el peso que pone el texto
-export function pautaLinea(l, marcas) {
-  const rm = l.pct ? rmParaLinea(l, marcas) : null;
-  const kgSerie = i => {
-    if (l.kg) return l.kg;
-    if (!rm?.kg || !l.pct) return null;
-    const p = l.pct.length === l.series ? l.pct[i] : l.pct[0];
-    return Math.round((rm.kg * p) / 100);
-  };
-  const series = l.series ? Array.from({ length: l.series }, (_, i) => ({ kg: kgSerie(i), reps: l.reps })) : null;
-  return { rm, series, kg: l.series ? null : l.kg || null };
+// Lo que te toca levantar en una línea: base de los % (RM, TM o la que elijas), kilos de cada serie
+// (valor teórico y redondeado a lo que se puede montar) o el peso que pone el texto
+export function pautaLinea(l, marcas, cfg, elegida) {
+  const linea = l.pctModo || !l.pct?.length ? l : { ...l, pctModo: modoPct(l.pct, l.series, false) }; // entrenos leídos con el lector antiguo
+  const ref = linea.pct?.length ? referenciaLinea(linea, marcas, cfg, elegida) : null;
+  const series = (linea.series || (linea.tipo === 'complejo' && linea.pct?.length)) ? planSeries(linea, ref, cfg) : null;
+  return { rm: ref, series, kg: linea.series ? null : linea.kg || null };
 }
+const planGuardado = p => ({ kg: p.kg ?? null, teorico: p.teorico != null ? Math.round(p.teorico * 100) / 100 : null, pct: p.pct ?? null, reps: p.reps ?? null });
 
-function Linea({ l, clave, r, marcas, hist, date, onGuardar }) {
-  const pauta = pautaLinea(l, marcas);
-  const rm = pauta.rm;
-  const propio = l.ejercicios?.[0];
-  const kgs = pauta.series?.every(x => x.kg) ? [...new Set(pauta.series.map(x => fmt(x.kg, 1)))] : null;
-  const carga = kgs ? `${l.series} × ${l.reps}  ·  ${kgs.join(' / ')} kg`
-    : !l.series && pauta.kg ? `${l.repsLinea ? `${l.repsLinea} reps  ·  ` : ''}${fmt(pauta.kg, 1)} kg` : null;
+// Aviso y elección de la base de los %: sin RM, solo estimado, complejo sin referencia, o RM de otro levantamiento
+// (la prop se llama "base" y no "ref": Preact reserva "ref")
+function AvisoRef({ base: ref, l, marcas, elegida, onRef, compacto }) {
+  const [kg, setKg] = useState(null);
+  const [cambiar, setCambiar] = useState(false);
+  const chips = html`
+    <div class="chips wrap">${(ref.candidatos || []).map(id => {
+      const rm = mejorRM(marcas, id);
+      return html`<button class=${'chip' + ((elegida || ref.id) === id ? ' on' : '')} onClick=${() => { onRef(id); setCambiar(false); }}>
+        ${nombreRM(id, marcas)}${rm ? ` · ${rm.estimado ? '≈' : ''}${fmt(rm.kg, 1)} kg` : ' · sin RM'}</button>`;
+    })}</div>`;
+  if (ref.dudosa) return html`<div class="ref-aviso"><small>¿Sobre qué RM se calculan los %? El texto no lo dice: elígelo.</small>${chips}</div>`;
+  const guardarRM = async () => {
+    await db.marcas.add({ tipo: 'fuerza', ejercicio: ref.id, nombre: ref.nombre, kg, reps: 1, date: todayStr() });
+    toast(`RM de ${ref.nombre}: ${fmt(kg, 1)} kg guardado ✓`);
+  };
+  const aceptarEstimado = async () => {
+    const c = await getSetting('entreno', {});
+    await setSetting('entreno', { ...c, estimados: { ...(c.estimados || {}), [ref.id]: true } });
+    toast(`Usaré el 1RM estimado de ${ref.nombre}`);
+  };
   return html`
-    <div class="linea">
-      <div>${l.texto}${l.prescripcion && html` <b>${l.prescripcion}</b>`}</div>
-      ${carga && html`<div class="carga"><${Icon} name="pesa" size=${16} /> <b>${propio ? `${propio}: ` : ''}${carga}</b></div>`}
-      ${rm && html`<small class=${rm.kg ? 'muted' : 'aviso-rm'}>
-        ${rm.kg
-          ? html`${l.pct.join('-')}% de tu ${rm.nombre} (${fmt(rm.kg, 1)} kg${rm.estimado ? `, estimado de ${rm.desde}` : ''})
-              ${!rm.esPropio && propio && !l.pctDe ? html`<br />No tienes RM de ${propio}: uso el de ${rm.nombre}` : ''}`
-          : `Apunta tu RM de ${rm.nombre} en Entreno → Marcas y aquí saldrán los kilos`}</small>`}
-      ${l.links?.map(u => html` <a class="video" href=${u} target="_blank" rel="noopener">▶ vídeo</a>`)}
-      ${propio && html`<${UltimaVez} lista=${hist[claveEjercicio(propio)]} date=${date} />`}
-      ${l.series && html`<${Series} l=${l} clave=${clave} r=${r} pauta=${pauta.series} marcas=${marcas} onGuardar=${onGuardar} />`}
-      ${!l.series && propio && html`<${PesoLinea} l=${l} clave=${clave} r=${r} marcas=${marcas} ultimo=${hist[claveEjercicio(propio)]?.find(h => h.date < date)} onGuardar=${onGuardar} />`}
+    <div class="ref-aviso">
+      ${ref.kg ? html`<small class="muted">${ref.fuente === 'tm' ? 'Training Max' : ref.fuente === 'estimado' ? '1RM estimado' : 'RM'} de ${ref.nombre}: <b>${fmt(ref.kg, 1)} kg</b>${ref.fuente === 'estimado' && ref.desde ? ` (de ${ref.desde})` : ''}</small>
+        ${!ref.propia && !elegida && l.ejercicios?.[0] && !l.pctDe ? html`<br /><small class="aviso-rm">No tienes RM de ${l.ejercicios[0]}: uso el de ${ref.nombre}.</small>` : ''}`
+      : ref.estimado ? html`<small class="aviso-rm">Solo tienes un 1RM estimado de ${ref.nombre}: ≈ ${fmt(ref.estimado.kg, 1)} kg (de ${ref.estimado.desde}). No lo uso sin tu permiso.</small>
+          <button class="chip" onClick=${aceptarEstimado}>Usar el estimado</button>`
+      : html`<small class="aviso-rm">No tienes RM de ${ref.nombre || 'este ejercicio'}: no calculo los kilos (no me los invento).</small>
+          ${!compacto && ref.id && html`<div class="inline ref-rm"><${Num} value=${kg} onChange=${setKg} suffix="kg 1RM" /><button class="btn small" disabled=${!(kg > 0)} onClick=${guardarRM}>Guardar RM</button></div>`}`}
+      ${(ref.candidatos || []).length > 1 && (cambiar ? chips : html`<button class="link small" onClick=${() => setCambiar(true)}>Cambiar la referencia</button>`)}
     </div>`;
 }
 
-// Apuntar los kilos de cada serie (y detectar récords)
-function Series({ l, clave, r, pauta, marcas, onGuardar }) {
-  const guardadas = r.series?.[clave];
-  const [abierto, setAbierto] = useState(false);
-  // kg: null = usar el sugerido (se recalcula si cambia tu 1RM)
-  const [filas, setFilas] = useState(() => guardadas
-    || Array.from({ length: l.series }, () => ({ kg: null, reps: l.reps })));
-  const kgDe = (f, i) => f.kg ?? pauta[i]?.kg;
-  const completa = pauta.every(x => x.kg);
-  const guardarFilas = async final => {
-    await onGuardar({ series: { ...(r.series || {}), [clave]: final } });
-    setAbierto(false);
-    const records = l.ejercicios?.[0] ? await registrarRecords(l.ejercicios[0], final, marcas) : null;
-    if (!records) toast('Series guardadas ✓');
-  };
-  const set = (i, k, v) => setFilas(prev => prev.map((f, j) => (j === i ? { ...f, [k]: v } : f)));
-
-  if (!abierto) {
-    return html`
-      <div class="series-resumen">
-        ${guardadas ? html`<small class="pct">✓ ${guardadas.filter(f => f.kg).map(f => `${fmt(f.kg, 1)}×${f.reps}`).join(' · ')}</small>` : ''}
-        ${!guardadas && completa && html`<button class="chip on" onClick=${() => guardarFilas(pauta)}>✓ Hecho así</button>`}
-        <button class="chip" onClick=${() => setAbierto(true)}>${guardadas ? 'Editar kilos' : completa ? 'Cambiar kilos' : `Apuntar kilos (${l.series} series)`}</button>
-      </div>`;
-  }
-  const guardar = () => guardarFilas(filas.map((f, i) => ({ kg: kgDe(f, i), reps: f.reps })));
+function Linea({ l, clave, r, marcas, hist, date, cfg, elegida, onRef, onGuardar }) {
+  if (l.tipo === 'instruccion') return html`<div class="linea instruccion">${l.texto}</div>`;
+  if (l.tipo === 'encabezado') return html`<div class="linea encabezado">${l.texto}</div>`;
+  if (l.tipo === 'formato') return html`<div class="linea formato">${l.texto}${l.descanso ? html` <span class="tag">descanso ${mmss(l.descanso)}</span>` : ''}</div>`;
+  const pauta = pautaLinea(l, marcas, cfg, elegida);
+  const rm = pauta.rm;
+  const propio = l.ejercicios?.[0];
+  const nombre = l.tipo === 'complejo' ? (l.movimientos || []).map(m => `${m.reps || ''} ${m.nombre}`.trim()).join(' + ') : null;
+  const carga = !pauta.series && pauta.kg ? `${l.repsLinea ? `${l.repsLinea} reps  ·  ` : ''}${fmt(pauta.kg, 1)} kg` : null;
   return html`
-    <div class="series">
-      ${filas.map((f, i) => html`
-        <div class="serie">
-          <span class="muted small">S${i + 1}</span>
-          <${Num} value=${kgDe(f, i)} onChange=${v => set(i, 'kg', v)} suffix="kg" />
-          <${Num} value=${f.reps} onChange=${v => set(i, 'reps', v)} suffix="reps" />
-        </div>`)}
-      <button class="btn small secondary" onClick=${guardar}>${guardadas ? 'Actualizar series' : 'Guardar series'}</button>
+    <div class=${'linea' + (l.tipo === 'complejo' ? ' complejo' : '')}>
+      ${l.tipo === 'complejo'
+        ? html`<div><span class="tag">Complejo</span> <b>${nombre}</b>${l.series ? html` <small class="muted">· ${l.series} series${l.intervalo ? ` · cada ${mmss(l.intervalo)}` : ''}</small>` : ''}</div>`
+        : html`<div>${l.texto}${l.prescripcion && html` <b>${l.prescripcion}</b>`}</div>`}
+      ${l.descanso && html`<small class="muted">Descanso ${mmss(l.descanso)} entre series</small>`}
+      ${carga && html`<div class="carga"><${Icon} name="pesa" size=${16} /> <b>${propio ? `${propio}: ` : ''}${carga}</b></div>`}
+      ${l.pct?.length > 0 && html`<small class="pct">${textoPct(l)}${l.pctModo === 'dudoso' ? html` <span class="aviso-rm">(${l.pct.length} % para ${l.series} series: revisa)</span>` : ''}</small>`}
+      ${rm && html`<${AvisoRef} base=${rm} l=${l} marcas=${marcas} elegida=${elegida} onRef=${onRef} />`}
+      ${l.links?.map(u => html` <a class="video" href=${u} target="_blank" rel="noopener">▶ vídeo</a>`)}
+      ${propio && l.tipo !== 'complejo' && html`<${UltimaVez} lista=${hist[claveEjercicio(propio)]} date=${date} />`}
+      ${pauta.series && html`<${Series} l=${l} clave=${clave} r=${r} plan=${pauta.series} marcas=${marcas} onGuardar=${onGuardar} />`}
+      ${!pauta.series && propio && l.tipo !== 'complejo' && html`<${PesoLinea} l=${l} clave=${clave} r=${r} marcas=${marcas} ultimo=${hist[claveEjercicio(propio)]?.find(h => h.date < date)} onGuardar=${onGuardar} />`}
+    </div>`;
+}
+
+// Series una a una: la serie actual destacada, kilos y reps reales, hecha / incompleta / fallida, nota.
+// Se guarda cada serie al momento (con su plan) para ver planificado frente a hecho.
+const estadoDe = f => (!f ? null : f.estado || (f.kg != null ? 'hecha' : null)); // las antiguas {kg, reps} cuentan como hechas
+const ESTADOS = [{ id: 'hecha', label: 'Hecha' }, { id: 'incompleta', label: 'Incompleta' }, { id: 'fallida', label: 'Fallida' }];
+function Series({ l, clave, r, plan, marcas, onGuardar }) {
+  const guardadas = r.series?.[clave] || [];
+  const [edit, setEdit] = useState(null); // { i, kg, reps, estado, nota }
+  const complejo = l.tipo === 'complejo';
+  const actual = plan.findIndex((_, i) => !estadoDe(guardadas[i]));
+  const guardarSerie = async (i, datos) => {
+    const arr = Array.from({ length: Math.max(plan.length, guardadas.length) }, (_, j) => guardadas[j] || null);
+    arr[i] = datos ? { ...datos, plan: planGuardado(plan[i]) } : null;
+    await onGuardar({ series: { ...(r.series || {}), [clave]: arr } });
+    setEdit(null);
+    if (datos?.estado === 'hecha' && !complejo && l.ejercicios?.[0] && datos.kg && datos.reps) {
+      if (!(await registrarRecords(l.ejercicios[0], [datos], marcas))) toast(`Serie ${i + 1} ✓`);
+    } else toast(datos ? `Serie ${i + 1}: ${ESTADOS.find(e => e.id === datos.estado)?.label.toLowerCase()}` : 'Serie borrada');
+  };
+  const todasAsi = async () => {
+    const arr = plan.map((p, i) => guardadas[i] || { kg: p.kg, reps: p.reps, estado: 'hecha', plan: planGuardado(p) });
+    await onGuardar({ series: { ...(r.series || {}), [clave]: arr } });
+    if (!complejo && l.ejercicios?.[0] && !(await registrarRecords(l.ejercicios[0], arr, marcas))) toast('Series guardadas ✓');
+  };
+  const abrir = i => {
+    const g = guardadas[i], p = plan[i];
+    setEdit({ i, kg: g?.kg ?? p.kg, reps: g?.reps ?? p.reps, estado: estadoDe(g) || 'hecha', nota: g?.nota || '' });
+  };
+  const completas = plan.every(p => p.kg);
+  return html`
+    <div class="series-v3">
+      ${plan.map((p, i) => {
+        const g = guardadas[i], est = estadoDe(g);
+        const distinto = g && (g.kg !== p.kg || (g.reps !== p.reps && !complejo));
+        return html`
+          <button class=${'sv-fila' + (i === actual ? ' actual' : '') + (est ? ' ' + est : '')} key=${i} onClick=${() => abrir(i)}
+            aria-label=${`Serie ${i + 1}${est ? ', ' + est : ''}`}>
+            <span class="sv-n">S${i + 1}${p.pct ? html`<small>${fmt(p.pct, 1)}${p.pctHasta ? `-${fmt(p.pctHasta, 1)}` : ''}%</small>` : ''}</span>
+            <span class="sv-kg">${p.kg != null ? html`<b>${fmt(p.kg, 1)}${p.kgHasta ? `–${fmt(p.kgHasta, 1)}` : ''}</b><small> kg × ${p.reps ?? '?'}</small>` : html`<small class="muted">${p.pct ? 'sin RM' : 'kg'} × ${p.reps ?? '?'}</small>`}
+              ${p.teorico != null && Math.abs(p.teorico - p.kg) >= 0.05 ? html`<br /><small class="muted">teórico ${fmt(p.teorico, 2)}</small>` : ''}
+              ${g && distinto ? html`<br /><small class="sv-real">hecho: ${fmt(g.kg, 1)} kg${complejo ? '' : ` × ${g.reps}`}</small>` : ''}
+              ${g?.nota ? html`<br /><small class="muted">${g.nota}</small>` : ''}</span>
+            <span class="sv-est">${est === 'hecha' ? html`<${Icon} name="check" size=${20} />` : est === 'fallida' ? '✗' : est === 'incompleta' ? '½' : ''}</span>
+          </button>
+          ${edit?.i === i && html`
+            <div class="sv-edit">
+              <div class="inline">
+                <${Num} value=${edit.kg} onChange=${v => setEdit({ ...edit, kg: v })} suffix="kg" />
+                ${!complejo && html`<${Num} value=${edit.reps} onChange=${v => setEdit({ ...edit, reps: v })} suffix="reps" />`}
+              </div>
+              <div class="chips">${ESTADOS.map(e => html`<button class=${'chip' + (edit.estado === e.id ? ' on' : '')} onClick=${() => setEdit({ ...edit, estado: e.id })}>${e.label}</button>`)}</div>
+              <input value=${edit.nota} placeholder="Nota (opcional): técnica, molestias…" onInput=${ev => setEdit({ ...edit, nota: ev.target.value })} />
+              <div class="inline">
+                <button class="btn small" onClick=${() => guardarSerie(i, { kg: edit.kg, reps: complejo ? p.reps : edit.reps, estado: edit.estado, nota: edit.nota.trim() || null })}>Guardar serie ${i + 1}</button>
+                ${g && html`<button class="link small" onClick=${() => guardarSerie(i, null)}>Borrar</button>`}
+                <button class="link small" onClick=${() => setEdit(null)}>Cerrar</button>
+              </div>
+            </div>`}`;
+      })}
+      ${actual >= 0 && !edit && html`
+        <div class="sv-acciones">
+          ${plan[actual].kg != null && html`<button class="btn sv-completar" onClick=${() => guardarSerie(actual, { kg: plan[actual].kg, reps: plan[actual].reps, estado: 'hecha', nota: null })}>
+            <${Icon} name="check" size=${18} /> Completar S${actual + 1} · ${fmt(plan[actual].kg, 1)} kg${complejo ? '' : ` × ${plan[actual].reps ?? '?'}`}</button>`}
+          ${plan[actual].kg == null && html`<button class="btn secondary" onClick=${() => abrir(actual)}>Apuntar S${actual + 1}</button>`}
+          ${!guardadas.some(Boolean) && completas && plan.length > 1 && html`<button class="link small" onClick=${todasAsi}>Hice todas así</button>`}
+        </div>`}
     </div>`;
 }
 
@@ -238,8 +352,8 @@ function Resultado({ s, r, esWod, onGuardar, onHecho }) {
     <div class="form resultado">
       ${esWod && (tipo === 'fortime' || tipo === 'rondas' || tipo === 'intervalos') && html`
         <label>Tiempo (mm:ss)<input value=${r.tiempo || ''} placeholder="12:34" inputmode="numeric" onInput=${e => onGuardar({ tiempo: e.target.value })} /></label>`}
-      ${esWod && tipo === 'bloques' && html`
-        <label>Resultado de cada bloque<input value=${r.porBloque || ''} placeholder=${s.formato.sub === 'fortime' ? '9:41 · 11:02' : '5 · 4 · 4 rondas'}
+      ${esWod && (tipo === 'bloques' || tipo === 'segmentos') && html`
+        <label>Resultado de cada bloque<input value=${r.porBloque || ''} placeholder=${s.formato.sub === 'fortime' ? '9:41 · 11:02' : '5 · 4 rondas'}
           onInput=${e => onGuardar({ porBloque: e.target.value })} /></label>`}
       ${esWod && tipo === 'amrap' && html`
         <div class="grid2">
@@ -257,7 +371,24 @@ function Resultado({ s, r, esWod, onGuardar, onHecho }) {
 }
 
 // ---------- Marcas: RM de cualquier ejercicio y benchmarks ----------
-function Marcas({ marcas }) {
+// Cómo se calculan las cargas: redondeo a discos, Training Max
+function CalculoCargas({ cfg }) {
+  const guardar = async cambios => setSetting('entreno', { ...(await getSetting('entreno', {})), ...cambios });
+  return html`
+    <section class="card form">
+      <h3>Cálculo de cargas</h3>
+      <label>Redondear los kilos a
+        <div class="chips wrap">${[[0, 'Exacto'], [0.5, '0,5 kg'], [1, '1 kg'], [2, '2 kg'], [2.5, '2,5 kg'], [5, '5 kg']].map(([v, t]) => html`
+          <button class=${'chip' + (cfg.redondeo === v ? ' on' : '')} onClick=${() => guardar({ redondeo: v })}>${t}</button>`)}</div>
+      </label>
+      <div class="chips">${[['cercano', 'Al más cercano'], ['abajo', 'Siempre hacia abajo']].map(([v, t]) => html`
+        <button class=${'chip' + (cfg.modo === v ? ' on' : '')} onClick=${() => guardar({ modo: v })}>${t}</button>`)}</div>
+      <small class="muted">Ej.: 62,5 % de 115 kg = 71,875 kg → ${fmt(redondear(71.875, cfg.redondeo, cfg.modo), 2)} kg. El valor teórico se sigue viendo debajo.</small>
+      <label class="inline"><input type="checkbox" checked=${cfg.usarTM} onChange=${e => guardar({ usarTM: e.target.checked })} /> Usar mi Training Max cuando lo tenga (se pone en cada levantamiento)</label>
+    </section>`;
+}
+
+function Marcas({ marcas, cfg }) {
   const [tab, setTab] = useState('fuerza');
   const [sel, setSel] = useState(null);
   const [q, setQ] = useState('');
@@ -272,6 +403,7 @@ function Marcas({ marcas }) {
   const lista = tab === 'fuerza' ? fuerza : BENCHMARKS;
   return html`
     <${Seg} value=${tab} onChange=${setTab} options=${[{ value: 'fuerza', label: 'Fuerza (RM)' }, { value: 'bench', label: 'Benchmarks' }]} />
+    ${tab === 'fuerza' && html`<${CalculoCargas} cfg=${cfg} />`}
     ${tab === 'fuerza' && html`
       <div class="inline">
         <input class="search" placeholder="Buscar levantamiento…" value=${q} onInput=${e => setQ(e.target.value)} />
@@ -292,7 +424,7 @@ function Marcas({ marcas }) {
       })}
     </section>
     <${Sheet} open=${!!sel} onClose=${() => setSel(null)} title=${sel?.name}>
-      ${sel && html`<${MarcaDetalle} x=${sel} tipo=${tab} marcas=${marcas.filter(m => m.ejercicio === sel.id)} />`}
+      ${sel && html`<${MarcaDetalle} x=${sel} tipo=${tab} cfg=${cfg} marcas=${marcas.filter(m => m.ejercicio === sel.id)} />`}
     <//>
     <${Sheet} open=${nuevo} onClose=${() => setNuevo(false)} title="RM de otro ejercicio">
       ${nuevo && html`<${NuevoRM} onDone=${x => { setNuevo(false); setSel(x); }} />`}
@@ -313,7 +445,10 @@ function NuevoRM({ onDone }) {
     </div>`;
 }
 
-function MarcaDetalle({ x, tipo, marcas }) {
+function MarcaDetalle({ x, tipo, marcas, cfg = {} }) {
+  const guardarCfg = async cambios => setSetting('entreno', { ...(await getSetting('entreno', {})), ...cambios });
+  const ponerTM = async v => { const c = await getSetting('entreno', {}); const tm = { ...(c.tm || {}) }; if (v > 0) tm[x.id] = v; else delete tm[x.id]; await guardarCfg({ tm }); };
+  const ponerEstimado = async v => { const c = await getSetting('entreno', {}); await guardarCfg({ estimados: { ...(c.estimados || {}), [x.id]: v } }); };
   const [kg, setKg] = useState(null), [reps, setReps] = useState(1), [resultado, setResultado] = useState(''), [fecha, setFecha] = useState(todayStr());
   const add = async () => {
     if (tipo === 'fuerza') await db.marcas.add({ tipo: 'fuerza', ejercicio: x.id, nombre: x.name, kg, reps, date: fecha });
@@ -332,6 +467,12 @@ function MarcaDetalle({ x, tipo, marcas }) {
         <div class="preview"><b>Tus porcentajes (1RM ${rm.estimado ? '≈' : ''}${fmt(rm.kg, 1)} kg)</b>
           ${rm.estimado && html`<div class="muted small">1RM estimado a partir de tu ${rm.desde}. Apunta un 1RM real cuando lo hagas.</div>`}
           <div class="pct-grid">${[50, 55, 60, 65, 70, 75, 80, 85, 90, 95].map(p => html`<span>${p}%<b>${Math.round((rm.kg * p) / 100)}</b></span>`)}</div>
+        </div>`}
+      ${tipo === 'fuerza' && html`
+        <div class="tm-caja">
+          <label>Training Max (opcional)<${Num} value=${cfg.tm?.[x.id] ?? null} onChange=${ponerTM} suffix="kg" /></label>
+          <small class="muted">${cfg.usarTM ? 'Se usa en vez del RM para calcular los %.' : 'Actívalo en "Cálculo de cargas" para usarlo en los %.'}</small>
+          ${rm?.estimado && html`<label class="inline"><input type="checkbox" checked=${!!cfg.estimados?.[x.id]} onChange=${e => ponerEstimado(e.target.checked)} /> Usar el 1RM estimado (${fmt(rm.kg, 1)} kg) para calcular los %</label>`}
         </div>`}
       ${tipo === 'fuerza' && Object.keys(porReps).length > 0 && html`
         <div class="chips wrap">${Object.values(porReps).sort((a, b) => a.reps - b.reps).map(m => html`<span class="tag">${m.reps}RM: <b>${fmt(m.kg, 1)} kg</b></span>`)}</div>`}
@@ -497,18 +638,23 @@ function mejorBench(mias, tipo) {
   return best.resultado;
 }
 
-// Siempre se relee el texto original con la última versión del lector:
-// así, cuando el lector mejora, los entrenos antiguos también se ven bien.
+// Cómo se lee un entreno:
+//  - si ya tiene la lectura CONGELADA (se congela al apuntar el primer resultado), esa;
+//  - si tiene resultados de antes de v3 (sin congelar), con el lector antiguo, para que cada peso siga en su línea;
+//  - si no, con el lector actual (así los entrenos sin resultados aprovechan las mejoras).
 const cacheLectura = new Map();
 export function leer(w) {
-  const k = w.id + ':' + w.texto;
-  if (!cacheLectura.has(k)) cacheLectura.set(k, parsearEntreno(w.texto));
+  if (w.estructura?.secciones) return w.estructura;
+  const conRes = Object.values(w.resultados || {}).some(r => r && Object.keys(r).length);
+  const k = w.id + ':' + w.texto + (conRes ? ':v1' : ':v2');
+  if (!cacheLectura.has(k)) cacheLectura.set(k, conRes ? parsearEntrenoV1(w.texto) : parsearEntreno(w.texto));
   return cacheLectura.get(k);
 }
 
 // Guarda tu mejor marca de un ejercicio para cada nº de repeticiones (sirve para cualquier ejercicio,
 // tenga o no RM "oficial"). Devuelve true si hubo récord (y lo avisa).
 async function registrarRecords(nombre, filas, marcas) {
+  filas = filas.filter(f => f && f.estado !== 'fallida' && f.estado !== 'incompleta');
   const id = idRM(nombre);
   const nombreBonito = id.startsWith('x:') ? nombre : nombreRM(id, marcas);
   const records = [];
@@ -534,7 +680,7 @@ function historialPesos(workouts, unidos = {}) {
       if (!nombre) return;
       const k = `${pi}-${li}`;
       const usados = res[si]?.series?.[k] || (res[si]?.pesos?.[k] ? [res[si].pesos[k]] : null);
-      const conKg = (usados || []).filter(x => x.kg);
+      const conKg = (usados || []).filter(x => x && x.kg && x.estado !== 'fallida');
       const c = claveEjercicio(nombre);
       if (conKg.length) (h[unidos[c] || c] ||= []).push({ date: w.date, sets: conKg });
     })));

@@ -205,8 +205,8 @@ function htmlEntreno(D) {
           rs.rondas && `${rs.rondas} rondas${rs.reps ? ' + ' + rs.reps : ''}`, rs.rpe && `RPE ${rs.rpe}`].filter(Boolean).join(' · ');
         const cargas = s.partes.flatMap((pa, pi) => pa.lineas.map((l, li) => {
           const k = `${pi}-${li}`;
-          const sets = rs.series?.[k] || (rs.pesos?.[k] ? [rs.pesos[k]] : null);
-          return sets && l.ejercicios?.[0] ? `${esc(l.ejercicios[0])}: ${sets.filter(x => x.kg).map(x => `${n1(x.kg, 1)} kg${x.reps ? ' × ' + x.reps : ''}`).join(', ')}` : null;
+          const sets = (rs.series?.[k] || (rs.pesos?.[k] ? [rs.pesos[k]] : null))?.filter(x => x && x.kg != null);
+          return sets?.length && l.ejercicios?.[0] ? `${esc(nombreLinea(l))}: ${sets.map(textoSerie).join(', ')}` : null;
         })).filter(Boolean);
         return `<p><b>${esc(s.titulo)}</b>${s.formato ? ` (${esc(textoFormato(s.formato))})` : ''} — ${res}</p>
           ${cargas.length ? `<ul>${cargas.map(c => `<li>${c}</li>`).join('')}</ul>` : ''}
@@ -292,6 +292,14 @@ function csvNutricion(D) {
   ];
 }
 
+// Nombre de la línea en el informe (un complejo se escribe con sus movimientos)
+const nombreLinea = l => (l.tipo === 'complejo' && l.movimientos?.length ? 'Complejo ' + l.movimientos.map(m => `${m.reps || ''} ${m.nombre}`.trim()).join(' + ') : l.ejercicios?.[0] || l.texto);
+// "52,5 kg × 3", "60 kg × 2 (incompleta; plan 57,5)", "62,5 kg × 3 (fallida)" + nota
+function textoSerie(x) {
+  const extra = [x.estado && x.estado !== 'hecha' ? x.estado : null, x.plan?.kg != null && Math.abs(x.plan.kg - x.kg) >= 0.05 ? `plan ${n1(x.plan.kg, 1)}` : null].filter(Boolean);
+  return `${n1(x.kg, 1)} kg${x.reps ? ' × ' + x.reps : ''}${extra.length ? ` (${extra.join('; ')})` : ''}${x.nota ? ` — ${esc(x.nota)}` : ''}`;
+}
+
 function csvEntreno(D) {
   const ses = [], series = [];
   for (const w of [...D.workouts].sort((a, b) => a.date.localeCompare(b.date))) {
@@ -302,7 +310,7 @@ function csvEntreno(D) {
       s.partes.forEach((pa, pi) => pa.lineas.forEach((l, li) => {
         const k = `${pi}-${li}`;
         const sets = rs.series?.[k] || (rs.pesos?.[k] ? [rs.pesos[k]] : null);
-        (sets || []).forEach((x, i) => x.kg && series.push([w.date, s.titulo, l.ejercicios?.[0] || l.texto, i + 1, x.kg, x.reps]));
+        (sets || []).forEach((x, i) => x?.kg != null && series.push([w.date, s.titulo, nombreLinea(l), i + 1, x.kg, x.reps, x.estado || 'hecha', x.plan?.kg ?? '', x.plan?.pct ?? '', x.nota || '']));
       }));
     });
   }
@@ -310,7 +318,7 @@ function csvEntreno(D) {
   const bench = D.marcas.filter(m => m.tipo === 'bench').map(m => [BENCHMARKS.find(b => b.id === m.ejercicio)?.name || m.ejercicio, m.resultado, m.date]);
   return [
     ['entreno_sesiones.csv', csv(['fecha', 'seccion', 'formato', 'hecho', 'tiempo', 'resultado_bloques', 'rondas', 'reps_extra', 'rpe', 'notas'], ses)],
-    ['entreno_series_y_pesos.csv', csv(['fecha', 'seccion', 'ejercicio', 'serie', 'kg', 'reps'], series)],
+    ['entreno_series_y_pesos.csv', csv(['fecha', 'seccion', 'ejercicio', 'serie', 'kg', 'reps', 'estado', 'kg_planificado', 'porcentaje', 'nota'], series)],
     ['marcas_fuerza.csv', csv(['ejercicio', 'repeticiones', 'kg', 'fecha'], marcas)],
     ['benchmarks.csv', csv(['wod', 'resultado', 'fecha'], bench)],
     ['peso.csv', csv(['fecha', 'peso_kg'], D.pesosPeriodo.map(w => [w.date, w.kg]))],
