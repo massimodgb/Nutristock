@@ -57,10 +57,11 @@ function App() {
 // Al confirmar el correo de la nube, Supabase vuelve a la app con datos en la dirección: los quitamos
 if (/access_token|error_description/.test(location.hash)) history.replaceState(null, '', location.pathname);
 
-seed()
+// La página de comprobación importa este archivo solo para ver que carga: sin el hueco #app no se arranca nada
+const raiz = document.getElementById('app');
+if (raiz) seed()
   .then(() => {
     // Quitamos el "Cargando…" inicial: si no, se queda pegado al final de cada pantalla
-    const raiz = document.getElementById('app');
     raiz.textContent = '';
     render(html`<${App} />`, raiz);
     window.__arrancada = true;
@@ -69,7 +70,7 @@ seed()
     iniciarNube(); // si has entrado con tu cuenta, sincroniza con la nube
   })
   .catch(e => {
-    document.getElementById('app').innerHTML = `<p class="error" style="padding:24px">Error al iniciar: ${e.message}</p>`;
+    raiz.innerHTML = `<p class="error" style="padding:24px">Error al iniciar: ${e.message}</p>`;
     console.error(e);
   });
 

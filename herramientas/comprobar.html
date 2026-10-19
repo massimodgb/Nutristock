@@ -307,8 +307,9 @@
       let visto = null;
       const f = e => { visto = e.detail; };
       window.addEventListener('ns-destello', f);
-      So.configurarSonido({ destello: true });
+      So.configurarSonido({ destello: true, vibrar: false }); // sin vibrar: el navegador lo bloquea sin un toque previo
       So.avisar('cambio', 'Minuto 2');
+      So.configurarSonido({});
       window.removeEventListener('ns-destello', f);
       return visto === 'cambio';
     });
@@ -365,6 +366,16 @@
         const h = Inf7.htmlEntreno(D);
         await prueba('Informe de entrenadora: mismo formato, con serie incompleta, plan y nota; y las series antiguas siguen saliendo', () =>
           /<h2>Sesiones<\/h2>/.test(h) && /80 kg × 3, 82,5 kg × 2 \(incompleta; plan 80\) — cuello/.test(h) && /100 kg × 5/.test(h) && /RPE 8/.test(h) || h.slice(h.indexOf('Sesiones'), h.indexOf('Sesiones') + 600));
+        // Nombre de los informes: sale del Perfil (opcional), nunca escrito en el código
+        const { getSetting: gs7, setSetting: ss7 } = await import('/js/db.js');
+        const perfilAntes = await gs7('perfil', null);
+        await ss7('perfil', { ...(perfilAntes || {}), nombre: '' });
+        const sinNombre = Inf7.htmlNutricion(await Inf7.reunir(FE, FE)) + Inf7.htmlEntreno(await Inf7.reunir(FE, FE));
+        await ss7('perfil', { ...(perfilAntes || {}), nombre: 'Ana Prueba' });
+        const conNombre = Inf7.htmlNutricion(await Inf7.reunir(FE, FE)) + Inf7.htmlEntreno(await Inf7.reunir(FE, FE));
+        if (perfilAntes) await ss7('perfil', perfilAntes); else await db.settings.delete('perfil');
+        await prueba('Informes: sin nombre en el Perfil no sale ningún nombre; con nombre, sale el del Perfil en los dos', () =>
+          !/<p><b>[^<]+<\/b> · del /.test(sinNombre) && (conNombre.match(/<b>Ana Prueba<\/b> · del /g) || []).length === 2);
       } finally {
         await db.workouts.delete(wid);
       }

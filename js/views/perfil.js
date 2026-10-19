@@ -22,6 +22,8 @@ export function Perfil({ go }) {
       <header class="top"><h1>Perfil y objetivo</h1></header>
 
       <section class="card form">
+        <label>Tu nombre (opcional, solo para la cabecera de los informes)
+          <input value=${p.nombre || ''} placeholder="Ej.: tu nombre y apellido" autocomplete="name" onInput=${e => set('nombre', e.target.value)} /></label>
         <label>Sexo
           <${Seg} value=${p.sexo} onChange=${v => set('sexo', v)} options=${[{ value: 'h', label: 'Hombre' }, { value: 'm', label: 'Mujer' }]} />
         </label>

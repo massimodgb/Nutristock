@@ -122,6 +122,10 @@ export async function reunir(desde, hasta) {
 }
 
 // ---------- Informe para la nutricionista ----------
+// Nombre en la cabecera de los informes: el que pongas en Perfil (opcional). Sin nombre, el informe sale sin él.
+// (No se escribe ningún nombre fijo en el código: el repositorio es público.)
+const nombreInforme = D => (D.perfil?.nombre?.trim() ? `<b>${esc(D.perfil.nombre.trim())}</b> · ` : '');
+
 // Partes del informe de la nutricionista (se pueden quitar o poner según lo que le resulte útil)
 export const SECCIONES_NUTRI = [
   ['adherencia', 'Adherencia al plan'], ['resumen', 'Resumen de calorías y macros'], ['peso', 'Peso y tendencia'], ['medidas', 'Medidas (cintura, cadera…)'],
@@ -193,7 +197,7 @@ export function htmlNutricion(D, sec = {}) {
   const h = d => `${String(Math.floor(d)).padStart(2, '0')}:${String(Math.round((d % 1) * 60)).padStart(2, '0')}`;
   return `
   <h1>Informe de alimentación</h1>
-  <p><b>Massimo Di Giuseppe</b> · del ${fmtDate(D.desde, { day: 'numeric', month: 'long', year: 'numeric' })} al ${fmtDate(D.hasta, { day: 'numeric', month: 'long', year: 'numeric' })}<br>
+  <p>${nombreInforme(D)}del ${fmtDate(D.desde, { day: 'numeric', month: 'long', year: 'numeric' })} al ${fmtDate(D.hasta, { day: 'numeric', month: 'long', year: 'numeric' })}<br>
   ${plan ? `Plan: ${esc(plan.nutricionista || '')} · desde ${fmtDate(plan.fecha, { day: 'numeric', month: 'long' })}${plan.editado ? ` (editado a mano el ${fmtDate(plan.editado, { day: 'numeric', month: 'short' })})` : ''}` : 'Sin plan cargado'}<br>
   Días con comida registrada: <b>${conDatos.length} de ${dias.length}</b>. Todo se pesa en cocido; las calorías se calculan sobre el equivalente en crudo.</p>
 
@@ -265,7 +269,7 @@ export function htmlEntreno(D) {
   const con = dias.filter(d => d.registros);
   return `
   <h1>Informe de entrenamiento</h1>
-  <p><b>Massimo Di Giuseppe</b> · del ${fmtDate(D.desde, { day: 'numeric', month: 'long', year: 'numeric' })} al ${fmtDate(D.hasta, { day: 'numeric', month: 'long', year: 'numeric' })}<br>
+  <p>${nombreInforme(D)}del ${fmtDate(D.desde, { day: 'numeric', month: 'long', year: 'numeric' })} al ${fmtDate(D.hasta, { day: 'numeric', month: 'long', year: 'numeric' })}<br>
   Sesiones registradas: <b>${sesiones.length}</b>.
   ${pesosPeriodo.length ? ` Peso corporal: ${n1(pesosPeriodo[0].kg, 1)} → ${n1(pesosPeriodo.at(-1).kg, 1)} kg.` : ''}
   ${con.length ? ` Nutrición media: ${n1(D.medias.kcal)} kcal, ${n1(D.medias.prot)} g de proteína y ${n1(D.medias.carb)} g de carbohidratos al día.` : ''}</p>

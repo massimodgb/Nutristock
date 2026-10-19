@@ -292,7 +292,7 @@ export function AjustesSonido() {
     <section class="form sonido">
       <h4>Sonido de los avisos</h4>
       <label>Volumen
-        <div class="chips">${[['normal', 'Normal'], ['alto', 'Alto (se oye encima de la música)']].map(([v, t]) => html`
+        <div class="chips wrap">${[['normal', 'Normal'], ['alto', 'Alto (se oye encima de la música)']].map(([v, t]) => html`
           <button class=${'chip' + (c.volumen === v ? ' on' : '')} onClick=${() => poner({ volumen: v })}>${t}</button>`)}</div></label>
       <label>Si tienes música puesta
         <div class="chips wrap">${[['bajar', 'Bajarla un momento al pitar'], ['mezclar', 'Mezclar sin bajarla'], ['pausar', 'Pausarla al pitar']].map(([v, t]) => html`
