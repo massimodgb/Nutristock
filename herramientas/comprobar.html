@@ -298,6 +298,78 @@
       }
     }
 
+    // ---------- v3 · Fase 7: validación general ----------
+    await prueba('EMOM 10 minutos: 10 tramos de 60 s (un aviso en cada cambio de minuto)', () => {
+      const t = Re4.tramos({ tipo: 'emom', intervalo: 60, total: 600 });
+      return t.length === 11 && t.slice(1).every(x => x.dur === 60 && x.tipo === 'trabajo') || t;
+    });
+    await prueba('Aviso de cambio: destello en pantalla y no falla aunque el audio no esté disponible', () => {
+      let visto = null;
+      const f = e => { visto = e.detail; };
+      window.addEventListener('ns-destello', f);
+      So.configurarSonido({ destello: true });
+      So.avisar('cambio', 'Minuto 2');
+      window.removeEventListener('ns-destello', f);
+      return visto === 'cambio';
+    });
+
+    if (['127.0.0.1', 'localhost'].includes(location.hostname)) {
+      const { db, exportAll } = await import('/js/db.js');
+      const C7 = await import('/js/copias.js');
+      const Inf7 = await import('/js/views/informes.js');
+      // Copia de seguridad: incluye las tablas nuevas y se puede restaurar
+      const copia = await exportAll();
+      await prueba('Copia de seguridad: incluye porciones preparadas y medidas, y la copia es válida', () => {
+        const v = C7.validarCopia(copia);
+        return Array.isArray(copia.porciones) && Array.isArray(copia.medidas) && (v.ok || !copia.foods.length) || v;
+      });
+
+      // Actualizar desde una base de datos de antes de v3 (esquema 5) no pierde nada
+      const { Dexie } = await import('/js/lib.js');
+      const nombre = 'ns-prueba-migracion';
+      await Dexie.delete(nombre);
+      const vieja = new Dexie(nombre);
+      vieja.version(1).stores({ foods: 'id, name, group, barcode, genericId', lots: '++id, foodId, expiry', basicos: 'id, status', shopping: '++id, done', plans: 'id', logs: '++id, date', weights: 'date', settings: 'key' });
+      vieja.version(2).stores({ logs: '++id, date, foodId' });
+      vieja.version(3).stores({ workouts: '++id, date', marcas: '++id, ejercicio, date' });
+      vieja.version(4).stores({ ejercicios: 'id' });
+      vieja.version(5).stores({ whoop: 'id, tipo, fecha' });
+      await vieja.logs.add({ date: '2026-10-01', foodId: 'pollo-pechuga', g: 240, rawG: 320, n: { kcal: 352 } });
+      await vieja.weights.put({ date: '2026-10-01', kg: 84 });
+      await vieja.workouts.add({ date: '2026-10-01', texto: 'FUERZA\nBack Squat 5x3', resultados: { 0: { series: { '0-0': [{ kg: 80, reps: 3 }] } } } });
+      vieja.close();
+      const nueva = new Dexie(nombre);
+      nueva.version(1).stores({ foods: 'id, name, group, barcode, genericId', lots: '++id, foodId, expiry', basicos: 'id, status', shopping: '++id, done', plans: 'id', logs: '++id, date', weights: 'date', settings: 'key' });
+      nueva.version(2).stores({ logs: '++id, date, foodId' });
+      nueva.version(3).stores({ workouts: '++id, date', marcas: '++id, ejercicio, date' });
+      nueva.version(4).stores({ ejercicios: 'id' });
+      nueva.version(5).stores({ whoop: 'id, tipo, fecha' });
+      nueva.version(6).stores({ porciones: 'id, date, foodId' });
+      nueva.version(7).stores({ medidas: 'id, fecha, tipo' });
+      await nueva.open();
+      const ok = (await nueva.logs.count()) === 1 && (await nueva.weights.get('2026-10-01'))?.kg === 84 && (await nueva.workouts.count()) === 1
+        && (await nueva.porciones.count()) === 0 && (await nueva.medidas.count()) === 0;
+      nueva.close();
+      await Dexie.delete(nombre);
+      await prueba('Actualizar una base de datos de antes de v3 (esquema 5 → 7) conserva comidas, pesos y entrenos', () => ok);
+
+      // Informe de la entrenadora: mismo formato, con series nuevas (estado, plan, nota) y antiguas
+      const FE = '2000-05-02';
+      const wid = await db.workouts.add({ date: FE, texto: 'FUERZA\nClean 3x3 @70%\n\nBack Squat 3x5', ts: 1,
+        resultados: { 0: { hecho: true, rpe: 8, notas: 'Bien', series: {
+          '0-0': [{ kg: 80, reps: 3, estado: 'hecha', plan: { kg: 80 } }, { kg: 82.5, reps: 2, estado: 'incompleta', nota: 'cuello', plan: { kg: 80 } }, null],
+          '1-0': [{ kg: 100, reps: 5 }],
+        } } } });
+      try {
+        const D = await Inf7.reunir(FE, FE);
+        const h = Inf7.htmlEntreno(D);
+        await prueba('Informe de entrenadora: mismo formato, con serie incompleta, plan y nota; y las series antiguas siguen saliendo', () =>
+          /<h2>Sesiones<\/h2>/.test(h) && /80 kg × 3, 82,5 kg × 2 \(incompleta; plan 80\) — cuello/.test(h) && /100 kg × 5/.test(h) && /RPE 8/.test(h) || h.slice(h.indexOf('Sesiones'), h.indexOf('Sesiones') + 600));
+      } finally {
+        await db.workouts.delete(wid);
+      }
+    }
+
     const { alimentoPorNombre } = await import('/js/plan-pdf.js');
     await prueba('"Queso Ricotta Hacendado" se clasifica como ricotta', () => alimentoPorNombre('Queso Ricotta Hacendado') === 'ricotta');
 

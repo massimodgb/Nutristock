@@ -250,7 +250,7 @@ export function htmlNutricion(D, sec = {}) {
 }
 
 // ---------- Informe para la entrenadora ----------
-function htmlEntreno(D) {
+export function htmlEntreno(D) {
   const { workouts, marcas, dias, pesosPeriodo } = D;
   const sesiones = [...workouts].sort((a, b) => a.date.localeCompare(b.date));
   // Mejores marcas de fuerza por ejercicio
