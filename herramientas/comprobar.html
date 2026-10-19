@@ -140,6 +140,43 @@
       return viejo.lector === undefined && nuevo.lector === 2 && cong.secciones[0].titulo === 'Congelada' || { viejo, nuevo };
     });
 
+    // ---------- v3 · Fase 4: relojes, descanso y tiempos ----------
+    const Ti = await import('/js/tiempo.js');
+    const De = await import('/js/descanso.js');
+    const Re4 = await import('/js/views/reloj.js');
+    const So = await import('/js/sonido.js');
+    await prueba('Tiempo: 15 min y 40 s se guarda como 940 s y se ve "15:40"', () => Ti.aSegundos(15, 40) === 940 && Ti.fmtTiempo(940) === '15:40');
+    await prueba('Tiempo: más de 59 minutos (75 min 5 s) = 1:15:05; los segundos de 60 o más no valen', () =>
+      Ti.aSegundos(75, 5) === 4505 && Ti.fmtTiempo(4505) === '1:15:05' && Ti.aSegundos(15, 60) === null);
+    await prueba('Tiempo antiguo "1540" (teclado numérico) se lee como 15:40 pero marcado como dudoso', () => {
+      const t = Ti.leerTiempo('1540');
+      return t.s === 940 && t.dudoso === true && Ti.textoTiempoResultado({ tiempo: '1540' }) === '15:40 (?)' && Ti.textoTiempoResultado({ tiempoS: 940, tiempo: '15:40' }) === '15:40';
+    });
+    await prueba('Tiempo: "15:40", "1:05:20", "15\'40" se entienden', () => Ti.leerTiempo('15:40').s === 940 && Ti.leerTiempo('1:05:20').s === 3920 && Ti.leerTiempo("15'40").s === 940);
+    await prueba('Descanso de 90 s: con pausa no corre, +15 s alarga, y termina en 0', () => {
+      let d = De.crearDescanso(90, 0);
+      const a = De.restante(d, 30000);
+      d = De.pausar(d, 30000); const b = De.restante(d, 50000);
+      d = De.seguir(d, 50000); d = De.sumar(d, 15); const c = De.restante(d, 60000);
+      return a === 60 && b === 60 && c === 65 && De.restante(d, 200000) === 0 || { a, b, c };
+    });
+    await prueba('Reloj personalizado: 8\' trabajo + 2\' descanso + 10\' trabajo = 20 min con 3 tramos (y 10 s de preparación)', () => {
+      const cfg = { tipo: 'personalizado', bloques: [{ tipo: 'trabajo', nombre: 'A', dur: 480 }, { tipo: 'descanso', nombre: 'Descanso', dur: 120 }, { tipo: 'trabajo', nombre: 'B', dur: 600 }], repetir: 1 };
+      const t = Re4.tramos(cfg);
+      return t.length === 4 && t.map(x => x.tipo).join() === 'prep,trabajo,descanso,trabajo' && Re4.duracionTotal(cfg) === 1200 && t[3].bloque === 1 || t;
+    });
+    await prueba('Reloj por minutos del texto (0-8 / 8-10 descanso / 10-20) se convierte en sus tramos', () => {
+      const f = P.parsearEntreno('WOD\nMin 0-8: AMRAP\n10 Burpees\nMin 8-10: Rest\nMin 10-20: AMRAP\n20 DU').secciones[0].formato;
+      const t = Re4.tramos(f);
+      return t.slice(1).map(x => `${x.tipo}:${x.dur}`).join() === 'trabajo:480,descanso:120,trabajo:600' || t;
+    });
+    await prueba('"Cada 1:30 x 6" es un intervalo fijo de 6 × 90 s (no un descanso)', () => {
+      const t = Re4.tramos({ tipo: 'emom', intervalo: 90, total: 540 });
+      return t.length === 7 && t.slice(1).every(x => x.dur === 90) || t;
+    });
+    await prueba('Sonido con música: "bajar" pide a Safari una sesión transitoria; "mezclar", ambiente', () =>
+      So.tipoSesion({ musica: 'bajar' }) === 'transient' && So.tipoSesion({ musica: 'mezclar' }) === 'ambient' && So.tipoSesion({ musica: 'pausar' }) === 'transient-solo');
+
     const { alimentoPorNombre } = await import('/js/plan-pdf.js');
     await prueba('"Queso Ricotta Hacendado" se clasifica como ricotta', () => alimentoPorNombre('Queso Ricotta Hacendado') === 'ricotta');
 

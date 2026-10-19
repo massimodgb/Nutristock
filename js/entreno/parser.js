@@ -373,6 +373,7 @@ export function textoFormato(f) {
     case 'rondas': return `${f.rondas} rondas`;
     case 'tiempo': return min(f.total);
     case 'segmentos': return f.tramos.map(x => `${x.desde}-${x.hasta}' ${x.descanso ? 'descanso' : x.label}`).join(' · ');
+    case 'personalizado': return (f.bloques || []).map(b => `${b.nombre || b.tipo} ${min(b.dur)}`).join(' + ') + (f.repetir > 1 ? ` (× ${f.repetir})` : '');
     default: return '';
   }
 }

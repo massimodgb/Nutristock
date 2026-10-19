@@ -7,6 +7,7 @@ import { calcularBalance, fraseCambio } from '../balance.js';
 import { leer } from './entreno.js';
 import { textoFormato } from '../entreno/parser.js';
 import { mejorRM, nombreRM } from '../entreno/rm.js';
+import { textoTiempoResultado } from '../tiempo.js';
 import { BENCHMARKS } from '../entreno/datos.js';
 import { resumenWhoop } from '../whoop.js';
 import { listaSupl, tomadosEntre, cantTomada, textoCant, textoDosis, aporteDia, aporteMedio, aporteSupl, cantHabitual, textoAporte, tieneDatos, NUTR_SUPL, SUPL_EXTRA } from '../suplementos.js';
@@ -201,7 +202,7 @@ function htmlEntreno(D) {
       ${dia?.w?.recuperacion != null ? `<p class="nota">Whoop: recuperación ${n1(dia.w.recuperacion)} %${dia.w.horas != null ? ` · durmió ${n1(dia.w.horas, 1)} h` : ''}${dia.w.strain != null ? ` · esfuerzo del día ${n1(dia.w.strain, 1)}` : ''}</p>` : ''}
       ${p.secciones.map((s, si) => {
         const rs = r[si] || {};
-        const res = [rs.hecho ? '✓ hecho' : 'no marcado', rs.tiempo && `tiempo ${esc(rs.tiempo)}`, rs.porBloque && `bloques: ${esc(rs.porBloque)}`,
+        const res = [rs.hecho ? '✓ hecho' : 'no marcado', (rs.tiempo || rs.tiempoS != null) && `tiempo ${esc(textoTiempoResultado(rs))}`, rs.porBloque && `bloques: ${esc(rs.porBloque)}`,
           rs.rondas && `${rs.rondas} rondas${rs.reps ? ' + ' + rs.reps : ''}`, rs.rpe && `RPE ${rs.rpe}`].filter(Boolean).join(' · ');
         const cargas = s.partes.flatMap((pa, pi) => pa.lineas.map((l, li) => {
           const k = `${pi}-${li}`;
@@ -306,7 +307,7 @@ function csvEntreno(D) {
     const p = leer(w), r = w.resultados || {};
     p.secciones.forEach((s, si) => {
       const rs = r[si] || {};
-      ses.push([w.date, s.titulo, s.formato ? textoFormato(s.formato) : '', rs.hecho ? 'si' : '', rs.tiempo, rs.porBloque, rs.rondas, rs.reps, rs.rpe, rs.notas]);
+      ses.push([w.date, s.titulo, s.formato ? textoFormato(s.formato) : '', rs.hecho ? 'si' : '', textoTiempoResultado(rs), rs.porBloque, rs.rondas, rs.reps, rs.rpe, rs.notas]);
       s.partes.forEach((pa, pi) => pa.lineas.forEach((l, li) => {
         const k = `${pi}-${li}`;
         const sets = rs.series?.[k] || (rs.pesos?.[k] ? [rs.pesos[k]] : null);

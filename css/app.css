@@ -833,3 +833,43 @@ details.revisar summary { cursor: pointer; font-weight: 600; padding: 10px 0; co
 .sv-edit .inline > * { flex: 1; min-width: 0; }
 .sv-acciones { display: flex; flex-direction: column; gap: 6px; }
 .sv-completar { min-height: 52px; font-size: 16px; }
+
+/* ---------- v3 · Fase 4: relojes, descanso y tiempos ---------- */
+.tiempo-input { display: flex; align-items: center; gap: 8px; }
+.tiempo-input .num { flex: 1; min-width: 0; }
+.tiempo-input > b { font-size: 22px; color: var(--muted); }
+/* Destello a pantalla completa en cada cambio */
+.destello { position: fixed; inset: 0; z-index: 9999; pointer-events: none; background: var(--accent); animation: destello 450ms ease-out forwards; }
+.destello.fin { background: #fff; }
+@keyframes destello { from { opacity: .55; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .destello { animation-duration: 1ms; opacity: .25; } }
+/* Reloj: progreso total y tramo */
+.reloj-prog { height: 6px; margin: 0 16px; border-radius: 3px; background: rgba(255, 255, 255, .15); overflow: hidden; }
+.reloj-prog i { display: block; height: 100%; background: currentColor; transform-origin: left; }
+.reloj-tramo { font-size: 14px; opacity: .8; margin-top: 4px; }
+/* Descanso entre series */
+.descanso-barra { position: fixed; left: 8px; right: 8px; bottom: calc(var(--tabbar-h, 64px) + env(safe-area-inset-bottom, 0px) + 8px); z-index: 50;
+  background: var(--card-2); border: 1px solid var(--accent); border-radius: var(--radius); box-shadow: var(--sombra); overflow: hidden; }
+.descanso-barra.fin { background: var(--accent-soft); }
+.db-prog { height: 4px; background: var(--fill); }
+.db-prog i { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform 250ms linear; }
+.db-fila { display: flex; align-items: center; gap: 8px; padding: 10px 12px; }
+.db-fila .grow { display: flex; flex-direction: column; min-width: 0; }
+.db-num { font-size: 34px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.05; }
+.chip-descanso { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 13px; color: var(--muted); margin-top: 4px; }
+.chip-descanso select { font: inherit; color: var(--text); background: var(--fill); border: 1px solid var(--borde); border-radius: 10px; padding: 4px 8px; }
+.chip.intervalo { margin-top: 6px; align-self: flex-start; }
+/* Relojes: favoritos y editor de tramos */
+.favs { display: flex; flex-wrap: wrap; gap: 6px; }
+.fav { display: flex; align-items: center; gap: 2px; }
+.tramos-editor { display: flex; flex-direction: column; gap: 8px; }
+.tramo-ed { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: var(--radius-s); background: var(--fill); border-left: 4px solid var(--accent); }
+.tramo-ed.descanso { border-left-color: var(--fat); }
+.tramo-ed.prep { border-left-color: var(--carb); }
+.tramo-ed select, .tramo-ed input:not(.num input) { font: inherit; color: var(--text); background: var(--card); border: 1px solid var(--borde); border-radius: 10px; padding: 8px; min-width: 0; }
+.tramo-ed .inline > input { flex: 1; }
+.tramo-t { width: 96px; flex-shrink: 0; }
+.sonido { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--borde); }
+.tramo-ed select { width: auto; flex: 0 0 auto; }
+.tramo-ed .inline > input { flex: 1 1 auto; width: auto; min-width: 0; }
+.chip-descanso { flex-direction: row; }

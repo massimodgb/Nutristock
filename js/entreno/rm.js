@@ -45,7 +45,7 @@ export function rmParaLinea(l, marcas) {
 
 // ---------- v3: referencia, Training Max, estimado aceptado y redondeo ----------
 // Ajustes (settings.entreno): { redondeo: 1, modo: 'cercano'|'abajo', usarTM: false, tm: { id: kg }, estimados: { id: true } }
-export const CFG_ENTRENO = { redondeo: 1, modo: 'cercano', usarTM: false, tm: {}, estimados: {} };
+export const CFG_ENTRENO = { redondeo: 1, modo: 'cercano', usarTM: false, tm: {}, estimados: {}, descanso: 90 };
 export const cfgEntreno = c => ({ ...CFG_ENTRENO, ...(c || {}) });
 
 // Redondea a una carga que se puede montar (paso en kg; 0 = sin redondear)

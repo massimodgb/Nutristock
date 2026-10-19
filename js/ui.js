@@ -1,6 +1,7 @@
 // Piezas de interfaz reutilizables
 import { html, useEffect, useState, useErrorBoundary } from './lib.js';
 import { GROUPS, fmt, parseNum } from './nutri.js';
+import { aSegundos, leerTiempo, fmtTiempo } from './tiempo.js';
 
 // Hoja que sube desde abajo (estilo iOS)
 // Hoja que sube desde abajo (estilo iOS).
@@ -152,4 +153,42 @@ function Seguro({ children }) {
   const [error] = useErrorBoundary(e => console.error(e));
   if (error) return html`<p class="error">Algo ha fallado aquí: ${String(error.message || error)}. Cierra y vuelve a intentarlo; si se repite, haz captura para Claude.</p>`;
   return children;
+}
+
+// Tiempo de un resultado en DOS casillas (minutos y segundos), con teclado numérico.
+// Así "15 min 40 s" no se convierte en "1540". Devuelve segundos (o null si está vacío o no es válido).
+export function TiempoInput({ segundos, original, onChange }) {
+  const ini = segundos ?? leerTiempo(original)?.s ?? null;
+  const dudoso = segundos == null && leerTiempo(original)?.dudoso;
+  const [min, setMin] = useState(ini == null ? '' : String(Math.floor(ini / 60)));
+  const [seg, setSeg] = useState(ini == null ? '' : String(ini % 60).padStart(2, '0'));
+  const [error, setError] = useState('');
+  const cambiar = (m, s) => {
+    setMin(m); setSeg(s);
+    const total = aSegundos(m === '' ? null : m, s === '' ? null : s);
+    if ((m !== '' || s !== '') && total == null) { setError('Los segundos van de 0 a 59'); return; }
+    setError('');
+    onChange(total);
+  };
+  return html`
+    <div class="tiempo-input">
+      <label class="num"><input inputmode="numeric" pattern="[0-9]*" value=${min} placeholder="0" aria-label="Minutos"
+        onInput=${e => cambiar(e.target.value.replace(/\D/g, ''), seg)} onFocus=${e => e.target.select()} /><span>min</span></label>
+      <b aria-hidden="true">:</b>
+      <label class="num"><input inputmode="numeric" pattern="[0-9]*" maxlength="2" value=${seg} placeholder="00" aria-label="Segundos"
+        onInput=${e => cambiar(min, e.target.value.replace(/\D/g, '').slice(0, 2))} onFocus=${e => e.target.select()} /><span>s</span></label>
+    </div>
+    ${error ? html`<small class="aviso-rm">${error}</small>` : dudoso ? html`<small class="aviso-rm">Estaba apuntado como «${original}»: lo leo como ${fmtTiempo(ini)}. Revísalo.</small>` : ''}`;
+}
+
+// Destello a pantalla completa al cambiar de tramo o terminar un descanso (lo pide sonido.js)
+export function Destello() {
+  const [on, setOn] = useState(null);
+  useEffect(() => {
+    let t;
+    const f = e => { setOn(e.detail || 'cambio'); clearTimeout(t); t = setTimeout(() => setOn(null), 450); };
+    window.addEventListener('ns-destello', f);
+    return () => { window.removeEventListener('ns-destello', f); clearTimeout(t); };
+  }, []);
+  return on ? html`<div class=${'destello ' + on} aria-hidden="true"></div>` : null;
 }

@@ -1,8 +1,11 @@
 // Entreno: pegas lo que te manda la entrenadora, lo ves ordenado, usas el reloj y apuntas pesos y resultados.
-import { html, useState, useMemo } from '../lib.js';
+import { html, useState, useMemo, useEffect, useRef } from '../lib.js';
 import { db, useLive, getSetting, setSetting } from '../db.js';
 import { fmt, todayStr, addDays, fmtDate } from '../nutri.js';
-import { Sheet, Num, Seg, Empty, Icon, toast } from '../ui.js';
+import { Sheet, Num, Seg, Empty, Icon, toast, TiempoInput, Destello } from '../ui.js';
+import { avisar, desbloquearAudio, configurarSonido } from '../sonido.js';
+import { crearDescanso, restante, pausar, seguir, sumar, progreso, OPCIONES_DESCANSO } from '../descanso.js';
+import { fmtTiempo, textoTiempoResultado } from '../tiempo.js';
 import { parsearEntreno, textoFormato, norm, claveEjercicio, implemento, modoPct } from '../entreno/parser.js';
 import { parsearEntrenoV1 } from '../entreno/parser-v1.js';
 import { LEVANTAMIENTOS, BENCHMARKS } from '../entreno/datos.js';
@@ -20,10 +23,14 @@ export function Entreno({ go, inicial }) {
   const todos = useLive(() => db.workouts.toArray(), []);
   const propios = useLive(() => db.ejercicios.toArray(), []);
   const ajustes = useLive(() => getSetting('entreno', {}), []);
+  const sonido = useLive(() => getSetting('sonido', {}), []);
+  const [descanso, setDescanso] = useState(null); // descanso entre series en marcha
+  useEffect(() => { if (sonido) configurarSonido(sonido); }, [sonido]);
 
   if (!workouts || !marcas || !todos || !propios || !ajustes) return html`<div class="loading">Cargando…</div>`;
   const hist = historialPesos(todos, alias(propios));
   if (reloj) return html`<${RelojActivo} cfg=${reloj.cfg} onResultado=${reloj.onResultado} onCerrar=${() => setReloj(null)} />`;
+  const empezarDescanso = info => setDescanso(info.dur > 0 ? crearDescanso(info.dur, Date.now(), info) : null);
   const isToday = date === todayStr();
   const cfg = cfgEntreno(ajustes);
 
@@ -43,10 +50,12 @@ export function Entreno({ go, inicial }) {
         </div>
         <${Semana} date=${date} todos=${todos} onDia=${setDate} />
         ${workouts.length === 0 && html`<${Pegar} date=${date} marcas=${marcas} cfg=${cfg} />`}
-        ${workouts.map(w => html`<${Workout} key=${w.id} w=${w} marcas=${marcas} hist=${hist} cfg=${cfg} onReloj=${setReloj} />`)}`}
+        ${workouts.map(w => html`<${Workout} key=${w.id} w=${w} marcas=${marcas} hist=${hist} cfg=${cfg} onReloj=${setReloj} onDescanso=${empezarDescanso} />`)}`}
       ${vista === 'marcas' && html`<${Marcas} marcas=${marcas} cfg=${cfg} />`}
       ${vista === 'ejercicios' && html`<${Ejercicios} />`}
       ${vista === 'relojes' && html`<section class="card"><${Relojes} onIniciar=${cfg => setReloj({ cfg })} /></section>`}
+      ${descanso && html`<${DescansoBarra} d=${descanso} setD=${setDescanso} />`}
+      <${Destello} />
     </div>`;
 }
 
@@ -108,7 +117,7 @@ const textoPct = l => (l.pctModo === 'rango' ? `${fmt(l.pct[0], 1)}-${fmt(l.pct[
 
 // ---------- Un entreno ----------
 const tieneResultados = w => Object.values(w.resultados || {}).some(r => r && Object.keys(r).length);
-function Workout({ w, marcas, hist, cfg, onReloj }) {
+function Workout({ w, marcas, hist, cfg, onReloj, onDescanso }) {
   const [editando, setEditando] = useState(false);
   if (editando) return html`<${Pegar} date=${w.date} inicial=${w.texto} id=${w.id} tieneRes=${tieneResultados(w)} marcas=${marcas} cfg=${cfg} onDone=${() => setEditando(false)} />`;
   const res = w.resultados || {};
@@ -132,14 +141,14 @@ function Workout({ w, marcas, hist, cfg, onReloj }) {
     <p class="muted small center">${hechas}/${lectura.secciones.length} secciones hechas</p>
     ${lectura.secciones.map((s, si) => html`
       <${Seccion} key=${si} s=${s} si=${si} r=${res[si] || {}} marcas=${marcas} hist=${hist} date=${w.date} cfg=${cfg} refs=${w.refs || {}}
-        onRef=${ponerRef} onReloj=${onReloj} onGuardar=${c => guardarRes(si, c)} />`)}
+        onRef=${ponerRef} onReloj=${onReloj} onDescanso=${onDescanso} onGuardar=${c => guardarRes(si, c)} />`)}
     <div class="inline">
       <button class="btn secondary" onClick=${() => setEditando(true)}><${Icon} name="pen" size=${16} /> Editar texto</button>
       <button class="btn danger" onClick=${() => confirm('¿Borrar este entreno y sus resultados?') && db.workouts.delete(w.id)}><${Icon} name="trash" size=${16} /> Borrar</button>
     </div>`;
 }
 
-function Seccion({ s, si, r, marcas, hist, date, cfg, refs, onRef, onReloj, onGuardar }) {
+function Seccion({ s, si, r, marcas, hist, date, cfg, refs, onRef, onReloj, onDescanso, onGuardar }) {
   const esWod = s.formato && ES_WOD.includes(s.formato.tipo);
   const relojSeccion = s.formato && {
     cfg: s.formato,
@@ -152,7 +161,8 @@ function Seccion({ s, si, r, marcas, hist, date, cfg, refs, onRef, onReloj, onGu
         hecho: true,
       })
       : x => onGuardar({
-        tiempo: s.formato.tipo === 'fortime' || s.formato.tipo === 'rondas' ? mmss(x.segundos) : r.tiempo,
+        tiempo: s.formato.tipo === 'fortime' || s.formato.tipo === 'rondas' ? fmtTiempo(x.segundos) : r.tiempo,
+        tiempoS: s.formato.tipo === 'fortime' || s.formato.tipo === 'rondas' ? x.segundos : r.tiempoS ?? null,
         rondas: x.rondas || r.rondas, hecho: true,
       }),
   };
@@ -192,7 +202,8 @@ function Seccion({ s, si, r, marcas, hist, date, cfg, refs, onRef, onReloj, onGu
             </div>`}
           ${p.lineas.map((l, li) => html`
             <${Linea} l=${l} clave=${`${pi}-${li}`} r=${r} marcas=${marcas} hist=${hist} date=${date} cfg=${cfg}
-              elegida=${refs[`${si}-${pi}-${li}`]} onRef=${id => onRef(`${si}-${pi}-${li}`, id)} onGuardar=${onGuardar} />`)}
+              elegida=${refs[`${si}-${pi}-${li}`]} onRef=${id => onRef(`${si}-${pi}-${li}`, id)} onGuardar=${onGuardar}
+              onReloj=${onReloj} onDescanso=${onDescanso} />`)}
           ${p.links?.map(u => html`<a class="video" href=${u} target="_blank" rel="noopener">▶ Ver vídeo</a>`)}
         </div>`)}
       <${Resultado} s=${s} r=${r} esWod=${esWod} onGuardar=${onGuardar} onHecho=${completar} />
@@ -242,7 +253,7 @@ function AvisoRef({ base: ref, l, marcas, elegida, onRef, compacto }) {
     </div>`;
 }
 
-function Linea({ l, clave, r, marcas, hist, date, cfg, elegida, onRef, onGuardar }) {
+function Linea({ l, clave, r, marcas, hist, date, cfg, elegida, onRef, onGuardar, onReloj, onDescanso }) {
   if (l.tipo === 'instruccion') return html`<div class="linea instruccion">${l.texto}</div>`;
   if (l.tipo === 'encabezado') return html`<div class="linea encabezado">${l.texto}</div>`;
   if (l.tipo === 'formato') return html`<div class="linea formato">${l.texto}${l.descanso ? html` <span class="tag">descanso ${mmss(l.descanso)}</span>` : ''}</div>`;
@@ -256,14 +267,59 @@ function Linea({ l, clave, r, marcas, hist, date, cfg, elegida, onRef, onGuardar
       ${l.tipo === 'complejo'
         ? html`<div><span class="tag">Complejo</span> <b>${nombre}</b>${l.series ? html` <small class="muted">· ${l.series} series${l.intervalo ? ` · cada ${mmss(l.intervalo)}` : ''}</small>` : ''}</div>`
         : html`<div>${l.texto}${l.prescripcion && html` <b>${l.prescripcion}</b>`}</div>`}
-      ${l.descanso && html`<small class="muted">Descanso ${mmss(l.descanso)} entre series</small>`}
+      ${pauta.series && (l.intervalo
+        ? html`<button class="chip intervalo" onClick=${() => onReloj?.({ cfg: { tipo: 'emom', intervalo: l.intervalo, total: l.intervalo * (l.series || pauta.series.length) } })}>
+            <${Icon} name="bolt" size=${13} /> Reloj: cada ${mmss(l.intervalo)} × ${l.series || pauta.series.length} (intervalo fijo)</button>`
+        : html`<${ChipDescanso} seg=${descansoDe(l, clave, r, cfg)} desdeTexto=${!!l.descanso && r.descansos?.[clave] == null}
+            onChange=${v => onGuardar({ descansos: { ...(r.descansos || {}), [clave]: v } })} />`)}
       ${carga && html`<div class="carga"><${Icon} name="pesa" size=${16} /> <b>${propio ? `${propio}: ` : ''}${carga}</b></div>`}
       ${l.pct?.length > 0 && html`<small class="pct">${textoPct(l)}${l.pctModo === 'dudoso' ? html` <span class="aviso-rm">(${l.pct.length} % para ${l.series} series: revisa)</span>` : ''}</small>`}
       ${rm && html`<${AvisoRef} base=${rm} l=${l} marcas=${marcas} elegida=${elegida} onRef=${onRef} />`}
       ${l.links?.map(u => html` <a class="video" href=${u} target="_blank" rel="noopener">▶ vídeo</a>`)}
       ${propio && l.tipo !== 'complejo' && html`<${UltimaVez} lista=${hist[claveEjercicio(propio)]} date=${date} />`}
-      ${pauta.series && html`<${Series} l=${l} clave=${clave} r=${r} plan=${pauta.series} marcas=${marcas} onGuardar=${onGuardar} />`}
+      ${pauta.series && html`<${Series} l=${l} clave=${clave} r=${r} plan=${pauta.series} marcas=${marcas} onGuardar=${onGuardar}
+        descanso=${l.intervalo ? 0 : descansoDe(l, clave, r, cfg)} onDescanso=${onDescanso} />`}
       ${!pauta.series && propio && l.tipo !== 'complejo' && html`<${PesoLinea} l=${l} clave=${clave} r=${r} marcas=${marcas} ultimo=${hist[claveEjercicio(propio)]?.find(h => h.date < date)} onGuardar=${onGuardar} />`}
+    </div>`;
+}
+
+// Descanso de una línea: el que elegiste > el que dice el texto ("Rest 90 seg") > el que pusiste por defecto
+const descansoDe = (l, clave, r, cfg) => r.descansos?.[clave] ?? l.descanso ?? cfg?.descanso ?? 90;
+function ChipDescanso({ seg, desdeTexto, onChange }) {
+  return html`
+    <label class="chip-descanso">Descanso entre series
+      <select value=${seg} onChange=${e => onChange(+e.target.value)} aria-label="Descanso entre series">
+        ${[...new Set([...OPCIONES_DESCANSO, seg])].sort((a, b) => a - b).map(v => html`<option value=${v}>${v ? mmss(v) : 'Sin descanso'}</option>`)}
+      </select>${desdeTexto ? html`<small class="muted"> (lo dice la pauta)</small>` : ''}
+    </label>`;
+}
+
+// Barra del descanso en marcha: cuenta atrás grande, siguiente serie, pausa, +15 s y saltar
+function DescansoBarra({ d, setD }) {
+  const [, tick] = useState(0);
+  const st = useRef({ ultimo: null, avisado: false, inicio: null });
+  if (st.current.inicio !== d.inicio) st.current = { ultimo: null, avisado: false, inicio: d.inicio };
+  useEffect(() => {
+    const id = setInterval(() => tick(x => x + 1), 250);
+    let wl = null;
+    navigator.wakeLock?.request('screen').then(w => { wl = w; }).catch(() => {});
+    return () => { clearInterval(id); wl?.release?.(); };
+  }, [d.inicio]);
+  const q = restante(d), seg = Math.ceil(q), fin = q <= 0;
+  if (!d.pausadoEn && !fin && seg !== st.current.ultimo) { if (seg <= 3 && seg >= 1) avisar('cuenta'); st.current.ultimo = seg; }
+  if (fin && !st.current.avisado) { st.current.avisado = true; avisar('fin', 'Siguiente serie'); setTimeout(() => setD(x => (x === d ? null : x)), 5000); }
+  return html`
+    <div class=${'descanso-barra' + (fin ? ' fin' : '')} role="timer" aria-live="polite">
+      <div class="db-prog"><i style=${{ transform: `scaleX(${progreso(d)})` }}></i></div>
+      <div class="db-fila">
+        <div class="grow"><small>${fin ? '¡A por la siguiente!' : d.pausadoEn ? 'Descanso en pausa' : 'Descanso'}</small>
+          <b class="db-num">${fin ? '0:00' : mmss(q)}</b>
+          ${d.siguiente && html`<small class="muted">Siguiente: ${d.siguiente}</small>`}</div>
+        ${!fin && html`
+          <button class="btn small secondary" onClick=${() => setD(d.pausadoEn ? seguir(d) : pausar(d))}>${d.pausadoEn ? 'Seguir' : 'Pausa'}</button>
+          <button class="btn small secondary" onClick=${() => setD(sumar(d, 15))}>+15 s</button>`}
+        <button class="btn small" onClick=${() => setD(null)}>${fin ? 'Cerrar' : 'Saltar'}</button>
+      </div>
     </div>`;
 }
 
@@ -271,7 +327,7 @@ function Linea({ l, clave, r, marcas, hist, date, cfg, elegida, onRef, onGuardar
 // Se guarda cada serie al momento (con su plan) para ver planificado frente a hecho.
 const estadoDe = f => (!f ? null : f.estado || (f.kg != null ? 'hecha' : null)); // las antiguas {kg, reps} cuentan como hechas
 const ESTADOS = [{ id: 'hecha', label: 'Hecha' }, { id: 'incompleta', label: 'Incompleta' }, { id: 'fallida', label: 'Fallida' }];
-function Series({ l, clave, r, plan, marcas, onGuardar }) {
+function Series({ l, clave, r, plan, marcas, onGuardar, descanso = 0, onDescanso }) {
   const guardadas = r.series?.[clave] || [];
   const [edit, setEdit] = useState(null); // { i, kg, reps, estado, nota }
   const complejo = l.tipo === 'complejo';
@@ -281,6 +337,12 @@ function Series({ l, clave, r, plan, marcas, onGuardar }) {
     arr[i] = datos ? { ...datos, plan: planGuardado(plan[i]) } : null;
     await onGuardar({ series: { ...(r.series || {}), [clave]: arr } });
     setEdit(null);
+    // Serie terminada (y no era la última): empieza el descanso
+    const sig = arr.findIndex((x, j) => j < plan.length && !estadoDe(x));
+    if (datos && !estadoDe(guardadas[i]) && sig >= 0 && descanso > 0) {
+      const p = plan[sig];
+      onDescanso?.({ dur: descanso, siguiente: `S${sig + 1}${p.kg != null ? ` · ${fmt(p.kg, 1)} kg` : ''}${complejo ? '' : ` × ${p.reps ?? '?'}`}` });
+    }
     if (datos?.estado === 'hecha' && !complejo && l.ejercicios?.[0] && datos.kg && datos.reps) {
       if (!(await registrarRecords(l.ejercicios[0], [datos], marcas))) toast(`Serie ${i + 1} ✓`);
     } else toast(datos ? `Serie ${i + 1}: ${ESTADOS.find(e => e.id === datos.estado)?.label.toLowerCase()}` : 'Serie borrada');
@@ -319,7 +381,7 @@ function Series({ l, clave, r, plan, marcas, onGuardar }) {
               <div class="chips">${ESTADOS.map(e => html`<button class=${'chip' + (edit.estado === e.id ? ' on' : '')} onClick=${() => setEdit({ ...edit, estado: e.id })}>${e.label}</button>`)}</div>
               <input value=${edit.nota} placeholder="Nota (opcional): técnica, molestias…" onInput=${ev => setEdit({ ...edit, nota: ev.target.value })} />
               <div class="inline">
-                <button class="btn small" onClick=${() => guardarSerie(i, { kg: edit.kg, reps: complejo ? p.reps : edit.reps, estado: edit.estado, nota: edit.nota.trim() || null })}>Guardar serie ${i + 1}</button>
+                <button class="btn small" onClick=${() => { desbloquearAudio(); guardarSerie(i, { kg: edit.kg, reps: complejo ? p.reps : edit.reps, estado: edit.estado, nota: edit.nota.trim() || null }); }}>Guardar serie ${i + 1}</button>
                 ${g && html`<button class="link small" onClick=${() => guardarSerie(i, null)}>Borrar</button>`}
                 <button class="link small" onClick=${() => setEdit(null)}>Cerrar</button>
               </div>
@@ -327,7 +389,7 @@ function Series({ l, clave, r, plan, marcas, onGuardar }) {
       })}
       ${actual >= 0 && !edit && html`
         <div class="sv-acciones">
-          ${plan[actual].kg != null && html`<button class="btn sv-completar" onClick=${() => guardarSerie(actual, { kg: plan[actual].kg, reps: plan[actual].reps, estado: 'hecha', nota: null })}>
+          ${plan[actual].kg != null && html`<button class="btn sv-completar" onClick=${() => { desbloquearAudio(); guardarSerie(actual, { kg: plan[actual].kg, reps: plan[actual].reps, estado: 'hecha', nota: null }); }}>
             <${Icon} name="check" size=${18} /> Completar S${actual + 1} · ${fmt(plan[actual].kg, 1)} kg${complejo ? '' : ` × ${plan[actual].reps ?? '?'}`}</button>`}
           ${plan[actual].kg == null && html`<button class="btn secondary" onClick=${() => abrir(actual)}>Apuntar S${actual + 1}</button>`}
           ${!guardadas.some(Boolean) && completas && plan.length > 1 && html`<button class="link small" onClick=${todasAsi}>Hice todas así</button>`}
@@ -341,7 +403,7 @@ function Resultado({ s, r, esWod, onGuardar, onHecho }) {
   if (!abierto) return html`
     <div class="resultado-linea">
       ${r.hecho ? html`<span class="tag ok">✓ Hecho</span>` : ''}
-      ${r.tiempo && html`<span class="tag">${r.tiempo}</span>`}
+      ${(r.tiempo || r.tiempoS != null) && html`<span class="tag">${textoTiempoResultado(r)}</span>`}
       ${r.porBloque && html`<span class="tag">${r.porBloque}</span>`}
       ${r.rondas ? html`<span class="tag">${r.rondas} rondas${r.reps ? ` + ${r.reps}` : ''}</span>` : ''}
       ${r.rpe && html`<span class="tag">RPE ${r.rpe}</span>`}
@@ -351,7 +413,8 @@ function Resultado({ s, r, esWod, onGuardar, onHecho }) {
   return html`
     <div class="form resultado">
       ${esWod && (tipo === 'fortime' || tipo === 'rondas' || tipo === 'intervalos') && html`
-        <label>Tiempo (mm:ss)<input value=${r.tiempo || ''} placeholder="12:34" inputmode="numeric" onInput=${e => onGuardar({ tiempo: e.target.value })} /></label>`}
+        <label>Tiempo</label>
+        <${TiempoInput} segundos=${r.tiempoS} original=${r.tiempo} onChange=${s => onGuardar({ tiempoS: s, tiempo: s == null ? null : fmtTiempo(s) })} />`}
       ${esWod && (tipo === 'bloques' || tipo === 'segmentos') && html`
         <label>Resultado de cada bloque<input value=${r.porBloque || ''} placeholder=${s.formato.sub === 'fortime' ? '9:41 · 11:02' : '5 · 4 rondas'}
           onInput=${e => onGuardar({ porBloque: e.target.value })} /></label>`}
@@ -385,6 +448,10 @@ function CalculoCargas({ cfg }) {
         <button class=${'chip' + (cfg.modo === v ? ' on' : '')} onClick=${() => guardar({ modo: v })}>${t}</button>`)}</div>
       <small class="muted">Ej.: 62,5 % de 115 kg = 71,875 kg → ${fmt(redondear(71.875, cfg.redondeo, cfg.modo), 2)} kg. El valor teórico se sigue viendo debajo.</small>
       <label class="inline"><input type="checkbox" checked=${cfg.usarTM} onChange=${e => guardar({ usarTM: e.target.checked })} /> Usar mi Training Max cuando lo tenga (se pone en cada levantamiento)</label>
+      <label>Descanso entre series por defecto
+        <select value=${cfg.descanso} onChange=${e => guardar({ descanso: +e.target.value })}>
+          ${OPCIONES_DESCANSO.map(v => html`<option value=${v}>${v ? mmss(v) : 'Sin descanso'}</option>`)}</select></label>
+      <small class="muted">Si la pauta dice "Rest 90 seg", se usa eso. Al completar una serie empieza solo.</small>
     </section>`;
 }
 
@@ -488,7 +555,8 @@ function MarcaDetalle({ x, tipo, marcas, cfg = {} }) {
           <label>Kilos<${Num} value=${kg} onChange=${setKg} suffix="kg" /></label>
           <label>Repeticiones<${Num} value=${reps} onChange=${setReps} suffix="RM" /></label>
         </div>` : html`
-        <label>${x.tipo === 'amrap' ? 'Rondas + reps (ej: 18+5)' : 'Tiempo (ej: 4:35)'}<input value=${resultado} onInput=${e => setResultado(e.target.value)} /></label>`}
+        ${x.tipo === 'amrap' ? html`<label>Rondas + reps (ej: 18+5)<input value=${resultado} onInput=${e => setResultado(e.target.value)} /></label>`
+          : html`<label>Tiempo</label><${TiempoInput} segundos=${null} original=${resultado} onChange=${s => setResultado(s == null ? '' : fmtTiempo(s))} />`}`}
       <label>Fecha<input type="date" value=${fecha} onInput=${e => setFecha(e.target.value)} /></label>
       <button class="btn" disabled=${tipo === 'fuerza' ? !kg || !reps : !resultado.trim()} onClick=${add}>Guardar</button>
       <h4>Historial</h4>
@@ -626,7 +694,7 @@ function EjercicioDetalle({ e, todos = [], propios = [], onDone }) {
 }
 
 // ---------- utilidades ----------
-const mmss = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+const mmss = s => fmtTiempo(Math.ceil(s));
 function valorBench(txt, tipo) {
   if (tipo === 'amrap') { const [r, e] = txt.split('+').map(x => parseInt(x) || 0); return r * 1000 + e; }
   const [m, s] = txt.split(':').map(x => parseInt(x) || 0);
