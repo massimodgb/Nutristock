@@ -219,6 +219,109 @@
       return g.length === 2 && g[0].tipo === 'grupo' && An.platosDe(g[0].logs) === 4 || g;
     });
 
+    // ---------- v3 · Fase 1: precisión nutricional ----------
+    const Pr = await import('/js/precision.js');
+    const Im = await import('/js/importar.js');
+    const etqES = 'Información nutricional\nPor 100 g Por ración (30 g)\nValor energético 1550 kJ / 370 kcal 465 kJ / 111 kcal\nGrasas 7 g 2,1 g\n de las cuales saturadas 1,3 g 0,4 g\nHidratos de carbono 59 g 17,7 g\n de los cuales azúcares 1 g 0,3 g\nFibra alimentaria 10 g 3 g\nProteínas 13,5 g 4 g\nSal 0,02 g 0,01 g';
+    await prueba('Etiqueta: columna "por 100 g" primero (lo de siempre sigue igual)', () => {
+      const n = Im.parseEtiqueta(etqES);
+      return n.kcal === 370 && n.fat === 7 && n.sat === 1.3 && n.carb === 59 && n.prot === 13.5 || n;
+    });
+    await prueba('Etiqueta: si la ración va primero, coge la columna de 100 g (370 kcal, no 111)', () => {
+      const r = Im.parseEtiquetaInfo('Nutrition facts per serving (30 g) per 100 g\nEnergy 111 kcal 370 kcal\nFat 2.1 g 7 g\nCarbohydrate 17.7 g 59 g\nProtein 4 g 13.5 g');
+      return r.n.kcal === 370 && r.n.fat === 7 && r.n.carb === 59 && r.n.prot === 13.5 && !!r.nota || r;
+    });
+    await prueba('Etiqueta: solo por ración de 30 g → la pasa a 100 g', () => {
+      const r = Im.parseEtiquetaInfo('Per serving (30 g)\nEnergy 111 kcal\nFat 2.1 g\nCarbohydrate 17.7 g\nProtein 4 g');
+      return r.n.kcal === 370 && r.n.fat === 7 && r.n.prot === 13.3 || r;
+    });
+    await prueba('Etiqueta: avisa (sin cambiar nada) si las kcal no cuadran con los macros', () => {
+      const r = Im.parseEtiquetaInfo('Valor energético 111 kcal\nGrasas 7 g\nHidratos de carbono 59 g\nProteínas 13,5 g');
+      return r.n.kcal === 111 && r.duda === true || r;
+    });
+    await prueba('Sin dato ≠ 0: un producto sin grasa lo dice; los alimentos base están completos', () => {
+      const f = Pr.faltanDatos({ n: { kcal: 100, prot: 5, carb: 10, fat: null } });
+      return f.join() === 'fat' && FOODS.every(x => !Pr.faltanDatos(x).length) || f;
+    });
+    await prueba('Airfryer medido: 150 g de patata con ×0,50 = 300 g crudos ≈ 231 kcal', () => {
+      const coc = Pr.conMedida({}, byId['patata'], 'airfryer', 300, 150);
+      const raw = Pr.rawDe(byId['patata'], 150, { metodo: 'airfryer', coccion: coc, byId });
+      return raw === 300 && Math.round(N.nutrFor(byId['patata'], raw).kcal) === 231 || { raw, coc };
+    });
+    await prueba('Un producto de marca usa la medida de su alimento base', () => {
+      const coc = Pr.conMedida({}, byId['patata'], 'airfryer', 300, 150);
+      return Pr.factorPara({ id: 'p-pat', genericId: 'patata' }, byId, 'airfryer', coc).factor === 0.5;
+    });
+    await prueba('Editar gramos conserva los valores con los que se apuntó (y su factor)', () => {
+      const e = Pr.escalarLog({ g: 240, rawG: 320, n: { kcal: 352, prot: 73.6 } }, 120);
+      return e.rawG === 160 && e.n.kcal === 176 && e.n.prot === 36.8 || e;
+    });
+    await prueba('Revisión: avisa de la patata contada como hervida y de la ficha que cambió', () => {
+      const logs = [{ id: 1, date: '2026-10-01', foodId: 'patata', g: 150, rawG: 150, n: { kcal: 115.5 } },
+        { id: 2, date: '2026-10-02', foodId: 'p-y', g: 100, rawG: 100, n: { kcal: 60 } }];
+      const foods = [...FOODS, { id: 'p-y', name: 'Yogur Y', source: 'manual', n: { kcal: 90, prot: 10, carb: 4, fat: 3 } }];
+      const r = Pr.revisarHistorial(logs, foods);
+      return r.registros.length === 2 && r.registros.every(x => x.motivos.length === 1) || r;
+    });
+
+    // Pruebas con la base de datos: SOLO en el ordenador de pruebas (nunca en la app publicada con datos reales)
+    if (['127.0.0.1', 'localhost'].includes(location.hostname)) {
+      const { db, getSetting, setSetting, deleteLog } = await import('/js/db.js');
+      const Hy = await import('/js/views/hoy.js');
+      const Rc = await import('/js/views/receta.js');
+      const cocAntes = await getSetting('coccion', {});
+      const pat = { ...byId['patata'], id: 'zz-test-patata', name: 'Patata (prueba)', source: 'manual' };
+      const carne = { ...byId['picada-ternera'], id: 'zz-test-carne', name: 'Carne (prueba)', source: 'manual', genericId: '' };
+      const limpiar = async () => {
+        const tapers = await db.foods.filter(f => f.source === 'receta' && ['zz-test-patata', 'zz-test-carne'].includes(f.ingredientes?.[0]?.foodId)).toArray();
+        const ids = ['zz-test-patata', 'zz-test-carne', ...tapers.map(t => t.id)];
+        await db.logs.where('foodId').anyOf(ids).delete();
+        await db.lots.where('foodId').anyOf(ids).delete();
+        await db.foods.bulkDelete(ids);
+      };
+      try {
+        await limpiar();
+        await db.foods.bulkPut([pat, carne]);
+        await db.lots.bulkAdd([{ foodId: pat.id, g: 1000, addedAt: 1 }, { foodId: carne.id, g: 1000, addedAt: 1 }]);
+        const foods = await db.foods.toArray();
+        const stockDe = async id => (await db.lots.where('foodId').equals(id).toArray()).reduce((s, l) => s + l.g, 0);
+
+        const tp = await Rc.guardarPreparacion({ food: pat, foods, crudoG: 300, cocidoG: 150, metodo: 'airfryer', descontar: true, dias: 3 });
+        await prueba('Preparación: 300 g de patata cruda → 150 g en airfryer: se descuentan los 300 g crudos', async () =>
+          (await stockDe(pat.id)) === 700 && (await stockDe(tp.id)) === 150 && Math.round(tp.n.kcal) === Math.round(pat.n.kcal * 2) || { crudo: await stockDe(pat.id), taper: await stockDe(tp.id), n: tp.n });
+        await prueba('Preparación: guarda el factor medido para la próxima vez (airfryer ×0,50)', async () =>
+          (await getSetting('coccion', {}))['zz-test-patata']?.metodos?.airfryer === 0.5);
+
+        const tc = await Rc.guardarPreparacion({ food: carne, foods, crudoG: 500, cocidoG: 390, metodo: 'plancha', descontar: true, dias: 3 });
+        const foods2 = await db.foods.toArray();
+        await Hy.saveLog({ date: '2000-01-01', mealId: 'cena', food: tc, g: 190, crudo: false, rawG: 190, n: N.nutrFor(tc, 190), deduct: true, foods: foods2 });
+        await Hy.saveLog({ date: '2000-01-02', mealId: 'comida', food: tc, g: 200, crudo: false, rawG: 200, n: N.nutrFor(tc, 200), deduct: true, foods: foods2 });
+        const logsC = await db.logs.where('foodId').equals(tc.id).toArray();
+        const kcalLogs = logsC.reduce((s, l) => s + l.n.kcal, 0), kcalCrudo = N.nutrFor(carne, 500).kcal;
+        await prueba('Meal prep: 500 g de carne → 390 g; cena 190 g + comida 200 g: la carne cruda se descuenta UNA vez', async () =>
+          (await stockDe(carne.id)) === 500 && (await stockDe(tc.id)) === 0 && Math.abs(kcalLogs - kcalCrudo) < 1.5 || { crudo: await stockDe(carne.id), taper: await stockDe(tc.id), kcalLogs, kcalCrudo });
+
+        const l190 = logsC.find(l => l.g === 190);
+        await Hy.cambiarGramosLog(l190, 150, tc, foods2, Object.fromEntries(foods2.map(f => [f.id, f])));
+        await prueba('Editar 190 → 150 g devuelve 40 g al táper y escala sus valores', async () => {
+          const l = await db.logs.get(l190.id);
+          return (await stockDe(tc.id)) === 40 && Math.abs(l.n.kcal - l190.n.kcal * 150 / 190) < 0.2 || { taper: await stockDe(tc.id), l };
+        });
+        for (const l of await db.logs.where('foodId').equals(tc.id).toArray()) await deleteLog(l);
+        await prueba('Borrar las dos comidas devuelve los 390 g al táper (la carne cruda no cambia)', async () =>
+          (await stockDe(tc.id)) === 390 && (await stockDe(carne.id)) === 500 && (await db.logs.where('foodId').equals(tc.id).count()) === 0);
+
+        await Hy.saveLog({ date: '2000-01-01', mealId: 'cena', food: pat, g: 150, crudo: false, rawG: 300, n: N.nutrFor(pat, 300), deduct: false, foods, metodo: 'airfryer', factor: 0.5 });
+        await prueba('Cada registro guarda método, factor y fuente', async () => {
+          const l = await db.logs.where('foodId').equals(pat.id).first();
+          return l.metodo === 'airfryer' && l.factor === 0.5 && l.fuente === 'manual' && Pr.factorDeLog(l) === 0.5 || l;
+        });
+      } finally {
+        await limpiar();
+        await setSetting('coccion', cocAntes);
+      }
+    }
+
     document.getElementById('resumen').innerHTML = fallos
       ? `<span class="mal">✗ ${fallos} de ${total} comprobaciones fallan. NO publicar.</span>`
       : `<span class="ok">✓ Todo bien (${total} comprobaciones). Se puede publicar.</span>`;

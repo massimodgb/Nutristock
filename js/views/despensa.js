@@ -6,7 +6,7 @@ import { DIAS_HISTORIAL } from '../compra-plan.js';
 import { construirLista, candidatos, textoCantidad } from '../lista-compra.js';
 import { Sheet, Seg, Dot, Empty, Icon, Num, toast } from '../ui.js';
 import { Escaner, resolverCodigo, FoodForm, NoEncontrado, PegarEtiqueta } from './biblioteca.js';
-import { Receta } from './receta.js';
+import { Receta, Preparacion } from './receta.js';
 import { CantidadStock, FichaStock, textoStock, estadoCompra, plural, nombreEnvase, anadirStock } from './stock.js';
 
 export function Despensa({ go }) {
@@ -128,8 +128,8 @@ function AddStock({ foods, lots, prefs, food: inicial, onDone }) {
       onOtro=${() => setModo('escanear')} />`;
   }
   if (modo === 'pegar') {
-    return html`<${PegarEtiqueta} onDone=${n => {
-      setNuevo({ ...nuevo, draft: { ...nuevo.draft, n, source: 'livetext' }, aviso: 'Revisa que los números coincidan con la etiqueta.' });
+    return html`<${PegarEtiqueta} onDone=${(n, nota) => {
+      setNuevo({ ...nuevo, draft: { ...nuevo.draft, n, source: 'livetext' }, aviso: (nota ? nota + ' ' : '') + 'Revisa que los números coincidan con la etiqueta.' });
       setModo('nuevo');
     }} />`;
   }
@@ -140,7 +140,11 @@ function AddStock({ foods, lots, prefs, food: inicial, onDone }) {
   }
   if (modo === 'cantidad' && food) return html`<${CantidadStock} food=${food} onDone=${onDone} />`;
   if (modo === 'receta') return html`<${Receta} foods=${foods} lots=${lots} prefs=${prefs} inicial=${receta} onDone=${onDone} />`;
-  const recetas = foods.filter(f => f.source === 'receta');
+  if (modo === 'preparacion') return html`<${Preparacion} foods=${foods} onDone=${() => onDone()} />`;
+  // "Cocinar otra vez": una sola entrada por receta (la tanda más reciente), sin las preparaciones de un solo alimento
+  const recetas = Object.values(foods
+    .filter(f => f.source === 'receta' && (f.ingredientes?.length || 0) > 1)
+    .reduce((acc, f) => { const k = f.recetaDe || f.id; if (!acc[k] || f.id > acc[k].id) acc[k] = f; return acc; }, {}));
 
   const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const res = foods.filter(f => (f.group === 'hogar' || !(prefs.excluirMar && f.mar)) && norm(`${f.name} ${f.brand || ''}`).includes(norm(q)))
@@ -158,6 +162,8 @@ function AddStock({ foods, lots, prefs, food: inicial, onDone }) {
       <${Icon} name="pen" size=${18} /> Crear producto nuevo (comida o de casa)</button>
     <button class="btn secondary" onClick=${() => { setReceta(null); setModo('receta'); }}>
       <${Icon} name="bolt" size=${18} /> Cociné una receta (guiso, comida para varios días)</button>
+    <button class="btn secondary" onClick=${() => setModo('preparacion')}>
+      <${Icon} name="bolt" size=${18} /> Cociné un alimento (patata, carne, arroz…) para varias comidas</button>
     ${recetas.length > 0 && html`
       <small class="muted">Cocinar otra vez:</small>
       <div class="chips wrap">${recetas.map(f => html`<button class="chip" onClick=${() => { setReceta(f); setModo('receta'); }}>${f.name}</button>`)}</div>`}`;
@@ -307,7 +313,7 @@ function Comprado({ item: it, foods, lots, dias, onDone }) {
   if (modo === 'cargando') return html`<p class="muted">Buscando el producto…</p>`;
   if (modo === 'noencontrado') return html`<${NoEncontrado} r=${r} onPegar=${() => setModo('pegar')}
     onMano=${() => { setR({ ...r, aviso: '' }); setModo('nuevo'); }} onReintentar=${() => leer(r.code)} onOtro=${() => setModo('escanear')} />`;
-  if (modo === 'pegar') return html`<${PegarEtiqueta} onDone=${n => { setR({ ...r, draft: { ...r.draft, n, source: 'livetext' }, aviso: 'Revisa que los números coincidan con la etiqueta.' }); setModo('nuevo'); }} />`;
+  if (modo === 'pegar') return html`<${PegarEtiqueta} onDone=${(n, nota) => { setR({ ...r, draft: { ...r.draft, n, source: 'livetext' }, aviso: (nota ? nota + ' ' : '') + 'Revisa que los números coincidan con la etiqueta.' }); setModo('nuevo'); }} />`;
   if (modo === 'nuevo') return html`<${FoodForm} initial=${r?.draft || { n: {}, genericId: raizBase || '' }}
     aviso=${(r?.aviso ? r.aviso + ' ' : '') + (base ? `Contará como ${base.name}.` : '')} foods=${foods} onSaved=${unir} onDone=${() => setModo('cantidad')} />`;
   if (modo === 'ajustar') return html`<${Ajustar} it=${it} dias=${dias} onDone=${onDone} onVolver=${() => setModo('cantidad')} />`;

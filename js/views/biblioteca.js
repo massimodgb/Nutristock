@@ -3,7 +3,7 @@ import { html, useState, useEffect, useMemo, useRef } from '../lib.js';
 import { db, useLive, getPrefs, round1 } from '../db.js';
 import { NUTRS, GROUPS, fmt, parseNum, todayStr } from '../nutri.js';
 import { Sheet, Num, Toggle, Dot, Empty, Icon, toast } from '../ui.js';
-import { buscarCodigo, parseEtiqueta, iniciarEscaner, leerCodigoDeFoto } from '../importar.js';
+import { buscarCodigo, parseEtiquetaInfo, iniciarEscaner, leerCodigoDeFoto } from '../importar.js';
 import { CantidadStock } from './stock.js';
 import { alimentoPorNombre } from '../plan-pdf.js';
 
@@ -68,8 +68,8 @@ export function Biblioteca({ go }) {
           onOtro=${() => setSheet({ type: 'scan' })} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'paste'} onClose=${() => setSheet(null)} title="Pegar etiqueta">
-        ${sheet?.type === 'paste' && html`<${PegarEtiqueta} onDone=${n => setSheet({ type: 'form',
-          food: { ...(sheet.draft || {}), n, source: 'livetext' }, aviso: 'Revisa que los números coincidan con la etiqueta.' })} />`}
+        ${sheet?.type === 'paste' && html`<${PegarEtiqueta} onDone=${(n, nota) => setSheet({ type: 'form',
+          food: { ...(sheet.draft || {}), n, source: 'livetext' }, aviso: (nota ? nota + ' ' : '') + 'Revisa que los números coincidan con la etiqueta.' })} />`}
       <//>
       <${Sheet} open=${sheet?.type === 'form'} onClose=${() => setSheet(null)} title=${sheet?.food?.id ? 'Editar' : 'Nuevo producto'}>
         ${sheet?.type === 'form' && html`<${FoodForm} key=${sheet.food?.id || 'nuevo'} initial=${sheet.food} aviso=${sheet.aviso}
@@ -201,10 +201,10 @@ export function PegarEtiqueta({ onDone }) {
     <textarea rows="8" placeholder="Valor energético 1046 kJ / 250 kcal&#10;Grasas 10 g&#10;…" value=${txt}
       onInput=${e => setTxt(e.target.value)}></textarea>
     <button class="btn" disabled=${!txt.trim()} onClick=${() => {
-      const n = parseEtiqueta(txt);
+      const { n, nota } = parseEtiquetaInfo(txt);
       const found = Object.values(n).filter(v => v != null).length;
       toast(found ? `Leídos ${found} valores` : 'No reconocí valores, rellénalos a mano');
-      onDone(n);
+      onDone(n, nota);
     }}>Leer etiqueta</button>`;
 }
 
@@ -231,7 +231,8 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
       source: f.source || 'manual',
       group: f.group || generic?.group || 'otro',
       factor: cocido ? f.factor || null : null,
-      n: Object.fromEntries(NUTRS.map(({ k }) => [k, f.n[k] ?? 0])),
+      // Un campo vacío se guarda VACÍO (no como 0): así la app puede avisar de que falta ese dato
+      n: Object.fromEntries(NUTRS.map(({ k }) => [k, hogar ? 0 : f.n[k] ?? null])),
     };
     if (hogar) { food.factor = null; food.genericId = ''; food.mar = false; }
     if (food.source === 'base') food.edited = true;
@@ -281,7 +282,8 @@ export function FoodForm({ initial, aviso, foods, onDone, onSaved }) {
       <div class="grid2">
         ${NUTRS.map(({ k, name, unit }) => html`
           <label>${name.replace('· ', '')}<${Num} value=${f.n[k]} onChange=${v => setN(k, v)} suffix=${unit} /></label>`)}
-      </div>`}
+      </div>
+      <small class="muted">Si la etiqueta no trae un dato, déjalo vacío (no pongas 0): la app te avisará de que falta.</small>`}
 
       <h4>Envase</h4>
       <div class="grid2">

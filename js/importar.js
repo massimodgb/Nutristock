@@ -59,31 +59,80 @@ const REGLAS = [
   ['fat', /(grasa|l[ií]pid|\bfat\b)/],
 ];
 
-export function parseEtiqueta(texto) {
+// Lee una etiqueta pegada y devuelve { n, nota, duda }:
+// - n: valores POR 100 g (si la etiqueta pone primero la ración, se coge la columna de 100 g;
+//   si solo trae ración y dice cuánto pesa, se pasa a 100 g)
+// - nota: qué ha hecho la app, para que lo revises; duda: true si conviene mirarlo con calma
+const RACION = /(raci[oó]n|porci[oó]n|serving|portion|dosis|toma|per pack|por envase)/;
+const CIEN = /(100\s*(g|ml))/;
+
+export function parseEtiquetaInfo(texto) {
+  const t = String(texto || '').toLowerCase().replace(/\r/g, '');
+  const lineas = t.split(/\n+/).map(l => l.trim()).filter(Boolean);
+  // ¿En qué columna está "por 100 g"? Se mira la línea que nombra las dos cosas ("por 100 g | por ración (30 g)")
+  const cab = lineas.find(l => CIEN.test(l) && RACION.test(l));
+  const mR = t.match(/(?:raci[oó]n|porci[oó]n|serving(?:\s*size)?|portion|dosis)[^\d\n]{0,20}(\d+[.,]?\d*)\s*(g|ml)\b/);
+  const racionG = mR ? parseNum(mR[1]) : null;
+  let col = 0, escala = 1, nota = null, duda = false;
+  if (cab) {
+    col = cab.search(CIEN) < cab.search(RACION) ? 0 : 1;
+    if (col === 1) nota = 'La etiqueta pone primero la ración: he cogido la columna "por 100 g".';
+  } else if (!CIEN.test(t) && RACION.test(t)) {
+    if (racionG) { escala = 100 / racionG; nota = `Solo traía valores por ración (${fmtNum(racionG)} g): los he pasado a 100 g.`; }
+    else { nota = 'Parece que los valores son por ración y no dice cuánto pesa: revisa que sean por 100 g.'; duda = true; }
+  }
+  // Todos los números de una línea con su unidad (sin los % de "valor diario")
+  const conUnidad = (l, re) => [...l.matchAll(re)].map(m => parseNum(m[1]));
+  const elegir = vals => (vals.length > col ? vals[col] : vals[0]);
+
   const n = {};
-  const lineas = texto.toLowerCase().split(/\n+/).map(l => l.trim()).filter(Boolean);
   for (let i = 0; i < lineas.length; i++) {
     const l = lineas[i];
-    // Energía: buscamos el número junto a "kcal"
     if (n.kcal == null) {
-      const m = l.match(/(\d+[.,]?\d*)\s*kcal/) || (/(energ|valor energ)/.test(l) && lineas[i + 1]?.match(/(\d+[.,]?\d*)\s*kcal/));
-      if (m) { n.kcal = parseNum(m[1]); continue; }
+      let ks = conUnidad(l, /(\d+[.,]?\d*)\s*kcal/g);
+      if (!ks.length && /(energ|valor energ|calor[ií]as|calories)/.test(l)) {
+        ks = conUnidad(lineas[i + 1] || '', /(\d+[.,]?\d*)\s*kcal/g);
+        // "Calories 20" (etiquetas de EE. UU.): número sin unidad
+        if (!ks.length && /(calor[ií]as|calories)\s+\d/.test(l)) ks = [parseNum(l.match(/(calor[ií]as|calories)\s+(\d+[.,]?\d*)/)[2])];
+      }
+      if (ks.length) { n.kcal = elegir(ks); continue; }
     }
     for (const [k, re] of REGLAS) {
       if (n[k] != null || !re.test(l)) continue;
-      // número en la misma línea o, si Live Text lo separó, en la siguiente
-      const num = l.match(/(\d+[.,]?\d*)\s*g\b/) || l.match(/(\d+[.,]?\d*)/) || lineas[i + 1]?.match(/^(?:<\s*)?(\d+[.,]?\d*)/);
-      if (num) n[k] = parseNum(num[1]);
+      // número(s) en la misma línea o, si Live Text lo separó, en la siguiente
+      const gs = conUnidad(l, /(\d+[.,]?\d*)\s*g\b/g);
+      if (gs.length) n[k] = elegir(gs);
+      else {
+        const num = l.match(/(\d+[.,]?\d*)/) || lineas[i + 1]?.match(/^(?:<\s*)?(\d+[.,]?\d*)/);
+        if (num) n[k] = parseNum(num[1]);
+      }
       break;
+    }
+    // Sodio en mg (etiquetas de EE. UU.) si no hay sal: sal = sodio × 2,5
+    if (n.salt == null && /(sodio|sodium)/.test(l)) {
+      const mg = conUnidad(l, /(\d+[.,]?\d*)\s*mg\b/g);
+      if (mg.length) n.salt = Math.round(elegir(mg) * 2.5) / 1000;
     }
   }
   // Si no venían las kcal pero sí kJ, convertimos
   if (n.kcal == null) {
-    const kj = texto.toLowerCase().match(/(\d+[.,]?\d*)\s*kj/);
-    if (kj) n.kcal = Math.round(parseNum(kj[1]) / 4.184);
+    const kj = conUnidad(t, /(\d+[.,]?\d*)\s*kj/g);
+    if (kj.length) n.kcal = Math.round(elegir(kj) / 4.184);
   }
-  return n;
+  if (escala !== 1) for (const k of Object.keys(n)) n[k] = Math.round(n[k] * escala * 10) / 10;
+  // Aviso (sin cambiar nada) si las kcal no cuadran con los macros
+  if (n.kcal && n.prot != null && n.carb != null && n.fat != null) {
+    const est = 4 * n.prot + 4 * n.carb + 9 * n.fat + 2 * (n.fib || 0);
+    if (Math.abs(n.kcal - est) / n.kcal > 0.25 && Math.abs(n.kcal - est) > 25) {
+      nota = (nota ? nota + ' ' : '') + `Ojo: ${fmtNum(n.kcal)} kcal no cuadran con los macros (darían unas ${Math.round(est)}). Revisa la columna.`;
+      duda = true;
+    }
+  }
+  return { n, nota, duda };
 }
+
+export const parseEtiqueta = texto => parseEtiquetaInfo(texto).n;
+const fmtNum = x => String(Math.round(x * 10) / 10).replace('.', ',');
 
 // ---------- Escáner de código de barras ----------
 // Motor ZXing (zxing-cpp en WebAssembly): gratis, muy fiable y funciona en el iPhone,

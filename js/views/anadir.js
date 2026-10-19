@@ -3,13 +3,14 @@
 // en una "cesta" con el total abajo. Varios platos se guardan como UNA comida (mismo "grupo").
 // El plan no se toca: estos registros no ocupan ningún bloque del plan.
 import { html, useState, useEffect } from '../lib.js';
-import { db, useLive, getSetting, candidateIds, deductStock, restoreStock, deleteLog, round1 } from '../db.js';
-import { sumN, nutrFor, toRaw, visibleFood, fmt, todayStr, addDays } from '../nutri.js';
+import { db, useLive, getSetting, deleteLog, round1 } from '../db.js';
+import { sumN, nutrFor, toRaw, visibleFood, fmt, todayStr, addDays, cookFactor } from '../nutri.js';
+import { raizDe, nombreMetodo } from '../precision.js';
 import { Num, Seg, Dot, Icon, toast } from '../ui.js';
 import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
 import { PLATOS_BUFFET, TAMANOS_PLATO, CATS_BUFFET } from '../data/platos-buffet.js';
-import { saveLog } from './hoy.js';
+import { saveLog, cambiarGramosLog } from './hoy.js';
 
 const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const VACIAS = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'con', 'y', 'en', 'un', 'una', 'unos', 'unas', 'mi', 'su', 'al', 'a', 'por',
@@ -28,7 +29,7 @@ export const rangoDe = x => x.rango || (x.m && x.m !== 'Venezuela'
 export function calcularLinea(it, byId) {
   if (it.tipo === 'food') {
     const g = it.porUnidad ? it.n * it.food.unitG : it.g;
-    const rawG = toRaw(it.food, g || 0, false, byId);
+    const rawG = it.crudo ? g || 0 : it.factor ? (g || 0) / it.factor : toRaw(it.food, g || 0, false, byId);
     const n = nutrFor(it.food, rawG);
     return { n, g, rawG, aprox: false, rango: [n.kcal, n.kcal] };
   }
@@ -69,6 +70,7 @@ export function AnadirComida({ plan, foods, byId, stock, prefs, date, mealId: me
   const [nombre, setNombre] = useState(nombreExistente || '');
   const [guardando, setGuardando] = useState(false);
   const propios = useLive(() => getSetting('fueraPropios', []), []) || [];
+  const coccion = useLive(() => getSetting('coccion', {}), []) || {};
   const recientes = useLive(() => db.logs.where('date').aboveOrEqual(addDays(todayStr(), -30)).toArray(), []) || [];
   const enInternet = useInternet(q);
 
@@ -95,7 +97,18 @@ export function AnadirComida({ plan, foods, byId, stock, prefs, date, mealId: me
     setQ(''); // listo para buscar lo siguiente (y la cesta queda a la vista)
     if (navigator.vibrate) try { navigator.vibrate(8); } catch {}
   };
-  const addFood = f => anadir({ tipo: 'food', food: f, porUnidad: !!f.unitG, n: 1, g: gramosPorDefecto(f), descontar: (stock[f.id]?.g || 0) > 0 });
+  // Formas de cocinarlo: la de la tabla y las que hayas medido tú (se propone la última que usaste)
+  const metodosDe = f => {
+    const tabla = cookFactor(f, byId), c = coccion[raizDe(f)] || {};
+    const list = [...(tabla != null ? [{ id: '', label: `Cocinado (tabla ×${fmt(tabla, 2)})`, factor: null }] : []),
+      ...Object.entries(c.metodos || {}).map(([m, x]) => ({ id: m, label: `${nombreMetodo(m)} ×${fmt(x, 2)}`, factor: x }))];
+    return list.length ? [...list, { id: 'crudo', label: 'Pesado en crudo', factor: null }] : null;
+  };
+  const addFood = f => {
+    const metodos = metodosDe(f), ult = coccion[raizDe(f)]?.ultimo, m = metodos?.find(x => x.id === ult);
+    anadir({ tipo: 'food', food: f, porUnidad: !!f.unitG, n: 1, g: gramosPorDefecto(f), descontar: (stock[f.id]?.g || 0) > 0,
+      metodos, metodo: m?.id || null, factor: m?.factor || null });
+  };
   const addPlato = p => anadir({ tipo: 'plato', p, n: 1, tam: 'mediano' });
   const addWeb = p => anadir({ tipo: 'web', p, g: p.gramos || 100 });
   const cambiar = (key, cambios) => setCesta(c => c.map(x => (x.key === key ? { ...x, ...cambios } : x)));
@@ -119,7 +132,8 @@ export function AnadirComida({ plan, foods, byId, stock, prefs, date, mealId: me
         for (let i = 0; i < cesta.length; i++) {
           const it = cesta[i], c = calcs[i];
           if (it.tipo === 'food') {
-            await saveLog({ date, mealId, food: it.food, g: round1(c.g), crudo: false, rawG: c.rawG, n: c.n, deduct: !!it.descontar, foods, extra });
+            await saveLog({ date, mealId, food: it.food, g: round1(c.g), crudo: !!it.crudo, rawG: c.rawG, n: c.n, deduct: !!it.descontar, foods,
+              metodo: it.metodo, factor: it.factor, extra });
           } else {
             const nr = Object.fromEntries(Object.entries(c.n).map(([k, v]) => [k, round1(v)]));
             await db.logs.add({ date, mealId, optionId: null, blockId: null, name: nombreLinea(it), n: nr, aprox: true, deducted: [],
@@ -235,6 +249,11 @@ function LineaCesta({ it, c, stock, onCambiar, onQuitar }) {
             <div class="lc-g"><${Num} value=${it.g} onChange=${g => onCambiar({ g: g || 0 })} suffix="g" /></div>
             <div class="chips">${[50, 100, 150, 200].map(g => html`<button class=${'chip' + (it.g === g ? ' on' : '')} onClick=${() => onCambiar({ g })}>${g}</button>`)}</div>`}
         </div>
+        ${it.metodos && html`
+          <select class="lc-metodo" aria-label="Cómo lo cocinaste" value=${it.crudo ? 'crudo' : it.metodo || ''}
+            onChange=${e => { const m = it.metodos.find(x => x.id === e.target.value); onCambiar({ crudo: m.id === 'crudo', metodo: m.id && m.id !== 'crudo' ? m.id : null, factor: m.factor }); }}>
+            ${it.metodos.map(m => html`<option value=${m.id}>${m.label}</option>`)}
+          </select>`}
         ${(stock[it.food.id]?.g || 0) > 0 && html`
           <label class="lc-desc"><input type="checkbox" checked=${it.descontar} onChange=${e => onCambiar({ descontar: e.target.checked })} />
             Descontar de la despensa</label>`}`}
@@ -262,14 +281,7 @@ export function GrupoDetalle({ logs, byId, foods, onAnadir, onDone }) {
   const cambiarGramos = async (l, g) => {
     const food = byId[l.foodId];
     if (!food || !g) return;
-    const descontado = (l.deducted || []).reduce((s, d) => s + d.g, 0);
-    await db.transaction('rw', db.lots, db.logs, async () => {
-      await restoreStock(l.deducted);
-      const rawG = toRaw(food, g, l.crudo, byId);
-      const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
-      const n = Object.fromEntries(Object.entries(nutrFor(food, rawG)).map(([k, v]) => [k, round1(v)]));
-      await db.logs.update(l.id, { g, rawG: round1(rawG), n, deducted });
-    });
+    await cambiarGramosLog(l, g, food, foods, byId);
   };
   const renombrar = async v => { for (const l of logs) await db.logs.update(l.id, { grupoNombre: v.trim() || 'Comida libre' }); };
   return html`

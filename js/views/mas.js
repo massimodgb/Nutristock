@@ -8,6 +8,7 @@ import { estadoWhoop, conectarWhoop, comprobarWhoop, desconectarWhoop, sincroniz
 import { exportarCopia, estadoCopia, listarInternas, leerInterna, validarCopia, restaurarCopia } from '../copias.js';
 import { fmt, todayStr, fmtDate, addDays } from '../nutri.js';
 import { Num, Toggle, Icon, Sheet, toast } from '../ui.js';
+import { revisarHistorial } from '../precision.js';
 
 export function Mas({ go }) {
   const weights = useLive(() => db.weights.orderBy('date').reverse().limit(60).toArray(), []);
@@ -360,6 +361,44 @@ function Whoop() {
     </section>`;
 }
 
+// ---------- Revisar registros y productos antiguos (solo informa: no cambia nada) ----------
+// Busca datos que pueden descuadrar las calorías: productos sin kcal o macros, kcal que no cuadran
+// con los macros (¿columna por ración?), patata o boniato asados contados como hervidos, fichas que cambiaron.
+function RevisarHistorial() {
+  const [abierto, setAbierto] = useState(false);
+  const [r, setR] = useState(null);
+  useEffect(() => {
+    (async () => setR(revisarHistorial(await db.logs.toArray(), await db.foods.toArray())))();
+  }, [abierto]);
+  if (!r) return null;
+  const total = r.registros.length + r.productos.length;
+  return html`
+    <h4>Revisar mis datos</h4>
+    <button class="row" onClick=${() => setAbierto(true)}>
+      <span class="grow">${total ? `A revisar: ${[r.productos.length && `${r.productos.length} ${r.productos.length === 1 ? 'producto' : 'productos'}`, r.registros.length && `${r.registros.length} ${r.registros.length === 1 ? 'registro' : 'registros'}`].filter(Boolean).join(' y ')}` : 'No veo nada raro en tus productos ni en tus registros ✓'}
+        <br /><small class="muted">Datos que faltan o no cuadran. Solo informa: no se cambia nada.</small></span>
+      ${total > 0 && html`<small class="muted">Ver</small>`}
+    </button>
+    <${Sheet} open=${abierto} onClose=${() => setAbierto(false)} title="Revisar mis datos">
+      ${abierto && html`
+        <div class="form">
+          <p class="small muted">Nada de esto se ha cambiado. Corrige el producto en Biblioteca y, si quieres, el registro desde Hoy (al tocarlo verás "Recalcular con la ficha actual").</p>
+          ${r.productos.length > 0 && html`
+            <h4>Productos (${r.productos.length})</h4>
+            <div class="list">${r.productos.map(x => html`
+              <div class="row"><span class="grow"><b>${x.food.name}</b>${x.food.brand ? html` <small class="muted">${x.food.brand}</small>` : ''}
+                ${x.motivos.map(m => html`<br /><small class="muted">· ${m}</small>`)}</span></div>`)}</div>`}
+          ${r.registros.length > 0 && html`
+            <h4>Registros (${r.registros.length})</h4>
+            <div class="list">${r.registros.slice(0, 150).map(x => html`
+              <div class="row"><span class="grow"><b>${x.log.name}</b> <small class="muted">${fmtDate(x.log.date)} · ${x.log.g ? fmt(x.log.g) + ' g · ' : ''}${fmt(x.log.n?.kcal)} kcal</small>
+                ${x.motivos.map(m => html`<br /><small class="muted">· ${m}</small>`)}</span></div>`)}</div>
+            ${r.registros.length > 150 && html`<small class="muted">…y ${r.registros.length - 150} más.</small>`}`}
+          ${!total && html`<p>No hay nada que revisar ✓</p>`}
+        </div>`}
+    <//>`;
+}
+
 // ---------- Tus datos: copias y restauración ----------
 function TusDatos({ persist }) {
   const [estado, setEstado] = useState(null);
@@ -415,6 +454,8 @@ function TusDatos({ persist }) {
             <small class="muted">Ver</small>
           </button>`)}
       </div>
+
+      <${RevisarHistorial} />
 
       <label class="btn secondary">
         Restaurar desde un archivo

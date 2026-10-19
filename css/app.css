@@ -733,3 +733,28 @@ button:focus-visible, .btn:focus-visible, a:focus-visible, .fecha-picker:focus-w
 /* Al registrar algo, la cifra de calorías da un pequeño salto para que se note el cambio */
 .hero-num b.cambia { animation: salto 420ms var(--curva); display: inline-block; }
 @keyframes salto { 0% { transform: scale(1); } 35% { transform: scale(1.06); color: var(--accent); } 100% { transform: scale(1); } }
+
+/* ---------- v3 · Precisión nutricional ---------- */
+/* Aviso en Hoy cuando un alimento no tiene todos sus datos */
+button.aviso-faltan { width: 100%; text-align: left; border: 0; color: var(--text); font: inherit; font-size: 14px; margin: 10px 0 0; cursor: pointer; align-items: center; }
+button.aviso-faltan small { color: var(--warn); font-weight: 600; }
+/* ¿Cómo lo cocinaste? y medir un factor */
+.metodo { display: flex; flex-direction: column; gap: 6px; }
+.metodo .chips.wrap { flex-wrap: wrap; }
+.medir { display: flex; flex-direction: column; gap: 8px; background: var(--fill); border-radius: var(--radius-s); padding: 10px; }
+.medir .inline > * { flex: 1; min-width: 0; }
+select.lc-metodo { width: 100%; margin-top: 6px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--borde); background: var(--fill); color: var(--text); font: inherit; font-size: 14px; }
+/* Cómo se calculó un registro */
+dl.traza { margin: 4px 0; display: grid; gap: 6px; font-size: 14px; }
+dl.traza > div { display: flex; gap: 10px; justify-content: space-between; border-bottom: 1px solid var(--borde); padding-bottom: 6px; }
+dl.traza dt { color: var(--muted); flex-shrink: 0; }
+dl.traza dd { margin: 0; text-align: right; }
+/* Revisar el día alimento por alimento */
+details.revisar { margin-top: 16px; }
+details.revisar summary { cursor: pointer; font-weight: 600; padding: 10px 0; color: var(--accent); }
+.revisar-dia { display: flex; flex-direction: column; gap: 8px; }
+.rv-fila { background: var(--fill); border-radius: var(--radius-s); padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.rv-top { display: flex; gap: 10px; align-items: baseline; }
+.rv-top b.grow { font-weight: 600; overflow-wrap: anywhere; }
+.rv-fila .falta { color: var(--warn); }
+.rv-total { background: var(--accent-soft); }

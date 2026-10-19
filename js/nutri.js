@@ -43,6 +43,9 @@ export function nutrFor(food, rawG) {
   return out;
 }
 
+// Redondea a 1 decimal todos los valores de un objeto de nutrientes
+export const round1Obj = n => Object.fromEntries(Object.entries(n).map(([k, v]) => [k, Math.round((v || 0) * 10) / 10]));
+
 export function sumN(list) {
   const out = Object.fromEntries(NUTRS.map(({ k }) => [k, 0]));
   for (const n of list) for (const { k } of NUTRS) out[k] += n?.[k] || 0;
@@ -61,7 +64,7 @@ export function blockFoods(block, plan) {
 
 // ¿Se puede comer? (oculta lo del mar si lo tienes excluido, y las cosas de casa como toallitas)
 export function visibleFood(food, prefs) {
-  return food && food.group !== 'hogar' && !(prefs.excluirMar && food.mar);
+  return food && food.group !== 'hogar' && !food.archivado && !(prefs.excluirMar && food.mar);
 }
 
 // Bloques de una comida según la opción elegida

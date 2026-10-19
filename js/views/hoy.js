@@ -6,8 +6,13 @@ import {
 } from '../db.js';
 import {
   NUTRS, GROUPS, sumN, planRef, blockRef, mealBlocks, blockFoods, visibleFood, cookFactor, toRaw, nutrFor,
-  fmt, fmtG, todayStr, addDays, fmtDate, daysUntil,
+  fmt, fmtG, todayStr, addDays, fmtDate, daysUntil, round1Obj,
 } from '../nutri.js';
+import {
+  METODOS, nombreMetodo, raizDe, factorPara, conMedida, faltanDatos, faltanLog, textoFaltan, fuenteDe,
+  factorDeLog, kcal100DeLog, escalarLog, fichaCambiada,
+} from '../precision.js';
+import { Preparacion } from './receta.js';
 import { Sheet, Num, Toggle, Seg, Dot, MacroLine, Bar, Empty, Icon, toast, hojaRecienCerrada } from '../ui.js';
 import { COMIDAS_FUERA } from '../data/restaurantes.js';
 import { COMIDAS_FUERA_2, SINONIMOS } from '../data/restaurantes2.js';
@@ -77,6 +82,7 @@ export function Hoy({ go }) {
       ${isToday && html`<${RecordatorioCopia} />`}
       <${Hero} total=${total} objetivo=${ref} onClick=${() => setSheet({ type: 'desglose' })} />
       <${MacroTiles} total=${total} objetivo=${ref} />
+      <${AvisoFaltan} logs=${logs} byId=${byId} onClick=${() => setSheet({ type: 'desglose' })} />
       <${Rapido} date=${date} logs=${logs} ayer=${ayer}
         onCopiar=${(titulo, entradas) => setSheet({ type: 'copiar', titulo, entradas })}
         onOtroDia=${() => setSheet({ type: 'otrodia' })} />
@@ -233,8 +239,51 @@ function Resumen({ total, objetivo: ref, onClick }) {
 }
 
 // Desglose del día, al estilo MyFitnessPal: objetivo − comido = te queda
+// Cómo se pesó: en crudo, cocinado (con factor), cocinado de un táper o tal cual (yogur, pan…)
+const estadoPeso = (l, food, factor) => (l.crudo ? 'en crudo' : factor ? 'cocinado' : food?.source === 'receta' ? 'cocinado (táper)' : 'tal cual');
+
+// Aviso en Hoy si algún alimento no tiene calorías o macros: no se cuentan como 0 en silencio
+function AvisoFaltan({ logs, byId, onClick }) {
+  const con = logs.filter(l => faltanLog(l, byId).length);
+  if (!con.length) return null;
+  return html`<button class="aviso warn aviso-faltan" onClick=${onClick}>
+    <span class="grow">${con.length === 1 ? '1 alimento de hoy no tiene' : `${con.length} alimentos de hoy no tienen`} todos sus datos (cuentan como 0): ${con.slice(0, 2).map(l => l.name.split(' · ')[0]).join(', ')}${con.length > 2 ? '…' : ''}</span>
+    <small>Revisar</small></button>`;
+}
+
+// Lista de lo comido con TODO el cálculo a la vista: para comparar con MyFitnessPal o con una etiqueta
+export function RevisarDia({ logs, byId }) {
+  const orden = [...logs].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  const total = sumN(orden.map(l => l.n));
+  return html`
+    <div class="revisar-dia">
+      ${orden.map(l => {
+        const food = byId[l.foodId], fuente = fuenteDe(food, l), factor = factorDeLog(l), k100 = kcal100DeLog(l), falta = faltanLog(l, byId);
+        return html`
+          <div class="rv-fila" key=${l.id}>
+            <div class="rv-top"><b class="grow">${l.name}</b><b>${fmt(l.n.kcal)} kcal</b></div>
+            <small class="muted">
+              ${l.g ? `${fmt(l.g)} g ${estadoPeso(l, food, factor)}` : 'ración'}
+              ${factor ? ` → ${fmt(l.rawG)} g en crudo (×${fmt(factor, 2)}${l.metodo ? `, ${nombreMetodo(l.metodo).toLowerCase()} medido` : ', tabla'})` : ''}
+              ${k100 != null ? ` · ${fmt(k100)} kcal/100 g${factor || l.crudo ? ' crudo' : ''}` : ''}
+              <br />P ${fmt(l.n.prot, 1)} · C ${fmt(l.n.carb, 1)} · G ${fmt(l.n.fat, 1)} · ${fuente.texto}
+            </small>
+            ${falta.length > 0 && html`<small class="falta">Sin dato de ${textoFaltan(falta)}: cuenta como 0</small>`}
+          </div>`;
+      })}
+      <div class="rv-fila rv-total"><div class="rv-top"><b class="grow">Total</b><b>${fmt(total.kcal)} kcal</b></div>
+        <small class="muted">P ${fmt(total.prot)} g · C ${fmt(total.carb)} g · G ${fmt(total.fat)} g</small></div>
+    </div>`;
+}
+
 function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
-  if (!plan || !ref) return html`<p class="muted">Carga el plan de tu nutricionista para ver tus objetivos.</p>`;
+  const revisar = logs.length > 0 && html`
+    <details class="revisar" open=${logs.some(l => faltanLog(l, byId).length)}>
+      <summary>Revisar alimento por alimento</summary>
+      <p class="muted small">Gramos, cocinado o crudo, factor, kcal por 100 g y de dónde sale cada dato. Útil para comparar con MyFitnessPal.</p>
+      <${RevisarDia} logs=${logs} byId=${byId} />
+    </details>`;
+  if (!plan || !ref) return html`<p class="muted">Carga el plan de tu nutricionista para ver tus objetivos.</p>${revisar}`;
   const quedan = ref.kcal - total.kcal;
   const macros = [
     { k: 'prot', name: 'Proteína', color: 'var(--prot)', kcalG: 4 },
@@ -293,6 +342,7 @@ function Desglose({ plan, byId, prefs, logs, choice, total, objetivo: ref }) {
         <tr><td>Fuera del plan</td><td>${fmt(fuera.kcal)}</td><td>0</td>
           <td class="small">${fmt(fuera.prot)} / ${fmt(fuera.carb)} / ${fmt(fuera.fat)}</td></tr>`}
     </table>
+    ${revisar}
 
     <h4>¿De dónde sale el objetivo?</h4>
     <div class="explica">
@@ -465,7 +515,8 @@ function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, da
   const ref = blockRef(block, plan, byId, prefs);
   const esProteina = block.grupo === 'proteina';
   // Cantidad del plan para un alimento (o para el alimento base al que equivale)
-  const gPlan = f => (permitidos.find(x => x.id === f.id) || permitidos.find(x => x.id === f.genericId))?.g || null;
+  const gPlan = f => (permitidos.find(x => x.id === f.id) || permitidos.find(x => x.id === f.genericId)
+    || (f.equivale && permitidos.find(x => x.id === f.equivale || x.id === byId[f.equivale]?.genericId)))?.g || null;
   // Qué parte del bloque cubre un registro: por gramos si está en el plan; si no, por proteína (o calorías)
   const fraccion = l => {
     const f = byId[l.foodId];
@@ -517,6 +568,7 @@ function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, da
       <button class="link back" onClick=${() => setSel(null)}>‹ Elegir otro</button>
       ${enBloque.length > 0 && html`<p class="notice">Llevas el ${fmt(llevas * 100)}% del bloque. Te sugiero ${fmt(sugerir(sel.food) || 0)} g para completarlo.</p>`}
       <${AmountForm} food=${sel.food} defaultG=${sugerir(sel.food)} byId=${byId} foods=${foods} stockG=${sel.st}
+        onTaper=${t => setSel({ food: t.food, st: t.g })}
         onSave=${async r => {
           await saveLog({ ...r, date, mealId: meal.id, optionId, blockId: block.id, foods });
           // Si era un producto sin clasificar, lo clasificamos con el grupo de este bloque
@@ -557,21 +609,50 @@ function BlockSheet({ meal, block, optionId, plan, foods, byId, stock, prefs, da
 }
 
 // Cantidad + vista previa de lo que aporta. Común a plan y "fuera del plan".
-function AmountForm({ food, defaultG, byId, stockG, onSave }) {
+// Si el alimento se cocina, se elige CÓMO (el factor de la tabla o uno que hayas medido tú: airfryer, horno…).
+function AmountForm({ food, defaultG, byId, foods, stockG, onSave, onTaper }) {
+  const coccion = useLive(() => getSetting('coccion', {}), []);
   const [g, setG] = useState(defaultG ?? null);
   const [crudo, setCrudo] = useState(false);
   const [deduct, setDeduct] = useState(stockG > 0);
-  const factor = cookFactor(food, byId);
-  const rawG = g ? toRaw(food, g, crudo, byId) : 0;
-  const n = nutrFor(food, rawG);
+  const [metodo, setMetodo] = useState(undefined); // undefined = el último que usaste con este alimento
+  const [medir, setMedir] = useState(null); // { metodo, crudoG, cocidoG }
+  const [taper, setTaper] = useState(false);
   const ultimo = useLive(() => db.logs.where('foodId').equals(food.id).last(), [food.id]);
+  if (coccion === undefined) return null;
+
+  if (taper) {
+    return html`
+      <button class="link back" onClick=${() => setTaper(false)}>‹ Volver</button>
+      <${Preparacion} foods=${foods} food=${food} onDone=${t => { setTaper(false); if (t) onTaper?.(t); }} />`;
+  }
+
+  const medidos = coccion[raizDe(food)]?.metodos || {};
+  const ult = coccion[raizDe(food)]?.ultimo;
+  const met = metodo === undefined ? (medidos[ult] ? ult : null) : metodo;
+  const fichaFactor = cookFactor(food, byId);
+  const { factor, medido } = factorPara(food, byId, met, coccion);
+  const cocinable = fichaFactor != null || Object.keys(medidos).length > 0;
+  const rawG = g ? (crudo || !factor ? g : g / factor) : 0;
+  const n = nutrFor(food, rawG);
+  const falta = faltanDatos(food);
+  const guardarMedida = async () => {
+    await setSetting('coccion', conMedida(coccion, food, medir.metodo, medir.crudoG, medir.cocidoG));
+    setMetodo(medir.metodo);
+    setCrudo(false);
+    if (!g) setG(medir.cocidoG);
+    toast(`${nombreMetodo(medir.metodo)}: factor ×${fmt(medir.cocidoG / medir.crudoG, 2)} guardado para ${food.name} ✓`);
+    setMedir(null);
+  };
+  const chip = (id, texto) => html`
+    <button class=${'chip' + (!crudo && met === id ? ' on' : '')} onClick=${() => { setMetodo(id); setCrudo(false); }}>${texto}</button>`;
 
   return html`
     <div class="form">
       <h4><${Dot} group=${food.group} /> ${food.name}</h4>
       <${Num} value=${g} onChange=${setG} suffix="g" autofocus />
       ${ultimo?.g && ultimo.g !== g && html`
-        <button class="chip" onClick=${() => { setG(ultimo.g); setCrudo(!!ultimo.crudo); }}>
+        <button class="chip" onClick=${() => { setG(ultimo.g); setCrudo(!!ultimo.crudo); if (ultimo.metodo !== undefined) setMetodo(ultimo.metodo || null); }}>
           Última vez: ${fmt(ultimo.g)} g${ultimo.crudo ? ' (crudo)' : ''}
         </button>`}
       ${food.unitG && html`
@@ -579,28 +660,76 @@ function AmountForm({ food, defaultG, byId, stockG, onSave }) {
           ${[1, 2, 3, 4].map(u => html`
             <button class="chip" onClick=${() => setG(u * food.unitG)}>${u} ${food.unitName || 'ud'}${u > 1 ? 's' : ''}</button>`)}
         </div>`}
-      ${factor && factor !== 1 && html`
-        <${Toggle} label="Lo pesé en crudo" checked=${crudo} onChange=${setCrudo}
-          hint=${crudo ? '' : `${fmt(g || 0)} g cocido ≈ ${fmt(rawG)} g en crudo (factor ${fmt(factor, 2)})`} />`}
+      ${cocinable && html`
+        <div class="metodo">
+          <small class="muted">¿Cómo lo cocinaste?</small>
+          <div class="chips wrap">
+            ${fichaFactor != null && chip(null, `De la tabla ×${fmt(fichaFactor, 2)}`)}
+            ${Object.entries(medidos).map(([m, f]) => chip(m, `${nombreMetodo(m)} ×${fmt(f, 2)}`))}
+            <button class=${'chip' + (crudo ? ' on' : '')} onClick=${() => setCrudo(true)}>Lo pesé en crudo</button>
+            <button class="chip" onClick=${() => setMedir({ metodo: met || 'airfryer', crudoG: null, cocidoG: null })}>+ Otro método (medir)</button>
+          </div>
+          ${medir && html`
+            <div class="medir">
+              <small>Pesa en crudo, cocina y vuelve a pesar. Lo apunto para las próximas veces.</small>
+              <div class="chips wrap">${METODOS.map(m => html`
+                <button class=${'chip' + (medir.metodo === m.id ? ' on' : '')} onClick=${() => setMedir({ ...medir, metodo: m.id })}>${m.name}</button>`)}</div>
+              <div class="inline">
+                <${Num} value=${medir.crudoG} onChange=${v => setMedir({ ...medir, crudoG: v })} suffix="g crudo" />
+                <${Num} value=${medir.cocidoG} onChange=${v => setMedir({ ...medir, cocidoG: v })} suffix="g cocinado" />
+              </div>
+              <button class="btn small" disabled=${!(medir.crudoG > 0 && medir.cocidoG > 0)} onClick=${guardarMedida}>
+                ${medir.crudoG > 0 && medir.cocidoG > 0 ? `Guardar: ${nombreMetodo(medir.metodo).toLowerCase()} ×${fmt(medir.cocidoG / medir.crudoG, 2)}` : 'Pon los dos pesos'}</button>
+            </div>`}
+          <small class="muted">${crudo ? 'Se calcula con los gramos tal cual (en crudo).'
+            : factor ? `${fmt(g || 0)} g cocinado ≈ ${fmt(rawG)} g en crudo (×${fmt(factor, 2)}, ${medido ? 'medido por ti' : 'factor de tabla, aproximado'}).`
+            : 'Sin factor: se cuenta tal cual.'}</small>
+          ${onTaper && html`<button class="link small" onClick=${() => setTaper(true)}>¿Cocinaste más para otras comidas? Pesa la tanda y guárdala como táper</button>`}
+        </div>`}
       <${Toggle} label="Descontar de la despensa" checked=${deduct} onChange=${setDeduct}
         hint=${stockG > 0 ? `En casa: ${fmtG(stockG, food)} → se descontarán ${fmt(Math.min(rawG, stockG))} g` : 'No hay stock registrado'} />
       ${deduct && stockG > 0 && rawG > stockG * 1.02 && html`
         <p class="aviso warn small">Registras ${fmt(rawG)} g en crudo pero en casa solo constan ${fmtG(stockG, food)}: se descontará lo que hay y la comida se apunta entera. Si te falta stock por registrar, añádelo en Despensa.</p>`}
+      ${falta.length > 0 && html`<p class="aviso warn small">Este producto no tiene ${textoFaltan(falta)}: contarán como 0. Puedes completarlo en su ficha (Biblioteca).</p>`}
       <div class="preview"><${MacroLine} n=${n} /></div>
-      <button class="btn" disabled=${!g} onClick=${() => onSave({ food, g, crudo, rawG, n, deduct })}>Guardar</button>
+      <button class="btn" disabled=${!g} onClick=${() => onSave({ food, g, crudo, rawG, n, deduct, metodo: crudo ? null : met, factor: crudo ? null : factor })}>Guardar</button>
     </div>`;
 }
 
 // Descontar de la despensa y apuntar el registro van juntos: o se hacen las dos cosas o ninguna
-export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods, extra = {} }) {
+// Cada registro guarda cómo se calculó (método, factor, datos que faltaban, fuente) para poder revisarlo luego.
+export async function saveLog({ date, mealId, optionId, blockId, food, g, crudo, rawG, n, deduct, foods, metodo, factor, extra = {} }) {
+  const f = crudo ? null : factor ?? (g && rawG && Math.abs(g / rawG - 1) > 0.005 ? Math.round((g / rawG) * 100) / 100 : null);
+  const falta = faltanDatos(food);
   await db.transaction('rw', db.lots, db.logs, async () => {
     const deducted = deduct ? await deductStock(candidateIds(food, foods), rawG) : [];
-    const nr = Object.fromEntries(Object.entries(n).map(([k, v]) => [k, round1(v)]));
     await db.logs.add({
       date, mealId, optionId: optionId || null, blockId: blockId || null,
       foodId: food.id, name: food.name + (food.brand ? ` · ${food.brand}` : ''), group: food.group,
-      g, crudo, rawG: round1(rawG), n: nr, deducted, ts: Date.now(), ...extra,
+      g, crudo, rawG: round1(rawG), n: round1Obj(n), deducted, ts: Date.now(),
+      metodo: metodo || null, factor: f || null, fuente: food.source || null, ...(falta.length ? { faltan: falta } : {}), ...extra,
     });
+  });
+}
+
+// Cambiar los gramos de un registro: devuelve lo descontado y vuelve a descontar (todo o nada).
+// Por defecto escala los valores con los que SE APUNTÓ (la historia no cambia si luego editas la ficha);
+// con conFicha = true recalcula con la ficha actual del producto, manteniendo el factor de entonces.
+export async function cambiarGramosLog(log, g, food, foods, byId, conFicha = false) {
+  const descontado = (log.deducted || []).reduce((s, d) => s + d.g, 0);
+  await db.transaction('rw', db.lots, db.logs, async () => {
+    await restoreStock(log.deducted);
+    const esc = !conFicha && escalarLog(log, g);
+    let rawG, n;
+    if (esc) ({ rawG, n } = esc);
+    else {
+      const factor = factorDeLog(log);
+      rawG = log.crudo ? g : factor ? g / factor : toRaw(food, g, false, byId);
+      n = round1Obj(nutrFor(food, rawG));
+    }
+    const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
+    const falta = conFicha ? faltanDatos(food) : null;
+    await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted, ...(conFicha ? { faltan: falta.length ? falta : null } : {}) });
   });
 }
 
@@ -608,27 +737,31 @@ function LogDetail({ log, byId, foods, onDone }) {
   const descontado = (log.deducted || []).reduce((s, d) => s + d.g, 0);
   const food = log.foodId && byId[log.foodId];
   const [g, setG] = useState(log.g);
-  const guardar = async () => {
-    // Devolvemos lo descontado, recalculamos y volvemos a descontar con el peso nuevo (todo o nada)
-    await db.transaction('rw', db.lots, db.logs, async () => {
-      await restoreStock(log.deducted);
-      const rawG = toRaw(food, g, log.crudo, byId);
-      const deducted = descontado > 0 ? await deductStock(candidateIds(food, foods), rawG) : [];
-      const n = Object.fromEntries(Object.entries(nutrFor(food, rawG)).map(([k, v]) => [k, round1(v)]));
-      await db.logs.update(log.id, { g, rawG: round1(rawG), n, deducted });
-    });
+  const guardar = async (conFicha = false) => {
+    await cambiarGramosLog(log, g, food, foods, byId, conFicha);
     toast('Actualizado ✓');
     onDone();
   };
+  const factor = factorDeLog(log), k100 = kcal100DeLog(log), fuente = fuenteDe(food, log), falta = faltanLog(log, byId);
+  const cambiada = fichaCambiada(log, food);
   return html`
     <div class="form">
       <h4>${log.name}${log.aprox ? html` <span class="tag">aprox.</span>` : ''}</h4>
       ${food && html`
         <div class="inline">
           <${Num} value=${g} onChange=${setG} suffix=${log.crudo ? 'g crudo' : 'g'} />
-          <button class="btn small" disabled=${!g || g === log.g} onClick=${guardar}>Cambiar</button>
+          <button class="btn small" disabled=${!g || g === log.g} onClick=${() => guardar(false)}>Cambiar</button>
         </div>`}
-      ${log.g ? html`<p class="muted">${fmt(log.g)} g ${log.crudo ? 'en crudo' : 'pesado'}${log.rawG !== log.g ? ` · ${fmt(log.rawG)} g en crudo` : ''}</p>` : ''}
+      <dl class="traza">
+        ${log.g ? html`<div><dt>Registrado</dt><dd>${fmt(log.g)} g ${estadoPeso(log, food, factor)}</dd></div>` : ''}
+        ${factor && html`<div><dt>En crudo</dt><dd>${fmt(log.rawG)} g · ×${fmt(factor, 2)} ${log.metodo ? `(${nombreMetodo(log.metodo).toLowerCase()}, medido por ti)` : '(factor de tabla, aproximado)'}</dd></div>`}
+        ${k100 != null && html`<div><dt>Valores usados</dt><dd>${fmt(k100)} kcal por 100 g${factor || log.crudo ? ' en crudo' : ''}</dd></div>`}
+        <div><dt>Fuente</dt><dd>${fuente.texto}</dd></div>
+      </dl>
+      ${falta.length > 0 && html`<p class="aviso warn small">Sin dato de ${textoFaltan(falta)}: cuenta como 0. Complétalo en la ficha del producto.</p>`}
+      ${cambiada && html`
+        <div class="aviso small"><span>La ficha del producto cambió después de apuntarlo (ahora ${fmt(food.n.kcal)} kcal/100 g). Al cambiar los gramos se mantienen los valores de entonces.
+          <button class="link small" onClick=${() => guardar(true)}>Recalcular con la ficha actual</button></span></div>`}
       <table class="ntable">
         ${NUTRS.map(({ k, name, unit }) => html`<tr><td>${name}</td><td>${fmt(log.n[k] || 0, 1)} ${unit}</td></tr>`)}
       </table>
@@ -849,6 +982,7 @@ function EntrenoHoy({ date, go }) {
 const plantilla = l => ({
   mealId: l.mealId, optionId: l.optionId || null, blockId: l.blockId || null, foodId: l.foodId || null,
   name: l.name, g: l.g || null, crudo: !!l.crudo, aprox: !!l.aprox, n: l.n,
+  metodo: l.metodo || null, factor: factorDeLog(l),
 });
 
 function Rapido({ date, logs, ayer, onCopiar, onOtroDia }) {
@@ -888,7 +1022,7 @@ function CopiarSheet({ entradas, plan, foods, byId, stock, date, elecciones, onD
   const calcular = f => {
     const food = f.foodId && byId[f.foodId];
     if (!food || !f.g) return { food: null, n: f.n, rawG: 0 };
-    const rawG = toRaw(food, f.g, f.crudo, byId);
+    const rawG = f.crudo ? f.g : f.factor ? f.g / f.factor : toRaw(food, f.g, false, byId);
     return { food, rawG, n: nutrFor(food, rawG) };
   };
   const elegidas = filas.filter(f => f.incluir);
@@ -906,7 +1040,7 @@ function CopiarSheet({ entradas, plan, foods, byId, stock, date, elecciones, onD
       if (f.optionId) opciones[f.mealId] = f.optionId;
       if (food) {
         await saveLog({ date, mealId: f.mealId, optionId: f.optionId, blockId: f.blockId, food, g: f.g, crudo: f.crudo,
-          rawG, n, deduct: (stock[food.id]?.g || 0) > 0, foods });
+          rawG, n, deduct: (stock[food.id]?.g || 0) > 0, foods, metodo: f.metodo, factor: f.factor });
       } else {
         await db.logs.add({ date, mealId: f.mealId, name: f.name, n: f.n, aprox: f.aprox, deducted: [], ts: Date.now() });
       }
