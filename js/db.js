@@ -181,6 +181,19 @@ export async function deductStockExacto(foodIds, rawG, nombre = '') {
   return deducted;
 }
 
+// "Lo compré y no lo apunté": añade a la despensa SOLO lo que falte en ese momento (se recalcula dentro de la
+// operación). Un doble toque o un reintento no duplican la compra: si ya hay bastante, no añade nada (devuelve 0).
+export async function anadirCompraFaltante({ foodId, ids, necesario, origen = 'compra sin apuntar (al cocinar)' }) {
+  let anadido = 0;
+  await db.transaction('rw', db.lots, async () => {
+    const faltan = round1(necesario - await stockDisponible(ids?.length ? ids : [foodId]));
+    if (faltan <= 0.05) return;
+    await db.lots.add({ foodId, g: faltan, abierto: false, addedAt: Date.now(), origen, compraFaltante: { necesario: round1(necesario), g: faltan } });
+    anadido = faltan;
+  });
+  return anadido;
+}
+
 export async function restoreStock(deducted = []) {
   await db.transaction('rw', db.lots, async () => {
     for (const d of deducted) {

@@ -791,6 +791,26 @@
       const v = C.validarCopia(copiaBuena());
       return v.ok && v.faltanTablas.join() === 'porciones,medidas' && v.avisos.some(a => a.includes('quedará vacío')) || v;
     });
+    // AUD-V3-007: Whoop dañado en una copia
+    const conWhoop = filas => { const d = copiaBuena(); d.whoop = filas; return C.validarCopia(d); };
+    await prueba('Whoop: una fila incompleta ({ id } sin tipo, fecha ni datos) hace rechazar la copia', () =>
+      conWhoop([{ id: 'dato-incompleto' }]).ok === false || conWhoop([{ id: 'dato-incompleto' }]));
+    await prueba('Whoop: tipo desconocido, fecha mala, datos que no son objeto o id que no cuadra → se rechaza', () => {
+      const base = { id: 'ciclo:1', tipo: 'ciclo', fecha: '2026-10-10', d: { id: 1 } };
+      const malas = [{ ...base, tipo: 'otro', id: 'otro:1' }, { ...base, fecha: '10/10/2026' }, { ...base, fecha: null }, { ...base, d: null }, { ...base, d: [1] }, { ...base, d: 'x' }, { ...base, id: 'sueno:1' }];
+      const r = malas.map(f => conWhoop([f]).ok);
+      return r.every(ok => ok === false) || r;
+    });
+    await prueba('Whoop: filas buenas de los 4 tipos (formato de siempre) se aceptan; copia sin Whoop también', () => {
+      const v = conWhoop([
+        { id: 'ciclo:1', tipo: 'ciclo', fecha: '2026-10-10', d: { id: 1, score: { strain: 12 } } },
+        { id: 'recuperacion:1', tipo: 'recuperacion', fecha: '2026-10-10', d: { cycle_id: 1 } },
+        { id: 'sueno:a1', tipo: 'sueno', fecha: '2026-10-10', d: { id: 'a1' } },
+        { id: 'entreno:b2', tipo: 'entreno', fecha: '2026-10-09', d: { id: 'b2' } },
+      ]);
+      const sin = copiaBuena(); delete sin.whoop;
+      return v.ok && C.validarCopia(sin).ok || v.errores;
+    });
 
     if (['127.0.0.1', 'localhost'].includes(location.hostname)) {
       const { db, exportAll, importAll } = await import('/js/db.js');
@@ -897,6 +917,30 @@
         await limpiarP1();
       }
 
+      // ---- AUD-V3-008: «Lo compré y no lo apunté» se aplica una sola vez ----
+      const { anadirCompraFaltante } = await import('/js/db.js');
+      const CF = 'zz-p1-compra';
+      const limpiarCF = async () => { await db.lots.where('foodId').equals(CF).delete(); await db.foods.delete(CF); };
+      try {
+        await limpiarCF();
+        await db.foods.put({ id: CF, name: 'Arroz compra (prueba)', source: 'manual', group: 'almidon', n: { kcal: 350, prot: 7, carb: 77, fat: 1 } });
+        await db.lots.add({ foodId: CF, g: 300, addedAt: 1 });
+        const st = async () => Math.round((await db.lots.where('foodId').equals(CF).toArray()).reduce((s, l) => s + l.g, 0) * 10) / 10;
+        await prueba('Compra faltante con doble toque (dos a la vez): se añaden 200 g UNA vez (300 → 500), con su origen', async () => {
+          const r = await Promise.all([anadirCompraFaltante({ foodId: CF, ids: [CF], necesario: 500 }), anadirCompraFaltante({ foodId: CF, ids: [CF], necesario: 500 })]);
+          const nuevos = (await db.lots.where('foodId').equals(CF).toArray()).filter(l => l.compraFaltante);
+          return (await st()) === 500 && nuevos.length === 1 && nuevos[0].origen === 'compra sin apuntar (al cocinar)' && nuevos[0].g === 200 && r.sort().join() === '0,200' || { st: await st(), r, nuevos };
+        });
+        await prueba('Compra faltante: reintentar no añade nada; si luego necesitas más, solo añade la diferencia', async () => {
+          const r1 = await anadirCompraFaltante({ foodId: CF, ids: [CF], necesario: 500 });
+          const a = await st();
+          const r2 = await anadirCompraFaltante({ foodId: CF, ids: [CF], necesario: 550 });
+          return r1 === 0 && a === 500 && r2 === 50 && (await st()) === 550 || { r1, a, r2, st: await st() };
+        });
+      } finally {
+        await limpiarCF();
+      }
+
       // ---- AUD-V3-001: restaurar una copia de antes de V3 deja los datos EXACTAMENTE como en la copia ----
       // Se trabaja sobre la base de pruebas de este navegador y se deja como estaba al final (nunca sobre datos reales)
       const antes = await exportAll();
@@ -917,6 +961,21 @@
           const e = await falla(() => importAll(rota));
           return !!e && !!(await db.porciones.get('zz-p1-por')) && (await db.foods.count()) === antes.foods.length || e;
         });
+        const permiso = () => localStorage.getItem('nube-permitir-borrado');
+        localStorage.removeItem('nube-permitir-borrado');
+        await prueba('Restaurar una copia con Whoop dañado se rechaza ANTES de tocar nada: datos, copia previa y nube intactos', async () => {
+          const mala = JSON.parse(JSON.stringify(antes)); mala.whoop = [{ id: 'dato-incompleto' }];
+          const nInternas = (await C.listarInternas()).length, nWhoop = await db.whoop.count();
+          const e = await falla(() => C.restaurarCopia(mala, { confirmarBorrado: true }));
+          return !!e && (await db.whoop.count()) === nWhoop && !(await db.whoop.get('dato-incompleto')) && !!(await db.porciones.get('zz-p1-por'))
+            && (await C.listarInternas()).length === nInternas && permiso() === null || { e, permiso: permiso() };
+        });
+        await prueba('Si la restauración falla al guardar, no cambia nada y se retira el permiso de borrar en la nube', async () => {
+          const rota = JSON.parse(JSON.stringify(antes)); rota.foods = [...rota.foods, { id: { roto: 1 }, name: 'Clave imposible' }];
+          const okVal = C.validarCopia(rota).ok;
+          const e = await falla(() => C.restaurarCopia(rota, { confirmarBorrado: true }));
+          return okVal && !!e && permiso() === null && !!(await db.porciones.get('zz-p1-por')) && (await db.foods.count()) === antes.foods.length || { okVal, e, permiso: permiso() };
+        });
         await C.restaurarCopia(v35, { confirmarBorrado: true });
         await prueba('Restaurar una copia v35 confirmando: sin porciones ni medidas de V3, y todo igual que en la copia', async () => {
           const ahora = await exportAll();
@@ -928,6 +987,8 @@
           const ult = (await C.listarInternas())[0];
           return ult?.motivo === 'antes de restaurar' && ult.datos.porciones?.some(p => p.id === 'zz-p1-por') || ult?.motivo;
         });
+        await prueba('Tras restaurar bien, la nube queda avisada de que los borrados son a propósito', () => !!permiso());
+        localStorage.removeItem('nube-permitir-borrado');
       } finally {
         await importAll(antes); // la base de pruebas vuelve a como estaba
       }

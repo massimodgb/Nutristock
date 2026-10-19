@@ -301,6 +301,10 @@ export function programar(ms = 4000) {
 export function permitirBorradoMasivo() {
   try { localStorage.setItem('nube-permitir-borrado', String(Date.now())); } catch {}
 }
+// Si la restauración falla, el permiso se quita: no hay nada que borrar en la nube
+export function retirarBorradoMasivo() {
+  try { localStorage.removeItem('nube-permitir-borrado'); } catch {}
+}
 
 // Se llama al arrancar la app
 export async function iniciarNube() {

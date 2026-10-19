@@ -8,7 +8,7 @@
 import { Dexie } from './lib.js';
 import { db, getSetting, setSetting, exportAll, importAll } from './db.js';
 import { todayStr } from './nutri.js';
-import { permitirBorradoMasivo } from './nube.js';
+import { permitirBorradoMasivo, retirarBorradoMasivo } from './nube.js';
 
 // Base de datos aparte para las copias internas
 const respaldos = new Dexie('nutristock-respaldos');
@@ -21,6 +21,7 @@ const TABLAS = ['foods', 'lots', 'basicos', 'shopping', 'plans', 'logs', 'weight
 const OPCIONALES = ['whoop', 'porciones', 'medidas'];
 const NOMBRE_OPCIONAL = { whoop: 'datos de Whoop', porciones: 'porciones preparadas', medidas: 'medidas corporales' };
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
+const TIPOS_WHOOP = ['ciclo', 'recuperacion', 'sueno', 'entreno'];
 const CLAVE = { foods: 'id', lots: 'id', basicos: 'id', shopping: 'id', plans: 'id', logs: 'id', weights: 'date', settings: 'key', workouts: 'id', marcas: 'id', ejercicios: 'id', whoop: 'id', porciones: 'id', medidas: 'id' };
 
 // ---------- Exportar a archivo ----------
@@ -109,6 +110,10 @@ export function validarCopia(d) {
   // Porciones preparadas (V3): de un táper que esté en la copia, con fecha, comida y gramos válidos
   const porcionMala = lista('porciones').filter(p => p && (!foodIds.has(p.foodId) || !FECHA.test(p.date || '') || !p.mealId || !(typeof p.g === 'number' && p.g > 0))).length;
   if (porcionMala) errores.push(`Hay ${porcionMala} porciones preparadas dañadas (sin táper, sin fecha o sin gramos).`);
+  // Whoop: cada fila es { id: 'tipo:…', tipo, fecha, d } (el mismo formato desde v22). Una fila a medias se rechaza
+  const whoopMalo = lista('whoop').filter(w => w && !(TIPOS_WHOOP.includes(w.tipo) && typeof w.id === 'string' && w.id.startsWith(w.tipo + ':')
+    && FECHA.test(w.fecha || '') && w.d && typeof w.d === 'object' && !Array.isArray(w.d))).length;
+  if (whoopMalo) errores.push(`Hay ${whoopMalo} datos de Whoop dañados (sin tipo, fecha o contenido).`);
   // Medidas corporales (V3): fecha, tipo y un valor positivo
   const medidaMala = lista('medidas').filter(m => m && (!FECHA.test(m.fecha || '') || !m.tipo || !(typeof m.valor === 'number' && m.valor > 0))).length;
   if (medidaMala) errores.push(`Hay ${medidaMala} medidas corporales dañadas (sin fecha, tipo o valor).`);
@@ -148,7 +153,12 @@ export async function restaurarCopia(d, { confirmarBorrado = false } = {}) {
     throw new Error(`No se ha cambiado nada. Esta copia no trae ${borra.map(b => `${b.nombre} (tienes ${b.n})`).join(', ')}: confirma que quieres borrarlos.`);
   }
   await copiaInterna('antes de restaurar'); // si no se puede guardar, no se sigue
-  permitirBorradoMasivo(); // lo que desaparezca al restaurar es a propósito: la nube también debe quitarlo
-  await importAll(d);
+  // Lo que desaparezca al restaurar es a propósito: la nube también debe quitarlo. Se marca antes y después
+  // (por si una sincronización en marcha gasta el permiso a mitad). Si la restauración falla, se retira:
+  // los datos no han cambiado y la nube no debe borrar nada.
+  permitirBorradoMasivo();
+  try { await importAll(d); }
+  catch (e) { retirarBorradoMasivo(); throw new Error('No se ha cambiado nada: ' + (e.message || e)); }
+  permitirBorradoMasivo();
   return v.resumen;
 }

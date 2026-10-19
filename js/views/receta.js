@@ -3,7 +3,7 @@
 // La app calcula los valores por 100 g COCINADOS, descuenta los ingredientes de la despensa
 // y guarda la receta en la despensa con su peso: al comer 300 g, se descuentan del táper.
 import { html, useState } from '../lib.js';
-import { db, useLive, getSetting, setSetting, getPrefs, candidateIds, deductStockExacto, round1 } from '../db.js';
+import { db, useLive, getSetting, setSetting, getPrefs, candidateIds, deductStockExacto, anadirCompraFaltante, round1 } from '../db.js';
 import { NUTRS, sumN, nutrFor, fmt, fmtG, todayStr, addDays, fmtDate, visibleFood } from '../nutri.js';
 import { METODOS, nombreMetodo, raizDe, medidasDe, conMedida, faltanDatos, textoFaltan } from '../precision.js';
 import { MICROS, microsDe } from '../data/micros.js';
@@ -15,16 +15,23 @@ const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 // Aviso cuando en la despensa consta MENOS de lo que vas a descontar. No se guarda nada hasta que elijas:
 // "lo compré y no lo apunté" (añade a la despensa justo lo que falta, como una compra) o "no descontar esta vez".
 export function FaltaEnCasa({ food, necesario, disponible, onNoDescontar }) {
+  const [ocupado, setOcupado] = useState(false); // un toque cada vez (además, los datos no añaden dos veces)
   const faltan = round1(necesario - disponible);
   const anadir = async () => {
-    await db.lots.add({ foodId: food.id, g: faltan, abierto: false, addedAt: Date.now(), origen: 'compra sin apuntar (al cocinar)' });
-    toast(`${fmtG(faltan)} de ${food.name} añadidos a la despensa ✓`);
+    if (ocupado) return;
+    setOcupado(true);
+    try {
+      const ids = candidateIds(food, await db.foods.toArray());
+      const g = await anadirCompraFaltante({ foodId: food.id, ids, necesario });
+      toast(g ? `${fmtG(g)} de ${food.name} añadidos a la despensa ✓` : `${food.name}: ya hay bastante en la despensa`);
+    } catch (e) { toast(e.message); }
+    setOcupado(false);
   };
   return html`
     <div class="aviso warn pila falta-casa" role="alert">
       <span><b>${food.name}: no hay bastante en casa.</b> Constan ${fmtG(disponible)} y vas a usar ${fmtG(necesario)} en crudo.</span>
       <div class="inline">
-        <button class="btn small secondary" onClick=${anadir}>Lo compré y no lo apunté: añadir ${fmtG(faltan)}</button>
+        <button class="btn small secondary" disabled=${ocupado} onClick=${anadir}>Lo compré y no lo apunté: añadir ${fmtG(faltan)}</button>
         <button class="btn small secondary" onClick=${onNoDescontar}>No descontar esta vez</button>
       </div>
     </div>`;
