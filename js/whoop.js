@@ -37,6 +37,25 @@ export async function desconectarWhoop() {
   await setSetting('whoop', { ...(await estadoWhoop()), conectado: false });
 }
 
+// Lo que manda Whoop → filas de la tabla `whoop`: { id: 'tipo:<id de Whoop>', tipo, fecha, d: registro tal cual }.
+// (Las copias de seguridad comprueban este mismo formato: problemaWhoop en copias.js.)
+export async function filasWhoop(r, fechaCicloGuardada = async () => null) {
+  const filas = [];
+  const fechaCiclo = {};
+  for (const c of r.ciclos || []) {
+    const f = fechaLocal(c.start, c.timezone_offset);
+    fechaCiclo[c.id] = f;
+    filas.push({ id: 'ciclo:' + c.id, tipo: 'ciclo', fecha: f, d: c });
+  }
+  for (const x of r.recuperaciones || []) {
+    const f = fechaCiclo[x.cycle_id] || (await fechaCicloGuardada(x.cycle_id)) || fechaLocal(x.created_at);
+    filas.push({ id: 'recuperacion:' + x.cycle_id, tipo: 'recuperacion', fecha: f, d: x });
+  }
+  for (const s of r.suenos || []) filas.push({ id: 'sueno:' + s.id, tipo: 'sueno', fecha: fechaLocal(s.end || s.start, s.timezone_offset), d: s });
+  for (const w of r.entrenos || []) filas.push({ id: 'entreno:' + w.id, tipo: 'entreno', fecha: fechaLocal(w.start, w.timezone_offset), d: w });
+  return filas;
+}
+
 let enMarcha = null;
 export function sincronizarWhoop(op) {
   if (!enMarcha) enMarcha = traer(op).finally(() => { enMarcha = null; });
@@ -54,19 +73,7 @@ async function traer({ forzar = false } = {}) {
     await setSetting('whoop', { ...est, conectado: false, reconectar: !!r?.reconectar });
     return null;
   }
-  const filas = [];
-  const fechaCiclo = {};
-  for (const c of r.ciclos || []) {
-    const f = fechaLocal(c.start, c.timezone_offset);
-    fechaCiclo[c.id] = f;
-    filas.push({ id: 'ciclo:' + c.id, tipo: 'ciclo', fecha: f, d: c });
-  }
-  for (const x of r.recuperaciones || []) {
-    const f = fechaCiclo[x.cycle_id] || (await db.whoop.get('ciclo:' + x.cycle_id))?.fecha || fechaLocal(x.created_at);
-    filas.push({ id: 'recuperacion:' + x.cycle_id, tipo: 'recuperacion', fecha: f, d: x });
-  }
-  for (const s of r.suenos || []) filas.push({ id: 'sueno:' + s.id, tipo: 'sueno', fecha: fechaLocal(s.end || s.start, s.timezone_offset), d: s });
-  for (const w of r.entrenos || []) filas.push({ id: 'entreno:' + w.id, tipo: 'entreno', fecha: fechaLocal(w.start, w.timezone_offset), d: w });
+  const filas = await filasWhoop(r, async id => (await db.whoop.get('ciclo:' + id))?.fecha);
   if (filas.length) await db.whoop.bulkPut(filas);
 
   // Peso: solo si en Whoop cambió (si no, apuntaríamos cada día el mismo número viejo)

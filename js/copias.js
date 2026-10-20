@@ -22,6 +22,44 @@ const OPCIONALES = ['whoop', 'porciones', 'medidas'];
 const NOMBRE_OPCIONAL = { whoop: 'datos de Whoop', porciones: 'porciones preparadas', medidas: 'medidas corporales' };
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 const TIPOS_WHOOP = ['ciclo', 'recuperacion', 'sueno', 'entreno'];
+
+// ---------- Whoop: ¿es una fila de verdad? ----------
+// Desde v22 cada fila es { id: 'tipo:<id de Whoop>', tipo, fecha, d } y `d` es el registro TAL CUAL lo manda Whoop
+// (js/whoop.js). Lo que la app necesita de cada tipo:
+//   ciclo        d.id (número o texto) = lo que va tras 'ciclo:'; d.start (fecha y hora)
+//   recuperacion d.cycle_id = lo que va tras 'recuperacion:' (su fecha es la de su ciclo)
+//   sueno        d.id = lo que va tras 'sueno:'; d.start o d.end
+//   entreno      d.id = lo que va tras 'entreno:'; d.start
+// Opcional (Whoop solo lo manda cuando ya ha puntuado): `score`, `end`, `nap`, `sport_name`… Si vienen, con su tipo.
+// Devuelve el motivo del problema, o null si la fila está bien.
+const NUM_SCORE = ['strain', 'kilojoule', 'recovery_score', 'hrv_rmssd_milli', 'resting_heart_rate', 'sleep_performance_percentage'];
+const idValido = x => (typeof x === 'number' && Number.isFinite(x)) || (typeof x === 'string' && x.trim() !== '');
+const horaValida = x => typeof x === 'string' && !Number.isNaN(Date.parse(x));
+export function problemaWhoop(w) {
+  if (!w || typeof w !== 'object' || Array.isArray(w)) return 'no es un registro';
+  if (!TIPOS_WHOOP.includes(w.tipo)) return 'tipo desconocido';
+  if (typeof w.id !== 'string' || !w.id.startsWith(w.tipo + ':')) return 'identificador que no es de su tipo';
+  if (!FECHA.test(w.fecha || '') || Number.isNaN(Date.parse(w.fecha))) return 'sin fecha válida';
+  const d = w.d;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return 'sin contenido';
+  // El identificador de dentro tiene que ser el mismo que el de fuera (si no, es otro registro)
+  const interno = w.tipo === 'recuperacion' ? d.cycle_id : d.id;
+  if (!idValido(interno)) return 'contenido vacío o sin su identificador de Whoop';
+  if (String(interno) !== w.id.slice(w.tipo.length + 1)) return 'el identificador no corresponde a su contenido';
+  // Fechas y horas
+  for (const k of ['start', 'end', 'created_at']) if (d[k] != null && !horaValida(d[k])) return `hora "${k}" no válida`;
+  const hora = w.tipo === 'ciclo' || w.tipo === 'entreno' ? d.start : w.tipo === 'sueno' ? d.end || d.start : null;
+  if (w.tipo !== 'recuperacion' && !hora) return 'sin hora de inicio';
+  // La fecha guardada sale de esa hora (con la zona horaria): como mucho un día de diferencia
+  if (hora && Math.abs(Date.parse(w.fecha) - Date.parse(hora.slice(0, 10))) > 864e5) return 'la fecha no corresponde a su hora';
+  // Lo que se usa para calcular (si viene)
+  if (d.score != null) {
+    if (typeof d.score !== 'object' || Array.isArray(d.score)) return 'puntuación dañada';
+    for (const k of NUM_SCORE) if (d.score[k] != null && !(typeof d.score[k] === 'number' && Number.isFinite(d.score[k]))) return `"${k}" no es un número`;
+  }
+  if (d.nap != null && typeof d.nap !== 'boolean') return 'dato de siesta dañado';
+  return null;
+}
 const CLAVE = { foods: 'id', lots: 'id', basicos: 'id', shopping: 'id', plans: 'id', logs: 'id', weights: 'date', settings: 'key', workouts: 'id', marcas: 'id', ejercicios: 'id', whoop: 'id', porciones: 'id', medidas: 'id' };
 
 // ---------- Exportar a archivo ----------
@@ -110,10 +148,10 @@ export function validarCopia(d) {
   // Porciones preparadas (V3): de un táper que esté en la copia, con fecha, comida y gramos válidos
   const porcionMala = lista('porciones').filter(p => p && (!foodIds.has(p.foodId) || !FECHA.test(p.date || '') || !p.mealId || !(typeof p.g === 'number' && p.g > 0))).length;
   if (porcionMala) errores.push(`Hay ${porcionMala} porciones preparadas dañadas (sin táper, sin fecha o sin gramos).`);
-  // Whoop: cada fila es { id: 'tipo:…', tipo, fecha, d } (el mismo formato desde v22). Una fila a medias se rechaza
-  const whoopMalo = lista('whoop').filter(w => w && !(TIPOS_WHOOP.includes(w.tipo) && typeof w.id === 'string' && w.id.startsWith(w.tipo + ':')
-    && FECHA.test(w.fecha || '') && w.d && typeof w.d === 'object' && !Array.isArray(w.d))).length;
-  if (whoopMalo) errores.push(`Hay ${whoopMalo} datos de Whoop dañados (sin tipo, fecha o contenido).`);
+  // Whoop: cada fila tiene que ser un registro completo y coherente (ver problemaWhoop). Una sola mala rechaza
+  // la copia entera: no se restaura a medias ni se quitan filas en silencio.
+  const whoopMalos = lista('whoop').map(w => [w?.id, problemaWhoop(w)]).filter(([, m]) => m);
+  if (whoopMalos.length) errores.push(`Hay ${whoopMalos.length} datos de Whoop dañados (p. ej. ${String(whoopMalos[0][0] ?? 'sin id')}: ${whoopMalos[0][1]}).`);
   // Medidas corporales (V3): fecha, tipo y un valor positivo
   const medidaMala = lista('medidas').filter(m => m && (!FECHA.test(m.fecha || '') || !m.tipo || !(typeof m.valor === 'number' && m.valor > 0))).length;
   if (medidaMala) errores.push(`Hay ${medidaMala} medidas corporales dañadas (sin fecha, tipo o valor).`);
