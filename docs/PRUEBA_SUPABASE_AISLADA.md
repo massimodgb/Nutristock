@@ -1,8 +1,7 @@
 # Prueba de restaurar + sincronizar con un Supabase aislado (antes de publicar V3)
 
-**Estado: PENDIENTE.** Esta prueba no se ha hecho. Las comprobaciones de `herramientas/comprobar.html` solo cubren
-la parte del móvil (validación, guardado de una sola vez y el permiso de borrado de 10 minutos). Una simulación
-local NO sustituye esta prueba. Es condición previa para publicar V3.
+**Estado: HECHA el 20 oct 2026 con `v45`** (proyecto de pruebas aislado, cuentas y datos ficticios; resultados al final).
+Las comprobaciones de `herramientas/comprobar.html` solo cubren la parte del móvil; esta prueba cubre la nube real.
 
 ## Qué queremos saber
 
@@ -21,14 +20,14 @@ Tras restaurar una copia buena con la nube conectada:
 - **Proyecto de Supabase NUEVO y solo para pruebas**: otra dirección `https://<otro-id>.supabase.co`, distinta de la de producción (`js/nube.js`, `NUBE_URL`). Sin datos reales.
 - **Dos cuentas ficticias** (A y B), con correos de prueba. Nunca el correo ni la contraseña de la cuenta real.
 - **Carpeta desechable**: copiar la carpeta del proyecto (rama `v3`) fuera del repositorio, por ejemplo a `C:\pruebas\nutristock-nube`. Cambiar `NUBE_URL` y `NUBE_CLAVE` SOLO en esa copia, con la clave **pública** (publishable) del proyecto de pruebas. El repositorio no se toca.
-- **Otro origen en el navegador**: servir la copia con `py herramientas/servidor.py 5190` y, para el «segundo móvil», con `5191`. Cada puerto tiene su propio almacenamiento, separado del de la app real. **No usar el iPhone con la app real.**
+- **Otro origen en el navegador**: servir la copia con `py herramientas/servidor.py 5195` (cuenta A), `5196` (cuenta B) y `5198` (segundo móvil). Las sesiones las abre el usuario en las pestañas que maneja Claude (cada navegador y cada puerto tienen su propio almacenamiento). Cada puerto tiene su propio almacenamiento, separado del de la app real. **No usar el iPhone con la app real.**
 - **Nunca** pegar la clave secreta (service_role) en la app ni en el chat.
 
 Si alguna de estas condiciones no se cumple, no se hace la prueba.
 
 ## Preparación
 
-1. En el proyecto de pruebas: SQL Editor → pegar `herramientas/supabase.sql` → Run. Authentication → Site URL: `http://127.0.0.1:5190`.
+1. En el proyecto de pruebas: SQL Editor → pegar `herramientas/supabase.sql` → Run. Authentication → desactivar «Confirm email» SOLO en el proyecto de pruebas (las cuentas ficticias no reciben correos).
 2. Crear las cuentas A y B desde la app de pruebas (Más → Nube → Crear cuenta) y confirmarlas.
 3. Para mirar la nube, en el SQL Editor del proyecto de pruebas:
    ```sql
@@ -55,6 +54,26 @@ Si alguna de estas condiciones no se cumple, no se hace la prueba.
 
 ## Resultado
 
-- Pasos 5 a 9 correctos → se puede publicar (con el permiso de Massimo).
+- Pasos 5 a 9 correctos → se puede publicar (con el permiso del usuario).
 - Cualquier borrado de más, cualquier cambio en B o una copia dañada que cambie algo → **no publicar** y avisar a Claude/Codex con el resultado de la consulta SQL.
 - Al terminar: borrar el proyecto de pruebas y la carpeta desechable.
+
+## Resultados (20 oct 2026, `v45`)
+
+Proyecto de pruebas distinto de producción; copia desechable sacada de `git archive` (sin archivos personales); sesiones abiertas por el usuario en Chrome; pruebas manejadas con Claude in Chrome.
+
+| Prueba | Resultado |
+|---|---|
+| Sin sesión: leer / insertar / borrar | Rechazado (401) ✅ |
+| Con sesión: ver, cambiar o insertar filas de otra cuenta; borrado físico | 0 filas / 403 / 0 filas ✅ |
+| Marcar borrado sin filtrar por usuario (como la app) con una clave que existe en las dos cuentas | Solo cambia la propia ✅ |
+| Restaurar copia válida | Se marcan borradas exactamente las 3 filas que no estaban en la copia; nada más ✅ |
+| Otra cuenta | Idéntica (filas, estado y fecha) en todas las comprobaciones ✅ |
+| Volver atrás con «antes de restaurar» | Las 3 filas vuelven a activo; nada borrado ✅ |
+| Sincronizar 2 veces más | La nube no cambia ✅ |
+| Copias dañadas (`d: {}`, id cruzado, fallo al guardar) | Rechazadas; aparato, nube y permiso de borrado intactos ✅ |
+| Cortes durante la sincronización (antes de subir, al marcar borrados, al bajar) — **simulados en el proceso de sincronización**, no un corte real de red | Al reintentar todo cuadra, 0 duplicados ✅ |
+| Dos dispositivos de la misma cuenta: el 1 restaura una copia sin L1 mientras el 2 crea L2 sin conexión | L1 queda borrado en los dos y no reaparece; L2 se sube y llega al 1 ✅ |
+| Dos dispositivos editan lo mismo sin conexión | Gana el último que sincroniza (comportamiento documentado) ⚠️ |
+| Un dispositivo edita sin conexión un registro que el otro borró | El registro vuelve (gana la edición) ⚠️ — por eso: un solo móvil a la vez, sobre todo al restaurar |
+| Volver a v35 tras actualizar (base de datos v7 abierta con el código de v35) | Abre, lee y escribe; las tablas de V3 se conservan ✅ |
